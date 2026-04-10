@@ -1,4 +1,5 @@
 using AnimeIndex.Api.Data;
+using AnimeIndex.Api.Endpoints;
 using Microsoft.EntityFrameworkCore;
 using Serilog;
 
@@ -43,12 +44,8 @@ try
     app.UseSerilogRequestLogging();
     app.UseCors();
 
-    // Health check (temporary — will be moved to HealthEndpoints.cs)
-    app.MapGet("/health", () => Results.Ok(new
-    {
-        status = "healthy",
-        version = "0.1.0"
-    }));
+    // Endpoints
+    app.MapHealthEndpoints();
 
     app.Run();
 }
