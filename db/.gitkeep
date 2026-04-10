@@ -1,0 +1,2 @@
+# /db — Database migrations reference and seed data
+# SQL files here are for reference. EF Core manages actual migrations.

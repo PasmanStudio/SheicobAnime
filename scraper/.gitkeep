@@ -1,0 +1,2 @@
+# /scraper — Playwright scraper worker (separate deployable)
+# Built in Phase 3. Shares IScrapeStrategy interface with /api.
