@@ -40,6 +40,22 @@ try
             .WriteTo.Console(new Serilog.Formatting.Json.JsonFormatter()));
     }
 
+    // ─── Sentry ──────────────────────────────────────────
+    if (!isTesting)
+    {
+        var sentryDsn = builder.Configuration["SENTRY_DSN"];
+        if (!string.IsNullOrEmpty(sentryDsn))
+        {
+            builder.WebHost.UseSentry(o =>
+            {
+                o.Dsn = sentryDsn;
+                o.TracesSampleRate = 0.1; // 10% of transactions — free tier friendly
+                o.SendDefaultPii = false;
+                o.Environment = builder.Environment.EnvironmentName;
+            });
+        }
+    }
+
     // ─── Database ────────────────────────────────────────
     if (!isTesting)
     {
@@ -132,6 +148,7 @@ try
 
     // ─── Middleware pipeline ─────────────────────────────
     if (!isTesting) app.UseSerilogRequestLogging();
+    if (!isTesting) app.UseSentryTracing();
     app.UseRateLimiter();
     app.UseCors();
 
