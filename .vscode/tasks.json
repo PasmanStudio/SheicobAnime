@@ -1,0 +1,109 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "🐳 Start local infra (docker)",
+      "type": "shell",
+      "command": "docker compose -f infra/docker-compose.yml up -d",
+      "group": "build",
+      "presentation": { "reveal": "always", "panel": "shared" },
+      "problemMatcher": []
+    },
+    {
+      "label": "🛑 Stop local infra",
+      "type": "shell",
+      "command": "docker compose -f infra/docker-compose.yml down",
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "🔄 Run DB migrations (local)",
+      "type": "shell",
+      "command": "cd api && dotnet ef database update --project AnimeIndex.Api",
+      "group": "build",
+      "presentation": { "reveal": "always", "panel": "shared" },
+      "problemMatcher": ["$msCompile"]
+    },
+    {
+      "label": "➕ Add EF Core migration",
+      "type": "shell",
+      "command": "cd api && dotnet ef migrations add ${input:migrationName} --project AnimeIndex.Api",
+      "group": "build",
+      "presentation": { "reveal": "always", "panel": "shared" },
+      "problemMatcher": ["$msCompile"]
+    },
+    {
+      "label": "🏃 Run API (dev)",
+      "type": "shell",
+      "command": "cd api && dotnet run --project AnimeIndex.Api",
+      "group": "build",
+      "isBackground": true,
+      "presentation": { "reveal": "always", "panel": "dedicated" },
+      "problemMatcher": {
+        "pattern": [{ "regexp": ".", "file": 1, "location": 2, "message": 3 }],
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "Building...",
+          "endsPattern": "Application started"
+        }
+      }
+    },
+    {
+      "label": "🌐 Run frontend (dev)",
+      "type": "shell",
+      "command": "cd web && npm run dev",
+      "group": "build",
+      "isBackground": true,
+      "presentation": { "reveal": "always", "panel": "dedicated" },
+      "problemMatcher": {
+        "pattern": [{ "regexp": ".", "file": 1, "location": 2, "message": 3 }],
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "starting...",
+          "endsPattern": "Ready"
+        }
+      }
+    },
+    {
+      "label": "🧪 Run API tests",
+      "type": "shell",
+      "command": "cd api && dotnet test AnimeIndex.sln --logger console --verbosity normal",
+      "group": "test",
+      "presentation": { "reveal": "always", "panel": "shared" },
+      "problemMatcher": ["$msCompile"]
+    },
+    {
+      "label": "🔍 TypeScript check (web)",
+      "type": "shell",
+      "command": "cd web && npm run type-check",
+      "group": "test",
+      "presentation": { "reveal": "always", "panel": "shared" },
+      "problemMatcher": ["$tsc"]
+    },
+    {
+      "label": "🚀 Full local stack (infra + api + web)",
+      "dependsOn": [
+        "🐳 Start local infra (docker)",
+        "🏃 Run API (dev)",
+        "🌐 Run frontend (dev)"
+      ],
+      "dependsOrder": "sequence",
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "🧹 Clean build artifacts",
+      "type": "shell",
+      "command": "find api -name 'bin' -o -name 'obj' | xargs rm -rf; rm -rf web/.next",
+      "group": "build",
+      "problemMatcher": []
+    }
+  ],
+  "inputs": [
+    {
+      "id": "migrationName",
+      "type": "promptString",
+      "description": "Migration name (PascalCase, e.g. AddBlockedSlugs)"
+    }
+  ]
+}

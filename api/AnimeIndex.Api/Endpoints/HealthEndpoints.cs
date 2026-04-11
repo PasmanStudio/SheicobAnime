@@ -1,4 +1,5 @@
 using AnimeIndex.Api.Data;
+using AnimeIndex.Api.Infrastructure.Cache;
 using Microsoft.EntityFrameworkCore;
 
 namespace AnimeIndex.Api.Endpoints;
@@ -7,12 +8,12 @@ public static class HealthEndpoints
 {
     public static void MapHealthEndpoints(this WebApplication app)
     {
-        app.MapGet("/health", async (AppDbContext db) =>
+        app.MapGet("/health", async (AppDbContext db, ICacheService cache) =>
         {
             var dbStatus = "error";
             try
             {
-                await db.Database.ExecuteSqlRawAsync("SELECT 1");
+                await db.Database.CanConnectAsync();
                 dbStatus = "ok";
             }
             catch
@@ -20,10 +21,9 @@ public static class HealthEndpoints
                 // DB unavailable
             }
 
-            // Cache check will be added in Phase 2 when ICacheService is created
-            var cacheStatus = "not_configured";
+            var cacheStatus = await cache.PingAsync() ? "ok" : "error";
 
-            var overallStatus = dbStatus == "ok" ? "healthy" : "degraded";
+            var overallStatus = dbStatus == "ok" && cacheStatus == "ok" ? "healthy" : "degraded";
 
             var response = new
             {

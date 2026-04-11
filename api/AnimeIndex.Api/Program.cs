@@ -1,31 +1,108 @@
+using System.Threading.RateLimiting;
+using AnimeIndex.Api;
 using AnimeIndex.Api.Data;
+using AnimeIndex.Api.DTOs;
+using AnimeIndex.Api.DTOs.Admin;
 using AnimeIndex.Api.Endpoints;
+using AnimeIndex.Api.Infrastructure.Auth;
+using AnimeIndex.Api.Infrastructure.Cache;
+using AnimeIndex.Api.Validators;
+using FluentValidation;
+using Hangfire;
+using Hangfire.PostgreSql;
 using Microsoft.EntityFrameworkCore;
 using Serilog;
+using StackExchange.Redis;
 
-Log.Logger = new LoggerConfiguration()
-    .WriteTo.Console(new Serilog.Formatting.Json.JsonFormatter())
-    .CreateBootstrapLogger();
+// Check env var directly — WebApplicationFactory sets this before entry point runs
+var isTesting = string.Equals(
+    Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT"),
+    "Testing", StringComparison.OrdinalIgnoreCase);
+
+if (!isTesting)
+{
+    Log.Logger = new LoggerConfiguration()
+        .WriteTo.Console(new Serilog.Formatting.Json.JsonFormatter())
+        .CreateBootstrapLogger();
+}
 
 try
 {
     var builder = WebApplication.CreateBuilder(args);
 
-    // Serilog
-    builder.Host.UseSerilog((context, services, configuration) => configuration
-        .ReadFrom.Configuration(context.Configuration)
-        .ReadFrom.Services(services)
-        .WriteTo.Console(new Serilog.Formatting.Json.JsonFormatter()));
+    // ─── Serilog (skip in tests to avoid "logger already frozen") ──
+    if (!isTesting)
+    {
+        builder.Host.UseSerilog((context, services, configuration) => configuration
+            .ReadFrom.Configuration(context.Configuration)
+            .ReadFrom.Services(services)
+            .WriteTo.Console(new Serilog.Formatting.Json.JsonFormatter()));
+    }
 
-    // Database
-    var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
-        ?? builder.Configuration["DATABASE_URL"]
-        ?? throw new InvalidOperationException("No database connection string configured.");
+    // ─── Database ────────────────────────────────────────
+    if (!isTesting)
+    {
+        var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
+            ?? builder.Configuration["DATABASE_URL"]
+            ?? throw new InvalidOperationException("No database connection string configured.");
 
-    builder.Services.AddDbContext<AppDbContext>(options =>
-        options.UseNpgsql(connectionString));
+        builder.Services.AddDbContext<AppDbContext>(options =>
+            options.UseNpgsql(connectionString));
 
-    // CORS
+        // ─── Hangfire ────────────────────────────────────
+        builder.Services.AddHangfire(config => config
+            .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
+            .UseSimpleAssemblyNameTypeSerializer()
+            .UseRecommendedSerializerSettings()
+            .UsePostgreSqlStorage(opts => opts.UseNpgsqlConnection(connectionString)));
+        builder.Services.AddHangfireServer(options =>
+        {
+            options.WorkerCount = 2; // MVP: keep low
+        });
+    }
+
+    // ─── Redis / Cache ───────────────────────────────────
+    if (!isTesting)
+    {
+        var redisConnection = builder.Configuration.GetConnectionString("Redis")
+            ?? builder.Configuration["REDIS_URL"]
+            ?? "localhost:6379";
+
+        builder.Services.AddSingleton<IConnectionMultiplexer>(_ =>
+            ConnectionMultiplexer.Connect(redisConnection));
+        builder.Services.AddSingleton<ICacheService, RedisCacheService>();
+    }
+
+    // ─── Mapster ─────────────────────────────────────────
+    MappingConfig.RegisterMappings();
+
+    // ─── FluentValidation ────────────────────────────────
+    builder.Services.AddScoped<IValidator<CreateScrapeJobRequest>, CreateScrapeJobValidator>();
+    builder.Services.AddScoped<IValidator<CreateBlockedSlugRequest>, CreateBlockedSlugValidator>();
+
+    // ─── Rate Limiting ───────────────────────────────────
+    builder.Services.AddRateLimiter(options =>
+    {
+        options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context =>
+            RateLimitPartition.GetSlidingWindowLimiter(
+                context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+                _ => new SlidingWindowRateLimiterOptions
+                {
+                    PermitLimit = 60,
+                    Window = TimeSpan.FromMinutes(1),
+                    SegmentsPerWindow = 6,
+                    QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+                    QueueLimit = 0
+                }));
+        options.OnRejected = async (context, ct) =>
+        {
+            context.HttpContext.Response.StatusCode = 429;
+            await context.HttpContext.Response.WriteAsJsonAsync(
+                new ErrorResponse("Rate limit exceeded. Max 60 requests per minute.", "RATE_LIMITED"), ct);
+        };
+    });
+
+    // ─── CORS ────────────────────────────────────────────
     var corsOrigins = builder.Configuration["CORS_ORIGINS"]?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
         ?? ["http://localhost:3000"];
 
@@ -39,21 +116,64 @@ try
         });
     });
 
+    // ─── Auth filters (transient for DI) ─────────────────
+    builder.Services.AddTransient<AdminKeyEndpointFilter>();
+
     var app = builder.Build();
 
-    app.UseSerilogRequestLogging();
+    // ─── Middleware pipeline ─────────────────────────────
+    if (!isTesting) app.UseSerilogRequestLogging();
+    app.UseRateLimiter();
     app.UseCors();
 
-    // Endpoints
+    // ─── Hangfire Dashboard ──────────────────────────────
+    if (!app.Environment.EnvironmentName.Equals("Testing", StringComparison.OrdinalIgnoreCase))
+    {
+        app.UseHangfireDashboard("/hangfire", new DashboardOptions
+        {
+            Authorization =
+            [
+                new HangfireDashboardAuthFilter(
+                    app.Services.GetRequiredService<IConfiguration>(),
+                    app.Services.GetRequiredService<IWebHostEnvironment>())
+            ],
+            DashboardTitle = "SheicobAnime Jobs"
+        });
+    }
+
+    // ─── Endpoints ───────────────────────────────────────
     app.MapHealthEndpoints();
+    app.MapSeriesEndpoints();
+    app.MapEpisodeEndpoints();
+    app.MapGenreEndpoints();
+    app.MapMirrorEndpoints();
+    app.MapAdminEndpoints();
+
+    // ─── DB migration & seeding (dev only) ───────────────
+    if (app.Environment.IsDevelopment())
+    {
+        using var scope = app.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        await db.Database.MigrateAsync();
+        await SeedData.SeedAsync(db);
+    }
+    else if (app.Environment.EnvironmentName.Equals("Testing", StringComparison.OrdinalIgnoreCase))
+    {
+        using var scope = app.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        await db.Database.EnsureCreatedAsync();
+    }
 
     app.Run();
 }
-catch (Exception ex)
+catch (Exception ex) when (!isTesting)
 {
     Log.Fatal(ex, "Application terminated unexpectedly");
 }
 finally
 {
-    Log.CloseAndFlush();
+    if (!isTesting) Log.CloseAndFlush();
 }
+
+// Required for WebApplicationFactory<Program> in integration tests
+public partial class Program { }

@@ -1,0 +1,48 @@
+{
+  "recommendations": [
+    // Core AI tooling
+    "GitHub.copilot",
+    "GitHub.copilot-chat",
+
+    // .NET / C#
+    "ms-dotnettools.csdevkit",
+    "ms-dotnettools.csharp",
+    "ms-dotnettools.vscode-dotnet-runtime",
+    "formulahendry.dotnet-test-explorer",
+
+    // Frontend / TypeScript
+    "esbenp.prettier-vscode",
+    "dbaeumer.vscode-eslint",
+    "bradlc.vscode-tailwindcss",
+    "formulahendry.auto-rename-tag",
+    "naumovs.color-highlight",
+
+    // Database
+    "mtxr.sqltools",
+    "mtxr.sqltools-driver-pg",
+
+    // Docker / Infra
+    "ms-azuretools.vscode-docker",
+    "ms-vscode-remote.remote-containers",
+
+    // Git
+    "eamodio.gitlens",
+    "mhutchie.git-graph",
+
+    // Productivity
+    "gruntfuggly.todo-tree",
+    "streetsidesoftware.code-spell-checker",
+    "christian-kohler.path-intellisense",
+    "EditorConfig.EditorConfig",
+
+    // REST / API testing
+    "humao.rest-client",
+
+    // YAML / configs
+    "redhat.vscode-yaml",
+    "tamasfe.even-better-toml"
+  ],
+  "unwantedRecommendations": [
+    "ms-vscode.vscode-typescript-next"
+  ]
+}

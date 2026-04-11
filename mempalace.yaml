@@ -1,0 +1,25 @@
+wing: sheicobanime
+rooms:
+- name: backend
+  description: Files from api/
+  keywords:
+  - backend
+  - api
+- name: configuration
+  description: Files from infra/
+  keywords:
+  - configuration
+  - infra
+- name: scraper
+  description: Files from scraper/
+  keywords:
+  - scraper
+  - scraper
+- name: web
+  description: Files from web/
+  keywords:
+  - web
+  - web
+- name: general
+  description: Files that don't fit other rooms
+  keywords: []

@@ -1,0 +1,76 @@
+{
+  "editor.formatOnSave": true,
+  "editor.defaultFormatter": "esbenp.prettier-vscode",
+  "editor.codeActionsOnSave": {
+    "source.fixAll.eslint": "explicit",
+    "source.organizeImports": "explicit"
+  },
+  "[csharp]": {
+    "editor.defaultFormatter": "ms-dotnettools.csharp"
+  },
+  "[typescript]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
+  "[typescriptreact]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
+  "typescript.tsdk": "web/node_modules/typescript/lib",
+  "typescript.enablePromptUseWorkspaceTsdk": true,
+  "github.copilot.chat.agent.autoFix": true,
+  "github.copilot.chat.followUps": "always",
+  "github.copilot.nextEditSuggestions.enabled": true,
+  "github.copilot.chat.codeGeneration.useInstructionFiles": true,
+  "github.copilot.chat.codeGeneration.instructions": [
+    {
+      "file": ".github/copilot-instructions.md"
+    }
+  ],
+  "chat.instructionFilesLocations": {
+    ".github/copilot-instructions.md": true
+  },
+  "files.exclude": {
+    "**/bin": true,
+    "**/obj": true,
+    "**/.next": true,
+    "**/node_modules": true
+  },
+  "search.exclude": {
+    "**/bin": true,
+    "**/obj": true,
+    "**/.next": true,
+    "**/node_modules": true
+  },
+  "dotnet-test-explorer.testProjectPath": "api/AnimeIndex.Api.Tests",
+  "dotnet-test-explorer.autoWatch": false,
+  "sqltools.connections": [
+    {
+      "name": "SheicobAnime Local",
+      "driver": "PostgreSQL",
+      "server": "localhost",
+      "port": 5432,
+      "database": "animeindex",
+      "username": "animeindex",
+      "password": "devpassword"
+    }
+  ],
+  "todo-tree.general.tags": [
+    "TODO",
+    "FIXME",
+    "HACK",
+    "BUG",
+    "CONTRACT",
+    "LEGAL"
+  ],
+  "todo-tree.highlights.customHighlight": {
+    "CONTRACT": {
+      "icon": "law",
+      "foreground": "#6ee7b7",
+      "type": "text"
+    },
+    "LEGAL": {
+      "icon": "alert",
+      "foreground": "#f87171",
+      "type": "text"
+    }
+  }
+}

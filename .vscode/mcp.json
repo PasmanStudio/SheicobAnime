@@ -1,0 +1,49 @@
+{
+  "servers": {
+    // ─── GitHub MCP Server ────────────────────────────────────────────────────
+    // Official GitHub MCP — gives Copilot access to issues, PRs, repos
+    // Required for: project-manager chatmode, review-pr prompt, plan prompt
+    // Setup: github.com/github/github-mcp-server
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@github/github-mcp-server"],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "${env:GITHUB_PAT}"
+      }
+    },
+
+    // ─── MemPalace MCP Server ─────────────────────────────────────────────────
+    // Context persistence across Copilot sessions
+    // github.com/milla-jovovich/mempalace
+    // Setup: pip install mempalace && mempalace init ~/path/to/sheicobanime
+    "mempalace": {
+      "command": "python",
+      "args": ["-m", "mempalace.mcp_server"]
+    },
+
+    // ─── PostgreSQL MCP Server ────────────────────────────────────────────────
+    // Gives Copilot direct DB query and schema inspection
+    // Required for: database-admin chatmode
+    // Setup: npm install -g @modelcontextprotocol/server-postgres
+    "postgres": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-postgres",
+        "postgresql://animeindex:devpassword@localhost:5432/animeindex"
+      ]
+    },
+
+    // ─── Filesystem MCP Server ────────────────────────────────────────────────
+    // Gives Copilot read access to project files
+    // Required for: all chatmodes when doing cross-file analysis
+    "filesystem": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "${workspaceFolder}"
+      ]
+    }
+  }
+}

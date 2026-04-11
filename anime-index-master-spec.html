@@ -1,0 +1,1622 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AnimeIndex — Master Technical Specification</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,300;0,400;0,500;1,400&family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,600;0,9..144,700;1,9..144,400&family=Inter:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #0d0f12;
+  --bg2: #13161b;
+  --bg3: #1a1e26;
+  --bg4: #222730;
+  --border: rgba(255,255,255,0.07);
+  --border2: rgba(255,255,255,0.13);
+  --text: #e8eaf0;
+  --muted: #7a8094;
+  --accent: #6ee7b7;
+  --accent2: #818cf8;
+  --accent3: #f59e0b;
+  --accent4: #f87171;
+  --accent5: #38bdf8;
+  --mono: 'DM Mono', monospace;
+  --serif: 'Fraunces', serif;
+  --sans: 'Inter', sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:14px;line-height:1.7;min-height:100vh}
+
+/* Layout */
+.layout{display:grid;grid-template-columns:260px 1fr;min-height:100vh}
+@media(max-width:900px){.layout{grid-template-columns:1fr}}
+
+/* Sidebar */
+.sidebar{background:var(--bg2);border-right:1px solid var(--border);padding:28px 0;position:sticky;top:0;height:100vh;overflow-y:auto}
+@media(max-width:900px){.sidebar{display:none}}
+.sidebar-logo{padding:0 24px 24px;border-bottom:1px solid var(--border);margin-bottom:16px}
+.sidebar-logo .mark{font-family:var(--mono);font-size:11px;color:var(--accent);letter-spacing:.12em;text-transform:uppercase;font-weight:500}
+.sidebar-logo .name{font-family:var(--serif);font-size:20px;font-weight:600;color:var(--text);line-height:1.2;margin-top:4px}
+.sidebar-logo .sub{font-size:11px;color:var(--muted);margin-top:2px}
+.nav-group{margin-bottom:4px}
+.nav-group-label{font-size:10px;font-weight:500;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);padding:12px 24px 6px}
+.nav-item{display:block;padding:7px 24px;font-size:12.5px;color:var(--muted);text-decoration:none;cursor:pointer;border-left:2px solid transparent;transition:all .15s}
+.nav-item:hover{color:var(--text);background:rgba(255,255,255,.03)}
+.nav-item.active{color:var(--accent);border-left-color:var(--accent);background:rgba(110,231,183,.05)}
+.nav-badge{display:inline-block;font-family:var(--mono);font-size:9px;padding:1px 6px;border-radius:3px;margin-left:6px;font-weight:500}
+.badge-phase{background:rgba(110,231,183,.12);color:var(--accent)}
+.badge-new{background:rgba(249,115,22,.15);color:#fb923c}
+
+/* Main */
+.main{padding:0}
+.section{padding:56px 64px;border-bottom:1px solid var(--border);min-height:100vh}
+@media(max-width:1100px){.section{padding:40px 32px}}
+@media(max-width:700px){.section{padding:32px 20px}}
+
+/* Hero */
+.hero{background:var(--bg);padding:72px 64px 56px;border-bottom:1px solid var(--border);position:relative;overflow:hidden}
+@media(max-width:700px){.hero{padding:48px 20px 40px}}
+.hero::before{content:'';position:absolute;top:-80px;right:-80px;width:400px;height:400px;background:radial-gradient(circle,rgba(110,231,183,.06) 0%,transparent 70%);pointer-events:none}
+.hero::after{content:'';position:absolute;bottom:-60px;left:20%;width:300px;height:300px;background:radial-gradient(circle,rgba(129,140,248,.04) 0%,transparent 70%);pointer-events:none}
+.hero-eyebrow{font-family:var(--mono);font-size:11px;color:var(--accent);letter-spacing:.15em;text-transform:uppercase;margin-bottom:20px}
+.hero-title{font-family:var(--serif);font-size:clamp(32px,5vw,52px);font-weight:700;line-height:1.1;color:var(--text);margin-bottom:16px}
+.hero-title span{color:var(--accent);font-style:italic}
+.hero-desc{font-size:15px;color:var(--muted);max-width:580px;line-height:1.7;margin-bottom:36px}
+.hero-meta{display:flex;gap:24px;flex-wrap:wrap}
+.hero-meta-item{display:flex;align-items:center;gap:8px}
+.hero-meta-dot{width:8px;height:8px;border-radius:50%}
+.hero-meta-label{font-size:12px;color:var(--muted)}
+.hero-meta-value{font-family:var(--mono);font-size:12px;color:var(--text)}
+
+/* Section headers */
+.sec-eyebrow{font-family:var(--mono);font-size:10px;color:var(--accent);letter-spacing:.15em;text-transform:uppercase;margin-bottom:10px}
+.sec-title{font-family:var(--serif);font-size:28px;font-weight:600;color:var(--text);margin-bottom:8px}
+.sec-desc{font-size:14px;color:var(--muted);max-width:640px;line-height:1.7;margin-bottom:36px}
+
+/* Role badges */
+.role-row{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:32px}
+.role-pill{font-family:var(--mono);font-size:11px;padding:4px 12px;border-radius:4px;border:1px solid;font-weight:500}
+.role-pm{border-color:rgba(167,139,250,.3);color:#a78bfa;background:rgba(167,139,250,.08)}
+.role-be{border-color:rgba(56,189,248,.3);color:#38bdf8;background:rgba(56,189,248,.08)}
+.role-fe{border-color:rgba(251,191,36,.3);color:#fbbf24;background:rgba(251,191,36,.08)}
+.role-ie{border-color:rgba(110,231,183,.3);color:var(--accent);background:rgba(110,231,183,.08)}
+.role-rv{border-color:rgba(248,113,113,.3);color:#f87171;background:rgba(248,113,113,.08)}
+
+/* Cards */
+.cards{display:grid;gap:16px}
+.cards-2{grid-template-columns:repeat(2,1fr)}
+.cards-3{grid-template-columns:repeat(3,1fr)}
+@media(max-width:800px){.cards-2,.cards-3{grid-template-columns:1fr}}
+.card{background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:20px 22px}
+.card:hover{border-color:var(--border2)}
+.card-title{font-weight:500;color:var(--text);margin-bottom:6px;font-size:13.5px}
+.card-sub{font-size:12.5px;color:var(--muted);line-height:1.6}
+.card-accent{border-left:2px solid var(--accent)}
+.card-accent2{border-left:2px solid var(--accent2)}
+.card-accent3{border-left:2px solid var(--accent3)}
+.card-accent4{border-left:2px solid var(--accent4)}
+.card-accent5{border-left:2px solid var(--accent5)}
+
+/* Phase blocks */
+.phase-block{background:var(--bg3);border:1px solid var(--border);border-radius:12px;margin-bottom:20px;overflow:hidden}
+.phase-header{padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;cursor:pointer;user-select:none}
+.phase-header:hover{background:rgba(255,255,255,.02)}
+.phase-num{font-family:var(--mono);font-size:10px;color:var(--accent);background:rgba(110,231,183,.1);border:1px solid rgba(110,231,183,.2);padding:2px 8px;border-radius:3px;font-weight:500}
+.phase-name{font-weight:500;color:var(--text);font-size:14px;flex:1}
+.phase-dur{font-family:var(--mono);font-size:11px;color:var(--muted)}
+.phase-chevron{font-size:12px;color:var(--muted);transition:transform .2s}
+.phase-chevron.open{transform:rotate(180deg)}
+.phase-body{padding:20px;display:none}
+.phase-body.open{display:block}
+
+/* Task list */
+.task-section{margin-bottom:20px}
+.task-role-label{font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;margin-bottom:10px;padding:3px 8px;display:inline-block;border-radius:3px;font-weight:500}
+.task-list{list-style:none;display:grid;gap:4px}
+.task-item{display:flex;gap:10px;align-items:flex-start;font-size:12.5px;color:var(--muted);line-height:1.6;padding:6px 10px;border-radius:6px}
+.task-item:hover{background:rgba(255,255,255,.03);color:var(--text)}
+.task-check{width:14px;height:14px;border:1px solid var(--border2);border-radius:3px;flex-shrink:0;margin-top:2px;cursor:pointer;transition:all .15s;display:flex;align-items:center;justify-content:center;font-size:10px}
+.task-check:hover{border-color:var(--accent)}
+.task-check.done{background:var(--accent);border-color:var(--accent);color:#0d0f12}
+
+/* Code blocks */
+pre{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:18px 20px;overflow-x:auto;margin:16px 0;font-family:var(--mono);font-size:12px;line-height:1.7;color:#c9d1d9}
+code{font-family:var(--mono);font-size:12px;background:rgba(255,255,255,.06);padding:2px 6px;border-radius:3px;color:var(--accent)}
+.code-header{background:var(--bg4);border:1px solid var(--border);border-bottom:none;border-radius:8px 8px 0 0;padding:8px 16px;display:flex;align-items:center;justify-content:space-between}
+.code-header + pre{border-radius:0 0 8px 8px;margin-top:0}
+.code-file{font-family:var(--mono);font-size:11px;color:var(--muted)}
+.code-lang{font-family:var(--mono);font-size:10px;color:var(--accent2);text-transform:uppercase;letter-spacing:.08em}
+.kw{color:#ff7b72}
+.cm{color:#6a737d;font-style:italic}
+.str{color:#a5d6ff}
+.num{color:#79c0ff}
+.ty{color:#ffa657}
+.fn{color:#d2a8ff}
+.prop{color:#79c0ff}
+
+/* Tables */
+.spec-table{width:100%;border-collapse:collapse;font-size:12.5px;margin:16px 0}
+.spec-table th{text-align:left;padding:10px 14px;border-bottom:1px solid var(--border2);font-family:var(--mono);font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);font-weight:500}
+.spec-table td{padding:10px 14px;border-bottom:1px solid var(--border);color:var(--muted);vertical-align:top;line-height:1.6}
+.spec-table td:first-child{color:var(--text);font-weight:500}
+.spec-table tr:last-child td{border-bottom:none}
+.spec-table tr:hover td{background:rgba(255,255,255,.02)}
+
+/* Scale boxes */
+.scale-box{background:rgba(110,231,183,.05);border:1px solid rgba(110,231,183,.15);border-radius:8px;padding:14px 16px;margin-top:16px}
+.scale-box-title{font-family:var(--mono);font-size:10px;color:var(--accent);text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px;font-weight:500}
+.scale-box p{font-size:12.5px;color:var(--muted);line-height:1.6}
+
+/* Warning box */
+.warn-box{background:rgba(245,158,11,.05);border:1px solid rgba(245,158,11,.2);border-radius:8px;padding:14px 16px;margin:16px 0}
+.warn-box-title{font-family:var(--mono);font-size:10px;color:var(--accent3);text-transform:uppercase;letter-spacing:.1em;margin-bottom:6px;font-weight:500}
+.warn-box p{font-size:12.5px;color:var(--muted);line-height:1.6}
+
+/* Info box */
+.info-box{background:rgba(56,189,248,.05);border:1px solid rgba(56,189,248,.15);border-radius:8px;padding:14px 16px;margin:16px 0}
+.info-box p{font-size:12.5px;color:var(--muted);line-height:1.6}
+
+/* Deliverables */
+.deliverables{display:flex;flex-wrap:wrap;gap:6px;margin-top:16px}
+.del-chip{font-family:var(--mono);font-size:11px;padding:3px 10px;border-radius:3px;background:var(--bg4);border:1px solid var(--border);color:var(--muted)}
+
+/* Arch diagram (CSS-based) */
+.arch-diagram{background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:28px;margin:20px 0}
+.arch-tier{margin-bottom:20px}
+.arch-tier-label{font-family:var(--mono);font-size:10px;text-transform:uppercase;letter-spacing:.12em;color:var(--muted);margin-bottom:10px}
+.arch-nodes{display:flex;gap:10px;flex-wrap:wrap}
+.arch-node{font-family:var(--mono);font-size:11px;padding:7px 13px;border-radius:6px;border:1px solid;white-space:nowrap}
+.arch-node-teal{border-color:rgba(110,231,183,.3);color:var(--accent);background:rgba(110,231,183,.07)}
+.arch-node-blue{border-color:rgba(56,189,248,.3);color:#38bdf8;background:rgba(56,189,248,.07)}
+.arch-node-purple{border-color:rgba(129,140,248,.3);color:#818cf8;background:rgba(129,140,248,.07)}
+.arch-node-amber{border-color:rgba(245,158,11,.3);color:#f59e0b;background:rgba(245,158,11,.07)}
+.arch-node-red{border-color:rgba(248,113,113,.3);color:#f87171;background:rgba(248,113,113,.07)}
+.arch-node-gray{border-color:var(--border2);color:var(--muted);background:var(--bg3)}
+.arch-arrow{text-align:center;color:var(--border2);font-size:16px;margin:4px 0}
+
+/* Scrollbar */
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border2);border-radius:3px}
+
+/* Progress */
+.progress-ring{width:48px;height:48px}
+.phase-progress{display:flex;align-items:center;gap:12px;background:var(--bg4);border:1px solid var(--border);border-radius:8px;padding:12px 16px;margin-bottom:20px}
+.phase-progress-info{flex:1}
+.phase-progress-label{font-size:12.5px;color:var(--text);font-weight:500}
+.phase-progress-sub{font-size:11.5px;color:var(--muted);margin-top:2px}
+.progress-bar-wrap{margin-top:8px;background:var(--bg);border-radius:2px;height:4px;overflow:hidden}
+.progress-bar-fill{height:100%;background:var(--accent);border-radius:2px;transition:width .4s}
+
+/* Timeline */
+.timeline{position:relative;padding-left:28px;margin:20px 0}
+.timeline::before{content:'';position:absolute;left:6px;top:0;bottom:0;width:1px;background:var(--border)}
+.tl-item{position:relative;margin-bottom:24px}
+.tl-dot{position:absolute;left:-28px;top:4px;width:13px;height:13px;border-radius:50%;border:2px solid var(--bg3)}
+.tl-title{font-weight:500;color:var(--text);font-size:13px;margin-bottom:4px}
+.tl-body{font-size:12.5px;color:var(--muted);line-height:1.6}
+
+/* H tags */
+h3{font-family:var(--serif);font-size:18px;font-weight:600;color:var(--text);margin:28px 0 12px}
+h4{font-family:var(--mono);font-size:12px;font-weight:500;color:var(--accent2);text-transform:uppercase;letter-spacing:.1em;margin:20px 0 10px}
+p{font-size:13.5px;color:var(--muted);line-height:1.7;margin-bottom:12px}
+ul{list-style:none;margin:0 0 12px;padding:0}
+ul li{font-size:13px;color:var(--muted);padding:3px 0 3px 16px;position:relative;line-height:1.6}
+ul li::before{content:'–';position:absolute;left:0;color:var(--border2)}
+
+/* Tabs */
+.tabs{display:flex;gap:2px;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:4px;margin-bottom:16px;flex-wrap:wrap}
+.tab{font-family:var(--mono);font-size:11px;padding:6px 14px;border-radius:5px;cursor:pointer;color:var(--muted);border:none;background:transparent;transition:all .15s}
+.tab:hover{color:var(--text)}
+.tab.active{background:var(--bg3);color:var(--text);border:1px solid var(--border2)}
+.tab-content{display:none}
+.tab-content.active{display:block}
+
+/* Infra table */
+.infra-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;margin:16px 0}
+.infra-card{background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:14px 16px}
+.infra-service{font-family:var(--mono);font-size:12px;color:var(--accent);margin-bottom:4px}
+.infra-provider{font-size:13px;font-weight:500;color:var(--text);margin-bottom:6px}
+.infra-detail{font-size:11.5px;color:var(--muted);line-height:1.5}
+.infra-free{font-family:var(--mono);font-size:10px;color:#4ade80;background:rgba(74,222,128,.1);border:1px solid rgba(74,222,128,.2);padding:2px 7px;border-radius:3px;display:inline-block;margin-top:6px}
+
+/* Endpoint list */
+.endpoint-list{border:1px solid var(--border);border-radius:8px;overflow:hidden;margin:12px 0}
+.endpoint-item{display:flex;align-items:flex-start;gap:14px;padding:11px 16px;border-bottom:1px solid var(--border);font-size:12.5px}
+.endpoint-item:last-child{border-bottom:none}
+.endpoint-item:hover{background:rgba(255,255,255,.02)}
+.method{font-family:var(--mono);font-size:10px;font-weight:500;padding:2px 7px;border-radius:3px;white-space:nowrap;flex-shrink:0;margin-top:2px}
+.method-get{background:rgba(56,189,248,.12);color:#38bdf8;border:1px solid rgba(56,189,248,.2)}
+.method-post{background:rgba(110,231,183,.12);color:var(--accent);border:1px solid rgba(110,231,183,.2)}
+.method-patch{background:rgba(251,191,36,.12);color:#fbbf24;border:1px solid rgba(251,191,36,.2)}
+.method-delete{background:rgba(248,113,113,.12);color:#f87171;border:1px solid rgba(248,113,113,.2)}
+.endpoint-path{font-family:var(--mono);font-size:12px;color:var(--text);flex:1}
+.endpoint-desc{font-size:12px;color:var(--muted);margin-top:3px}
+
+/* Scaling matrix */
+.scale-matrix{border:1px solid var(--border);border-radius:8px;overflow:hidden;margin:16px 0}
+.scale-row{display:grid;grid-template-columns:140px 1fr 1fr;border-bottom:1px solid var(--border)}
+.scale-row:last-child{border-bottom:none}
+.scale-row:first-child{background:var(--bg4)}
+.scale-cell{padding:10px 14px;font-size:12px}
+.scale-cell:first-child{border-right:1px solid var(--border)}
+.scale-cell:nth-child(2){border-right:1px solid var(--border)}
+.scale-row:first-child .scale-cell{font-family:var(--mono);font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
+.scale-row:not(:first-child) .scale-cell:first-child{font-weight:500;color:var(--accent);font-family:var(--mono);font-size:11px}
+.scale-row:not(:first-child) .scale-cell:not(:first-child){color:var(--muted)}
+
+/* Mobile nav */
+.mobile-nav{display:none;padding:16px 20px;background:var(--bg2);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:50}
+@media(max-width:900px){.mobile-nav{display:flex;gap:8px;overflow-x:auto}}
+.mobile-nav-item{font-family:var(--mono);font-size:11px;padding:5px 12px;border-radius:4px;background:var(--bg3);color:var(--muted);cursor:pointer;white-space:nowrap;border:1px solid var(--border);text-decoration:none}
+.mobile-nav-item:hover{color:var(--text)}
+
+/* Section divider */
+.divider{border:none;border-top:1px solid var(--border);margin:32px 0}
+</style>
+</head>
+<body>
+
+<div class="layout">
+
+<!-- Sidebar -->
+<nav class="sidebar">
+  <div class="sidebar-logo">
+    <div class="mark">Master Spec v1.0</div>
+    <div class="name">AnimeIndex Platform</div>
+    <div class="sub">Zero budget → Production scale</div>
+  </div>
+
+  <div class="nav-group">
+    <div class="nav-group-label">Overview</div>
+    <a class="nav-item active" href="#overview">Architecture overview</a>
+    <a class="nav-item" href="#stack">Stack rationale</a>
+    <a class="nav-item" href="#infra">Free-tier infrastructure</a>
+  </div>
+
+  <div class="nav-group">
+    <div class="nav-group-label">Data layer</div>
+    <a class="nav-item" href="#schema">Database schema</a>
+    <a class="nav-item" href="#api">API endpoints</a>
+    <a class="nav-item" href="#cache">Caching strategy</a>
+  </div>
+
+  <div class="nav-group">
+    <div class="nav-group-label">Scraper</div>
+    <a class="nav-item" href="#scraper">Scraper architecture</a>
+    <a class="nav-item" href="#scheduler">Scheduler strategy</a>
+    <a class="nav-item" href="#fallback">Mirror fallback</a>
+  </div>
+
+  <div class="nav-group">
+    <div class="nav-group-label">Frontend</div>
+    <a class="nav-item" href="#frontend">UI structure</a>
+    <a class="nav-item" href="#player">Player component</a>
+    <a class="nav-item" href="#ads">Ads integration</a>
+    <a class="nav-item" href="#comments">Comments integration</a>
+  </div>
+
+  <div class="nav-group">
+    <div class="nav-group-label">Execution plan</div>
+    <a class="nav-item" href="#phase1">Phase 1 — Local dev <span class="nav-badge badge-phase">Day 1–2</span></a>
+    <a class="nav-item" href="#phase2">Phase 2 — Backend <span class="nav-badge badge-phase">Day 3–8</span></a>
+    <a class="nav-item" href="#phase3">Phase 3 — Scraper <span class="nav-badge badge-phase">Day 9–14</span></a>
+    <a class="nav-item" href="#phase4">Phase 4 — Frontend <span class="nav-badge badge-phase">Day 15–22</span></a>
+    <a class="nav-item" href="#phase5">Phase 5 — Ads <span class="nav-badge badge-phase">Day 23–24</span></a>
+    <a class="nav-item" href="#phase6">Phase 6 — Comments <span class="nav-badge badge-phase">Day 25–26</span></a>
+    <a class="nav-item" href="#phase7">Phase 7 — Deploy <span class="nav-badge badge-phase">Day 27–30</span></a>
+  </div>
+
+  <div class="nav-group">
+    <div class="nav-group-label">Operations</div>
+    <a class="nav-item" href="#security">Security</a>
+    <a class="nav-item" href="#legal">Legal architecture</a>
+    <a class="nav-item" href="#monitoring">Monitoring</a>
+    <a class="nav-item" href="#scaling">Scaling roadmap</a>
+  </div>
+</nav>
+
+<!-- Main content -->
+<main class="main">
+
+<!-- Mobile nav -->
+<div class="mobile-nav">
+  <a class="mobile-nav-item" href="#overview">Overview</a>
+  <a class="mobile-nav-item" href="#schema">Schema</a>
+  <a class="mobile-nav-item" href="#api">API</a>
+  <a class="mobile-nav-item" href="#scraper">Scraper</a>
+  <a class="mobile-nav-item" href="#phase1">Phase 1</a>
+  <a class="mobile-nav-item" href="#phase2">Phase 2</a>
+  <a class="mobile-nav-item" href="#phase3">Phase 3</a>
+  <a class="mobile-nav-item" href="#phase4">Phase 4</a>
+  <a class="mobile-nav-item" href="#phase7">Deploy</a>
+  <a class="mobile-nav-item" href="#scaling">Scale</a>
+</div>
+
+<!-- Hero -->
+<div class="hero" id="top">
+  <div class="hero-eyebrow">AnimeIndex · Master Technical Specification</div>
+  <h1 class="hero-title">From zero budget<br>to <span>production scale</span></h1>
+  <p class="hero-desc">Complete architecture, execution plan, and code reference for an anime streaming index platform. Modular monolith design — scales to millions of users without a rewrite.</p>
+  <div class="hero-meta">
+    <div class="hero-meta-item">
+      <div class="hero-meta-dot" style="background:#38bdf8"></div>
+      <span class="hero-meta-label">Backend</span>
+      <span class="hero-meta-value">.NET 8 Minimal API</span>
+    </div>
+    <div class="hero-meta-item">
+      <div class="hero-meta-dot" style="background:#f59e0b"></div>
+      <span class="hero-meta-label">Frontend</span>
+      <span class="hero-meta-value">Next.js 14 App Router</span>
+    </div>
+    <div class="hero-meta-item">
+      <div class="hero-meta-dot" style="background:#818cf8"></div>
+      <span class="hero-meta-label">Database</span>
+      <span class="hero-meta-value">PostgreSQL 16</span>
+    </div>
+    <div class="hero-meta-item">
+      <div class="hero-meta-dot" style="background:#6ee7b7"></div>
+      <span class="hero-meta-label">Scraper</span>
+      <span class="hero-meta-value">Playwright .NET</span>
+    </div>
+    <div class="hero-meta-item">
+      <div class="hero-meta-dot" style="background:#f87171"></div>
+      <span class="hero-meta-label">Timeline</span>
+      <span class="hero-meta-value">30 days to MVP</span>
+    </div>
+  </div>
+</div>
+
+<!-- ─── OVERVIEW ─── -->
+<section class="section" id="overview">
+  <div class="sec-eyebrow">Section 01</div>
+  <h2 class="sec-title">Architecture overview</h2>
+  <p class="sec-desc">The platform is a <strong style="color:var(--text)">modular monolith</strong> — not microservices. Four independently deployable concerns, all sharing a codebase, designed to decompose at clean interfaces when traffic demands it.</p>
+
+  <div class="arch-diagram">
+    <div class="arch-tier">
+      <div class="arch-tier-label">Ingestion layer</div>
+      <div class="arch-nodes">
+        <span class="arch-node arch-node-teal">Playwright scraper</span>
+        <span class="arch-node arch-node-teal">Hangfire scheduler</span>
+        <span class="arch-node arch-node-teal">Mirror validator</span>
+        <span class="arch-node arch-node-teal">IScrapeStrategy ×N</span>
+      </div>
+    </div>
+    <div class="arch-arrow">↓</div>
+    <div class="arch-tier">
+      <div class="arch-tier-label">Storage layer</div>
+      <div class="arch-nodes">
+        <span class="arch-node arch-node-purple">PostgreSQL 16</span>
+        <span class="arch-node arch-node-purple">Redis / Upstash</span>
+        <span class="arch-node arch-node-purple">Cloudflare R2</span>
+      </div>
+    </div>
+    <div class="arch-arrow">↓</div>
+    <div class="arch-tier">
+      <div class="arch-tier-label">Serving layer</div>
+      <div class="arch-nodes">
+        <span class="arch-node arch-node-blue">ASP.NET 8 API</span>
+        <span class="arch-node arch-node-blue">Next.js 14 SSR+ISR</span>
+        <span class="arch-node arch-node-blue">ICacheService</span>
+        <span class="arch-node arch-node-blue">Comments embed</span>
+      </div>
+    </div>
+    <div class="arch-arrow">↓</div>
+    <div class="arch-tier">
+      <div class="arch-tier-label">Edge layer</div>
+      <div class="arch-nodes">
+        <span class="arch-node arch-node-amber">Cloudflare CDN+WAF</span>
+        <span class="arch-node arch-node-amber">Ad network scripts</span>
+        <span class="arch-node arch-node-amber">Uptime monitoring</span>
+      </div>
+    </div>
+  </div>
+
+  <h3>Core design principle</h3>
+  <p>The platform <strong style="color:var(--text)">never stores video</strong>. It indexes publicly embeddable <code>&lt;iframe&gt;</code> URLs from third-party mirrors, validates they are embeddable by checking <code>X-Frame-Options</code> and <code>CSP</code> headers, stores them with a priority score, and serves them to the frontend which handles sequential fallback in the browser. This positions the platform legally as a search index, not a host.</p>
+
+  <div class="cards cards-2" style="margin-top:20px">
+    <div class="card card-accent">
+      <div class="card-title">Scaling contract #1 — cache portability</div>
+      <div class="card-sub"><code>ICacheService</code> is the only interface the API calls. Phase 1: Upstash HTTP. Phase 3: Redis Cluster. One DI line changes. Zero other code changes.</div>
+    </div>
+    <div class="card card-accent2">
+      <div class="card-title">Scaling contract #2 — scraper portability</div>
+      <div class="card-sub"><code>IScrapeStrategy</code> is the only interface the scheduler calls. Each strategy is independently containerizable. Adding a source = one new class.</div>
+    </div>
+    <div class="card card-accent3">
+      <div class="card-title">Scaling contract #3 — ad portability</div>
+      <div class="card-sub"><code>&lt;AdSlot placement="..."&gt;</code> is the only call site across all pages. Swapping ad networks = changing one component file. All pages unchanged.</div>
+    </div>
+    <div class="card card-accent5">
+      <div class="card-title">Scaling contract #4 — comment portability</div>
+      <div class="card-sub"><code>COMMENT_PROVIDER</code> env var switches between Disqus, Remark42, and native. The episode page layout never changes.</div>
+    </div>
+  </div>
+</section>
+
+<!-- ─── STACK ─── -->
+<section class="section" id="stack">
+  <div class="sec-eyebrow">Section 02</div>
+  <h2 class="sec-title">Stack rationale</h2>
+  <p class="sec-desc">Every choice is justified by free-tier availability, Phase 1 performance, and Phase 3 upgrade path. Alternatives are documented so future engineers can make informed swap decisions.</p>
+
+  <table class="spec-table">
+    <thead><tr><th>Layer</th><th>Choice</th><th>Why chosen</th><th>Phase 3 upgrade</th><th>Alternative</th></tr></thead>
+    <tbody>
+      <tr><td>.NET 8 Minimal API</td><td>Backend</td><td>Native AOT, sub-50ms cold start on Railway free. Playwright .NET is first-class. EF Core + Npgsql is gold-standard PG integration. Strong typing prevents runtime errors.</td><td>Same code on K8s with Dapr sidecars</td><td>Node.js/Fastify, Go/Gin</td></tr>
+      <tr><td>Next.js 14 App Router</td><td>Frontend</td><td>SSR for SEO-critical series/episode pages. ISR for genre listings. Client-only player avoids indexing iframe embeds. Vercel free tier is purpose-built for it.</td><td>Multi-region Vercel Edge, or self-hosted with next start</td><td>Nuxt 3, Remix, SvelteKit</td></tr>
+      <tr><td>PostgreSQL 16</td><td>Database</td><td>JSONB for flexible metadata, tsvector for full-text search, ON CONFLICT upsert for idempotent scraping, row-level security for future multi-tenancy.</td><td>Read replicas on Neon, then PG Citus</td><td>MySQL, SQLite, MongoDB</td></tr>
+      <tr><td>Playwright .NET</td><td>Scraper</td><td>Many anime sources use heavy JS rendering — HTTP-only scrapers miss embed URLs. Playwright drives real Chromium and intercepts all network requests. First-class .NET binding.</td><td>Containerized scraper fleet on K8s Jobs</td><td>PuppeteerSharp, Selenium</td></tr>
+      <tr><td>Hangfire</td><td>Scheduler</td><td>Persistent queue backed by PostgreSQL (same DB, no extra infra). Built-in retry with exponential backoff. Dashboard UI. Proven in production.</td><td>Swap to MassTransit + RabbitMQ (same job signatures)</td><td>Quartz.NET, IHostedService</td></tr>
+      <tr><td>Redis / Upstash</td><td>Cache</td><td>Episode list pages read thousands of times per minute. Even 60-second cache eliminates ~95% of DB reads. Upstash free tier (10k commands/day) with HTTP API works from serverless.</td><td>Upstash paid → Redis Cluster</td><td>Memcached, in-memory (dies on restart)</td></tr>
+      <tr><td>Cloudflare</td><td>CDN + WAF</td><td>Free tier: unlimited CDN bandwidth, WAF, Bot Fight Mode, DDoS L3/4, 5 rate limit rules. DNS proxy with zero config. Globally distributed edge.</td><td>Cloudflare Enterprise + Workers</td><td>AWS CloudFront, Fastly</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ─── INFRA ─── -->
+<section class="section" id="infra">
+  <div class="sec-eyebrow">Section 03</div>
+  <h2 class="sec-title">Free-tier infrastructure</h2>
+  <p class="sec-desc">Total monthly cost: <strong style="color:var(--accent)">$0</strong>. Every service has a documented upgrade path for Phase 2 ($20–50/mo) and Phase 3 (cloud-native).</p>
+
+  <div class="infra-grid">
+    <div class="infra-card">
+      <div class="infra-service">API backend</div>
+      <div class="infra-provider">Railway Starter</div>
+      <div class="infra-detail">500 compute hours/mo, 512MB RAM. Keep-alive via Cloudflare Worker ping every 25 min.</div>
+      <span class="infra-free">FREE</span>
+    </div>
+    <div class="infra-card">
+      <div class="infra-service">Frontend</div>
+      <div class="infra-provider">Vercel Hobby</div>
+      <div class="infra-detail">Unlimited deployments, 100GB bandwidth/mo, global edge network, automatic HTTPS.</div>
+      <span class="infra-free">FREE</span>
+    </div>
+    <div class="infra-card">
+      <div class="infra-service">PostgreSQL</div>
+      <div class="infra-provider">Supabase Free</div>
+      <div class="infra-detail">500MB storage, 2 vCPU, built-in PgBouncer pooler. Set EF Core max pool size = 10.</div>
+      <span class="infra-free">FREE</span>
+    </div>
+    <div class="infra-card">
+      <div class="infra-service">Redis cache</div>
+      <div class="infra-provider">Upstash Free</div>
+      <div class="infra-detail">10,000 commands/day, HTTP REST API, zero cold start. Works from any runtime.</div>
+      <span class="infra-free">FREE</span>
+    </div>
+    <div class="infra-card">
+      <div class="infra-service">Object storage</div>
+      <div class="infra-provider">Cloudflare R2</div>
+      <div class="infra-detail">10GB storage, 1M Class A requests/mo. S3-compatible API for seamless migration.</div>
+      <span class="infra-free">FREE</span>
+    </div>
+    <div class="infra-card">
+      <div class="infra-service">CDN + WAF</div>
+      <div class="infra-provider">Cloudflare Free</div>
+      <div class="infra-detail">Unlimited CDN bandwidth, Bot Fight Mode, DDoS protection, 5 rate limit rules.</div>
+      <span class="infra-free">FREE</span>
+    </div>
+    <div class="infra-card">
+      <div class="infra-service">CI/CD</div>
+      <div class="infra-provider">GitHub Actions</div>
+      <div class="infra-detail">2,000 minutes/month. Runs tests + deploys to Railway + Vercel on push to main.</div>
+      <span class="infra-free">FREE</span>
+    </div>
+    <div class="infra-card">
+      <div class="infra-service">Monitoring</div>
+      <div class="infra-provider">Better Uptime</div>
+      <div class="infra-detail">50 uptime monitors, SMS/email alerts. Ping /health every 60 seconds.</div>
+      <span class="infra-free">FREE</span>
+    </div>
+    <div class="infra-card">
+      <div class="infra-service">Error tracking</div>
+      <div class="infra-provider">Sentry Free</div>
+      <div class="infra-detail">5,000 errors/month. Integrates with .NET and Next.js in 5 minutes.</div>
+      <span class="infra-free">FREE</span>
+    </div>
+    <div class="infra-card">
+      <div class="infra-service">Comments</div>
+      <div class="infra-provider">Disqus Free</div>
+      <div class="infra-detail">Embed script, no server required. Replace with Remark42 in Phase 2.</div>
+      <span class="infra-free">FREE</span>
+    </div>
+    <div class="infra-card">
+      <div class="infra-service">Email alerts</div>
+      <div class="infra-provider">Resend Free</div>
+      <div class="infra-detail">100 emails/day. Used for dead-letter scrape alerts and DMCA notifications.</div>
+      <span class="infra-free">FREE</span>
+    </div>
+    <div class="infra-card">
+      <div class="infra-service">Scraper worker</div>
+      <div class="infra-provider">Railway (2nd project)</div>
+      <div class="infra-detail">Second free Railway project isolates Playwright's 300–400MB RAM from the API.</div>
+      <span class="infra-free">FREE</span>
+    </div>
+  </div>
+
+  <div class="warn-box">
+    <div class="warn-box-title">Railway free tier sleep behavior</div>
+    <p>Railway Starter services sleep after 30 minutes of inactivity. Deploy a Cloudflare Worker (free) with a cron trigger every 25 minutes that pings your API's <code>/health</code> endpoint. This keeps the service warm at zero cost.</p>
+  </div>
+</section>
+
+<!-- ─── SCHEMA ─── -->
+<section class="section" id="schema">
+  <div class="sec-eyebrow">Section 04</div>
+  <h2 class="sec-title">Database schema</h2>
+  <p class="sec-desc">Designed for read-heavy workloads. <code>series</code> and <code>episodes</code> are the hot tables. Upsert-safe via <code>ON CONFLICT DO UPDATE</code>. Full-text search via generated <code>tsvector</code> column — swapped to Typesense in Phase 3.</p>
+
+  <div class="code-header"><span class="code-file">schema.sql</span><span class="code-lang">PostgreSQL 16</span></div>
+<pre><span class="cm">-- Core tables. Run via EF Core migrations (dotnet ef database update).</span>
+
+<span class="kw">CREATE TABLE</span> <span class="ty">series</span> (
+  id              <span class="ty">UUID</span>        <span class="kw">PRIMARY KEY DEFAULT</span> gen_random_uuid(),
+  slug            <span class="ty">TEXT</span>        <span class="kw">UNIQUE NOT NULL</span>,
+  title           <span class="ty">TEXT</span>        <span class="kw">NOT NULL</span>,
+  title_romaji    <span class="ty">TEXT</span>,
+  title_native    <span class="ty">TEXT</span>,
+  synopsis        <span class="ty">TEXT</span>,
+  cover_url       <span class="ty">TEXT</span>,          <span class="cm">-- stored as path; served via STORAGE_BASE_URL env var</span>
+  banner_url      <span class="ty">TEXT</span>,
+  year            <span class="ty">SMALLINT</span>,
+  status          <span class="ty">TEXT</span>        <span class="kw">CHECK</span> (status <span class="kw">IN</span> (<span class="str">'ongoing'</span>,<span class="str">'completed'</span>,<span class="str">'upcoming'</span>,<span class="str">'hiatus'</span>)),
+  type            <span class="ty">TEXT</span>        <span class="kw">CHECK</span> (type <span class="kw">IN</span> (<span class="str">'tv'</span>,<span class="str">'movie'</span>,<span class="str">'ova'</span>,<span class="str">'ona'</span>,<span class="str">'special'</span>)),
+  score           <span class="ty">NUMERIC</span>(<span class="num">4</span>,<span class="num">2</span>),
+  episode_count   <span class="ty">SMALLINT</span>,
+  metadata        <span class="ty">JSONB</span>       <span class="kw">DEFAULT</span> <span class="str">'{}'</span>,   <span class="cm">-- flexible extra fields, no migration needed</span>
+  search_vector   <span class="ty">TSVECTOR</span>    <span class="cm">-- Phase 3: swap ISearchService impl to Typesense, drop this col</span>
+    <span class="kw">GENERATED ALWAYS AS</span> (
+      to_tsvector(<span class="str">'english'</span>,
+        coalesce(title,<span class="str">''</span>) || <span class="str">' '</span> || coalesce(title_romaji,<span class="str">''</span>) || <span class="str">' '</span> || coalesce(synopsis,<span class="str">''</span>))
+    ) <span class="kw">STORED</span>,
+  last_scraped_at <span class="ty">TIMESTAMPTZ</span>,
+  created_at      <span class="ty">TIMESTAMPTZ</span> <span class="kw">NOT NULL DEFAULT</span> now(),
+  updated_at      <span class="ty">TIMESTAMPTZ</span> <span class="kw">NOT NULL DEFAULT</span> now()
+);
+
+<span class="kw">CREATE INDEX</span> idx_series_slug        <span class="kw">ON</span> series(slug);
+<span class="kw">CREATE INDEX</span> idx_series_search      <span class="kw">ON</span> series <span class="kw">USING GIN</span>(search_vector);
+<span class="kw">CREATE INDEX</span> idx_series_status_year <span class="kw">ON</span> series(status, year <span class="kw">DESC</span>, score <span class="kw">DESC</span>);
+
+<span class="kw">CREATE TABLE</span> <span class="ty">episodes</span> (
+  id              <span class="ty">UUID</span>        <span class="kw">PRIMARY KEY DEFAULT</span> gen_random_uuid(),
+  series_id       <span class="ty">UUID</span>        <span class="kw">NOT NULL REFERENCES</span> series(id) <span class="kw">ON DELETE CASCADE</span>,
+  episode_number  <span class="ty">SMALLINT</span>    <span class="kw">NOT NULL</span>,
+  title           <span class="ty">TEXT</span>,
+  thumbnail_url   <span class="ty">TEXT</span>,
+  duration_secs   <span class="ty">SMALLINT</span>,
+  aired_at        <span class="ty">TIMESTAMPTZ</span>,
+  is_published    <span class="ty">BOOLEAN</span>     <span class="kw">NOT NULL DEFAULT</span> <span class="kw">false</span>,
+  created_at      <span class="ty">TIMESTAMPTZ</span> <span class="kw">NOT NULL DEFAULT</span> now(),
+  <span class="kw">UNIQUE</span> (series_id, episode_number)
+);
+
+<span class="kw">CREATE INDEX</span> idx_episodes_series <span class="kw">ON</span> episodes(series_id, episode_number <span class="kw">ASC</span>);
+
+<span class="kw">CREATE TABLE</span> <span class="ty">mirrors</span> (
+  id                   <span class="ty">UUID</span>        <span class="kw">PRIMARY KEY DEFAULT</span> gen_random_uuid(),
+  episode_id           <span class="ty">UUID</span>        <span class="kw">NOT NULL REFERENCES</span> episodes(id) <span class="kw">ON DELETE CASCADE</span>,
+  provider_name        <span class="ty">TEXT</span>        <span class="kw">NOT NULL</span>,
+  embed_url            <span class="ty">TEXT</span>        <span class="kw">NOT NULL</span>,
+  quality_label        <span class="ty">SMALLINT</span>    <span class="kw">DEFAULT</span> <span class="num">720</span>,
+  priority             <span class="ty">SMALLINT</span>    <span class="kw">NOT NULL DEFAULT</span> <span class="num">0</span>,
+  is_active            <span class="ty">BOOLEAN</span>     <span class="kw">NOT NULL DEFAULT</span> <span class="kw">true</span>,
+  consecutive_failures <span class="ty">SMALLINT</span>    <span class="kw">NOT NULL DEFAULT</span> <span class="num">0</span>,
+  last_checked_at      <span class="ty">TIMESTAMPTZ</span>,
+  created_at           <span class="ty">TIMESTAMPTZ</span> <span class="kw">NOT NULL DEFAULT</span> now(),
+  <span class="kw">UNIQUE</span> (episode_id, embed_url)
+);
+
+<span class="kw">CREATE INDEX</span> idx_mirrors_episode_active
+  <span class="kw">ON</span> mirrors(episode_id, priority <span class="kw">ASC</span>) <span class="kw">WHERE</span> is_active = <span class="kw">true</span>;
+
+<span class="kw">CREATE TABLE</span> <span class="ty">genres</span> (id <span class="ty">SERIAL PRIMARY KEY</span>, name <span class="ty">TEXT UNIQUE NOT NULL</span>);
+<span class="kw">CREATE TABLE</span> <span class="ty">series_genres</span> (
+  series_id <span class="ty">UUID</span> <span class="kw">REFERENCES</span> series(id) <span class="kw">ON DELETE CASCADE</span>,
+  genre_id  <span class="ty">INT</span>  <span class="kw">REFERENCES</span> genres(id) <span class="kw">ON DELETE CASCADE</span>,
+  <span class="kw">PRIMARY KEY</span> (series_id, genre_id)
+);
+
+<span class="kw">CREATE TABLE</span> <span class="ty">blocked_slugs</span> (   <span class="cm">-- DMCA takedown registry</span>
+  slug       <span class="ty">TEXT PRIMARY KEY</span>,
+  reason     <span class="ty">TEXT</span>,
+  blocked_at <span class="ty">TIMESTAMPTZ NOT NULL DEFAULT</span> now()
+);
+
+<span class="kw">CREATE TABLE</span> <span class="ty">scrape_jobs</span> (
+  id            <span class="ty">UUID PRIMARY KEY DEFAULT</span> gen_random_uuid(),
+  series_id     <span class="ty">UUID REFERENCES</span> series(id),
+  job_type      <span class="ty">TEXT NOT NULL</span>,
+  status        <span class="ty">TEXT NOT NULL DEFAULT</span> <span class="str">'pending'</span>
+                <span class="kw">CHECK</span> (status <span class="kw">IN</span> (<span class="str">'pending'</span>,<span class="str">'running'</span>,<span class="str">'completed'</span>,<span class="str">'failed'</span>,<span class="str">'dead_letter'</span>)),
+  attempt_count <span class="ty">SMALLINT NOT NULL DEFAULT</span> <span class="num">0</span>,
+  error_message <span class="ty">TEXT</span>,
+  scheduled_at  <span class="ty">TIMESTAMPTZ NOT NULL DEFAULT</span> now(),
+  completed_at  <span class="ty">TIMESTAMPTZ</span>
+);</pre>
+</section>
+
+<!-- ─── API ─── -->
+<section class="section" id="api">
+  <div class="sec-eyebrow">Section 05</div>
+  <h2 class="sec-title">API endpoints</h2>
+  <p class="sec-desc">All public endpoints are rate-limited (60 req/min/IP) and cached in Redis. Error shape is frozen: <code>{"error":"string","code":"string"}</code>. Pagination shape is frozen: <code>{"data":[],"total":int,"page":int,"pageSize":int}</code>.</p>
+
+  <h4>Public endpoints</h4>
+  <div class="endpoint-list">
+    <div class="endpoint-item"><span class="method method-get">GET</span><div><div class="endpoint-path">/health</div><div class="endpoint-desc">Returns {status, db, cache, version}. Polled by Better Uptime every 60s.</div></div></div>
+    <div class="endpoint-item"><span class="method method-get">GET</span><div><div class="endpoint-path">/series</div><div class="endpoint-desc">Paginated series list. Query: page, pageSize, status, type, genre, year, sort=score|updated|year. Cache: 10min.</div></div></div>
+    <div class="endpoint-item"><span class="method method-get">GET</span><div><div class="endpoint-path">/series/search?q={query}</div><div class="endpoint-desc">Full-text search via tsvector (Phase 3: Typesense). Cache: 5min per query string.</div></div></div>
+    <div class="endpoint-item"><span class="method method-get">GET</span><div><div class="endpoint-path">/series/{slug}</div><div class="endpoint-desc">Single series with genres[] and episodeCount. Cache: 10min. SSR-friendly.</div></div></div>
+    <div class="endpoint-item"><span class="method method-get">GET</span><div><div class="endpoint-path">/series/{slug}/episodes</div><div class="endpoint-desc">Paginated episode list ordered by episode_number ASC. Cache: 5min.</div></div></div>
+    <div class="endpoint-item"><span class="method method-get">GET</span><div><div class="endpoint-path">/episodes/{id}</div><div class="endpoint-desc">Single episode with embedded series stub and ordered active mirrors[]. Cache: 5min.</div></div></div>
+    <div class="endpoint-item"><span class="method method-get">GET</span><div><div class="endpoint-path">/episodes/{id}/mirrors</div><div class="endpoint-desc">Active mirrors ordered by priority ASC. Used by client fallback logic on player load.</div></div></div>
+    <div class="endpoint-item"><span class="method method-patch">PATCH</span><div><div class="endpoint-path">/mirrors/{id}/report</div><div class="endpoint-desc">Increment consecutive_failures. Auto-disable at ≥5. Rate limit: 10/min/IP. No cache.</div></div></div>
+    <div class="endpoint-item"><span class="method method-get">GET</span><div><div class="endpoint-path">/genres</div><div class="endpoint-desc">All genres. Cache: indefinite, invalidated on schema change only.</div></div></div>
+  </div>
+
+  <h4>Admin endpoints (X-Admin-Key header)</h4>
+  <div class="endpoint-list">
+    <div class="endpoint-item"><span class="method method-post">POST</span><div><div class="endpoint-path">/admin/scrape/series</div><div class="endpoint-desc">Body: {sourceUrl, forceRefresh?}. Queues a scrape job. Returns {jobId, status: "queued"}.</div></div></div>
+    <div class="endpoint-item"><span class="method method-get">GET</span><div><div class="endpoint-path">/admin/jobs</div><div class="endpoint-desc">Paginated scrape job list with status filter. Used to monitor dead-letter queue.</div></div></div>
+    <div class="endpoint-item"><span class="method method-delete">DELETE</span><div><div class="endpoint-path">/admin/series/{slug}</div><div class="endpoint-desc">DMCA takedown: deletes series, adds slug to blocked_slugs, sends confirmation email.</div></div></div>
+  </div>
+
+  <div class="code-header"><span class="code-file">ICacheService.cs</span><span class="code-lang">C# — scaling contract</span></div>
+<pre><span class="cm">// THE cache portability interface.
+// Change DI registration in Program.cs only — zero other changes for any swap.</span>
+<span class="kw">public interface</span> <span class="ty">ICacheService</span>
+{
+    <span class="ty">Task</span>&lt;<span class="ty">T</span>?&gt; <span class="fn">GetAsync</span>&lt;<span class="ty">T</span>&gt;(<span class="ty">string</span> key, <span class="ty">CancellationToken</span> ct = <span class="kw">default</span>);
+    <span class="ty">Task</span> <span class="fn">SetAsync</span>&lt;<span class="ty">T</span>&gt;(<span class="ty">string</span> key, <span class="ty">T</span> value, <span class="ty">TimeSpan</span>? ttl = <span class="kw">null</span>, <span class="ty">CancellationToken</span> ct = <span class="kw">default</span>);
+    <span class="ty">Task</span> <span class="fn">DeleteAsync</span>(<span class="ty">string</span> key, <span class="ty">CancellationToken</span> ct = <span class="kw">default</span>);
+    <span class="ty">Task</span> <span class="fn">DeleteByPatternAsync</span>(<span class="ty">string</span> pattern, <span class="ty">CancellationToken</span> ct = <span class="kw">default</span>);
+}
+
+<span class="cm">// Phase 1: Upstash HTTP client (works from serverless, no native TCP)
+// Phase 2: StackExchange.Redis pointing at dedicated instance
+// Phase 3: StackExchange.Redis pointing at Redis Cluster with read replicas</span></pre>
+</section>
+
+<!-- ─── CACHE ─── -->
+<section class="section" id="cache">
+  <div class="sec-eyebrow">Section 06</div>
+  <h2 class="sec-title">Caching strategy</h2>
+  <p class="sec-desc">Every read endpoint checks Redis before touching PostgreSQL. Cache keys are namespaced by entity type. Invalidation is event-driven — fired by the scraper immediately after a successful upsert.</p>
+
+  <table class="spec-table">
+    <thead><tr><th>Cache key pattern</th><th>TTL</th><th>Invalidated by</th><th>Bypass condition</th></tr></thead>
+    <tbody>
+      <tr><td><code>series:list:{hash(query)}</code></td><td>10 min</td><td>Any series upsert</td><td>Admin forceRefresh flag</td></tr>
+      <tr><td><code>series:{slug}</code></td><td>10 min</td><td>series upsert for that slug</td><td>—</td></tr>
+      <tr><td><code>series:{slug}:episodes:{page}</code></td><td>5 min</td><td>Any episode upsert for that series</td><td>—</td></tr>
+      <tr><td><code>episode:{id}</code></td><td>5 min</td><td>episode upsert for that id</td><td>—</td></tr>
+      <tr><td><code>episode:{id}:mirrors</code></td><td>5 min</td><td>Mirror upsert/disable for that episode</td><td>—</td></tr>
+      <tr><td><code>series:search:{q}:{page}</code></td><td>5 min</td><td>Any series upsert (pattern delete)</td><td>—</td></tr>
+      <tr><td><code>genres</code></td><td>∞</td><td>Manual flush only (genres are stable)</td><td>—</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ─── SCRAPER ─── -->
+<section class="section" id="scraper">
+  <div class="sec-eyebrow">Section 07</div>
+  <h2 class="sec-title">Scraper architecture</h2>
+  <p class="sec-desc"><code>IScrapeStrategy</code> is the distributed scraping contract. Each source site has its own implementation. The scheduler never imports concrete strategy types — it calls the interface. In Phase 3, each strategy becomes an independent containerized worker.</p>
+
+  <div class="code-header"><span class="code-file">IScrapeStrategy.cs</span><span class="code-lang">C# — distributed scaling contract</span></div>
+<pre><span class="cm">// Adding a new source site = implement this interface + register in DI.
+// Phase 3: each implementation runs as a K8s Job reading from shared Hangfire queue.
+// Zero changes to scheduler or API when adding sources.</span>
+<span class="kw">public interface</span> <span class="ty">IScrapeStrategy</span>
+{
+    <span class="ty">string</span> SourceName { <span class="kw">get</span>; }
+    <span class="ty">bool</span> <span class="fn">CanHandle</span>(<span class="ty">string</span> url);
+    <span class="ty">Task</span>&lt;<span class="ty">ScrapeResult</span>&gt; <span class="fn">ScrapeSeriesAsync</span>(<span class="ty">string</span> url, <span class="ty">CancellationToken</span> ct = <span class="kw">default</span>);
+    <span class="ty">Task</span>&lt;<span class="ty">ScrapeResult</span>&gt; <span class="fn">ScrapeEpisodeMirrorsAsync</span>(<span class="ty">string</span> url, <span class="ty">CancellationToken</span> ct = <span class="kw">default</span>);
+}
+
+<span class="kw">public record</span> <span class="ty">ScrapeResult</span>(
+    <span class="ty">bool</span> Success,
+    <span class="ty">SeriesMetadata</span>? Series,
+    <span class="ty">List</span>&lt;<span class="ty">EpisodeMetadata</span>&gt; Episodes,
+    <span class="ty">List</span>&lt;<span class="ty">MirrorCandidate</span>&gt; Mirrors,
+    <span class="ty">string</span>? ErrorMessage = <span class="kw">null</span>
+);</pre>
+
+  <div class="code-header"><span class="code-file">PlaywrightScraperBase.cs</span><span class="code-lang">C# — shared browser infrastructure</span></div>
+<pre><span class="kw">public abstract class</span> <span class="ty">PlaywrightScraperBase</span> : <span class="ty">IScrapeStrategy</span>, <span class="ty">IAsyncDisposable</span>
+{
+    <span class="kw">private static readonly</span> <span class="ty">string</span>[] UserAgents = [
+        <span class="str">"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122.0.0.0 Safari/537.36"</span>,
+        <span class="cm">// ... 19 more real browser UAs rotated per request</span>
+    ];
+
+    <span class="kw">protected async</span> <span class="ty">Task</span>&lt;<span class="ty">IPage</span>&gt; <span class="fn">GetPageAsync</span>()
+    {
+        <span class="kw">var</span> browser = <span class="kw">await</span> _playwright.Chromium.<span class="fn">LaunchAsync</span>(<span class="kw">new</span>() {
+            Headless = <span class="kw">true</span>,
+            Args = [<span class="str">"--no-sandbox"</span>, <span class="str">"--disable-gpu"</span>, <span class="str">"--disable-dev-shm-usage"</span>]
+        });
+
+        <span class="kw">var</span> ua = UserAgents[Random.Shared.<span class="fn">Next</span>(UserAgents.Length)];
+        <span class="kw">var</span> page = <span class="kw">await</span> browser.<span class="fn">NewPageAsync</span>(<span class="kw">new</span>() { UserAgent = ua });
+
+        <span class="cm">// Intercept ALL network requests — captures dynamically injected iframe src values
+        // that HTTP-only scrapers completely miss.</span>
+        page.RequestFinished += (_, req) => {
+            <span class="kw">if</span> (req.Url.<span class="fn">Contains</span>(<span class="str">"embed"</span>) || req.Url.<span class="fn">Contains</span>(<span class="str">"player"</span>))
+                _capturedEmbeds.<span class="fn">Add</span>(req.Url);
+        };
+        <span class="kw">return</span> page;
+    }
+
+    <span class="kw">protected async</span> <span class="ty">Task</span> <span class="fn">JitterDelayAsync</span>()
+        => <span class="kw">await</span> Task.<span class="fn">Delay</span>(Random.Shared.<span class="fn">Next</span>(<span class="num">2000</span>, <span class="num">5000</span>)); <span class="cm">// 2–5s random delay</span>
+}</pre>
+
+  <div class="code-header"><span class="code-file">MirrorProbeService.cs</span><span class="code-lang">C# — embeddability gate</span></div>
+<pre><span class="cm">// Only indexes URLs the host has explicitly made embeddable.
+// This is the legal and technical gate — rejects any URL that blocks iframes.</span>
+<span class="kw">public async</span> <span class="ty">Task</span>&lt;<span class="ty">bool</span>&gt; <span class="fn">IsEmbeddableAsync</span>(<span class="ty">string</span> url)
+{
+    <span class="kw">var</span> response = <span class="kw">await</span> _client.<span class="fn">SendAsync</span>(
+        <span class="kw">new</span> <span class="ty">HttpRequestMessage</span>(<span class="ty">HttpMethod</span>.Head, url));
+
+    <span class="kw">if</span> (!response.IsSuccessStatusCode) <span class="kw">return false</span>;
+
+    <span class="kw">if</span> (response.Headers.<span class="fn">TryGetValues</span>(<span class="str">"X-Frame-Options"</span>, <span class="kw">out var</span> xfo))
+        <span class="kw">if</span> (xfo.First().ToUpper() <span class="kw">is</span> <span class="str">"DENY"</span> <span class="kw">or</span> <span class="str">"SAMEORIGIN"</span>) <span class="kw">return false</span>;
+
+    <span class="kw">if</span> (response.Headers.<span class="fn">TryGetValues</span>(<span class="str">"Content-Security-Policy"</span>, <span class="kw">out var</span> csp))
+        <span class="kw">if</span> (csp.First().<span class="fn">Contains</span>(<span class="str">"frame-ancestors 'none'"</span>)) <span class="kw">return false</span>;
+
+    <span class="kw">return true</span>;
+}</pre>
+</section>
+
+<!-- ─── SCHEDULER ─── -->
+<section class="section" id="scheduler">
+  <div class="sec-eyebrow">Section 08</div>
+  <h2 class="sec-title">Scheduler strategy</h2>
+  <p class="sec-desc">All jobs run via Hangfire with PostgreSQL backing. No additional infrastructure. Dead-letter jobs trigger a Resend email alert.</p>
+
+  <table class="spec-table">
+    <thead><tr><th>Job name</th><th>Schedule</th><th>Description</th><th>Retry policy</th></tr></thead>
+    <tbody>
+      <tr><td><code>ScrapeNewEpisodes</code></td><td>Every 15 min</td><td>Check all ongoing series for new episodes. Scrapes only series with status=ongoing.</td><td>3× with exp. backoff → dead_letter</td></tr>
+      <tr><td><code>RefreshSeriesMetadata</code></td><td>Every 6 hours</td><td>Re-scrape synopsis, score, cover for all series. Updates are idempotent (ON CONFLICT).</td><td>3× → dead_letter</td></tr>
+      <tr><td><code>MirrorHealthCheck</code></td><td>Every 30 min</td><td>HTTP HEAD each active mirror. Sets is_active=false at consecutive_failures ≥ 5.</td><td>1× (probe failures are expected)</td></tr>
+      <tr><td><code>CleanHealthLog</code></td><td>Daily 3am UTC</td><td>Delete mirror_health_log rows older than 30 days.</td><td>1×</td></tr>
+      <tr><td><code>ReactivateDeadMirrors</code></td><td>Weekly Mon 4am</td><td>Re-probe all is_active=false mirrors. Reactivate if now embeddable.</td><td>1×</td></tr>
+    </tbody>
+  </table>
+
+  <div class="scale-box">
+    <div class="scale-box-title">Phase 3 — queue upgrade path</div>
+    <p>Job method signatures are the contract. In Phase 3, swap Hangfire's PostgreSQL backing for <code>MassTransit + RabbitMQ</code> — register the same job classes as MassTransit consumers. The scheduler calls <code>IJobRunner.EnqueueAsync&lt;T&gt;()</code>, not Hangfire directly, so the swap is one implementation change.</p>
+  </div>
+</section>
+
+<!-- ─── MIRROR FALLBACK ─── -->
+<section class="section" id="fallback">
+  <div class="sec-eyebrow">Section 09</div>
+  <h2 class="sec-title">Mirror fallback logic</h2>
+  <p class="sec-desc">All fallback runs client-side. The API returns an ordered array of mirrors. The browser tries them sequentially with a 5-second timeout. Failures are reported back to the API asynchronously.</p>
+
+  <div class="code-header"><span class="code-file">useMirrorFallback.ts</span><span class="code-lang">TypeScript — client-side hook</span></div>
+<pre><span class="kw">const</span> LOAD_TIMEOUT_MS = <span class="num">5000</span>;
+<span class="kw">const</span> MAX_ATTEMPTS = <span class="num">3</span>;
+
+<span class="kw">export function</span> <span class="fn">useMirrorFallback</span>(mirrors: <span class="ty">Mirror</span>[]) {
+  <span class="kw">const</span> [index, setIndex] = <span class="fn">useState</span>(<span class="num">0</span>);
+  <span class="kw">const</span> [status, setStatus] = <span class="fn">useState</span>&lt;<span class="str">'loading'</span> | <span class="str">'playing'</span> | <span class="str">'error'</span>&gt;(<span class="str">'loading'</span>);
+  <span class="kw">const</span> iframeRef = <span class="fn">useRef</span>&lt;<span class="ty">HTMLIFrameElement</span>&gt;();
+  <span class="kw">const</span> attempts = <span class="fn">useRef</span>(<span class="num">0</span>);
+
+  <span class="kw">const</span> tryNext = <span class="fn">useCallback</span>((from: <span class="ty">number</span>) => {
+    <span class="kw">const</span> next = from + <span class="num">1</span>;
+    <span class="kw">if</span> (next >= mirrors.length || attempts.current >= MAX_ATTEMPTS) {
+      <span class="fn">setStatus</span>(<span class="str">'error'</span>); <span class="kw">return</span>;
+    }
+    attempts.current++;
+    <span class="fn">setStatus</span>(<span class="str">'loading'</span>);
+    <span class="fn">setIndex</span>(next);
+  }, [mirrors.length]);
+
+  <span class="fn">useEffect</span>(() => {
+    <span class="kw">const</span> timer = <span class="fn">setTimeout</span>(() => {
+      <span class="fn">reportMirrorFailure</span>(mirrors[index].id); <span class="cm">// fire-and-forget</span>
+      <span class="fn">tryNext</span>(index);
+    }, LOAD_TIMEOUT_MS);
+
+    iframeRef.current?.addEventListener(<span class="str">'load'</span>, () => {
+      <span class="fn">clearTimeout</span>(timer); <span class="fn">setStatus</span>(<span class="str">'playing'</span>);
+    });
+
+    <span class="kw">return</span> () => <span class="fn">clearTimeout</span>(timer);
+  }, [index]);
+
+  <span class="kw">return</span> { currentMirror: mirrors[index], status, iframeRef, <span class="fn">selectMirror</span>: setIndex };
+}
+
+<span class="kw">function</span> <span class="fn">reportMirrorFailure</span>(id: <span class="ty">string</span>) {
+  <span class="cm">// Never await — non-critical path, never block the UI</span>
+  fetch(<span class="str">`/api/mirrors/${id}/report`</span>, { method: <span class="str">'PATCH'</span> }).<span class="fn">catch</span>(() => {});
+}</pre>
+
+  <h4>Mirror priority formula</h4>
+  <p>When the scraper stores mirrors, it calculates a <code>priority</code> integer (lower = tried first):</p>
+<pre><span class="cm">priority = round(
+  (1 - quality_label / 1080) * 40   -- quality: 1080p gets priority 0, 360p gets 40
+  + consecutive_failures * 10        -- failures push mirror down the list
+  + provider_reputation_penalty      -- configurable per-provider offset
+)</span></pre>
+</section>
+
+<!-- ─── FRONTEND ─── -->
+<section class="section" id="frontend">
+  <div class="sec-eyebrow">Section 10</div>
+  <h2 class="sec-title">Frontend structure</h2>
+  <p class="sec-desc">Next.js 14 App Router with hybrid rendering — SSR for SEO pages, ISR for listings, client-only for the player. The episode page metadata appears in the raw HTML for search engines; the iframe never does.</p>
+
+  <div class="code-header"><span class="code-file">app/ directory structure</span><span class="code-lang">Next.js 14 App Router</span></div>
+<pre>app/
+├── (public)/
+│   ├── page.tsx                <span class="cm">-- Homepage (ISR 1h) — trending series grid</span>
+│   ├── search/page.tsx         <span class="cm">-- Search results (SSR per request, URL-synced ?q=)</span>
+│   ├── genre/[genre]/page.tsx  <span class="cm">-- Genre listing (ISR 1h)</span>
+│   └── [slug]/
+│       ├── page.tsx            <span class="cm">-- Series page (SSR) — synopsis, episode list, genres</span>
+│       └── [episode]/
+│           └── page.tsx        <span class="cm">-- Episode page (SSR metadata + 'use client' player)</span>
+├── layout.tsx                  <span class="cm">-- Root layout: Navbar, AdSense script, theme provider</span>
+├── not-found.tsx
+└── error.tsx
+
+<span class="cm">-- Rendering strategy per route:
+-- Homepage:     ISR revalidate=3600  (cached globally, updated hourly)
+-- Series page:  SSR on each request  (fresh episode counts, dynamic status)
+-- Episode page: SSR for metadata     (og:title, og:description, JSON-LD for SEO)
+--               'use client' player  (iframe never in SSR output — SEO safe)
+-- Search:       SSR on each request  (results must be fresh, URL-driven)</span></pre>
+
+  <div class="code-header"><span class="code-file">lib/api.ts</span><span class="code-lang">TypeScript — API client scaling contract</span></div>
+<pre><span class="cm">// ALL API calls flow through this module.
+// NEXT_PUBLIC_API_URL is the ONLY thing that changes when the API scales.
+// Phase 3: this URL becomes a Cloudflare-fronted load balancer. Zero frontend changes.</span>
+
+<span class="kw">const</span> BASE = process.env.<span class="prop">NEXT_PUBLIC_API_URL</span>;
+
+<span class="kw">async function</span> <span class="fn">apiFetch</span>&lt;<span class="ty">T</span>&gt;(path: <span class="ty">string</span>, init?: <span class="ty">RequestInit</span>): <span class="ty">Promise</span>&lt;<span class="ty">T</span>&gt; {
+  <span class="kw">const</span> res = <span class="kw">await</span> <span class="fn">fetch</span>(<span class="str">`${BASE}${path}`</span>, {
+    ...init,
+    headers: { <span class="str">'Content-Type'</span>: <span class="str">'application/json'</span>, ...init?.headers },
+    next: init?.next,   <span class="cm">// passthrough for Next.js ISR cache hints</span>
+  });
+  <span class="kw">if</span> (!res.ok) <span class="kw">throw new</span> <span class="ty">ApiError</span>(res.status, (<span class="kw">await</span> res.<span class="fn">json</span>()).error);
+  <span class="kw">return</span> res.<span class="fn">json</span>();
+}
+
+<span class="kw">export const</span> getSeriesDetail = (slug: <span class="ty">string</span>) =>
+  <span class="fn">apiFetch</span>&lt;<span class="ty">SeriesDetail</span>&gt;(<span class="str">`/series/${slug}`</span>, { next: { revalidate: <span class="num">600</span> } });
+
+<span class="kw">export const</span> getMirrors = (episodeId: <span class="ty">string</span>) =>
+  <span class="fn">apiFetch</span>&lt;<span class="ty">Mirror</span>[]&gt;(<span class="str">`/episodes/${episodeId}/mirrors`</span>);
+
+<span class="kw">export const</span> reportMirrorFailure = (mirrorId: <span class="ty">string</span>) =>
+  <span class="fn">fetch</span>(<span class="str">`${BASE}/mirrors/${mirrorId}/report`</span>, { method: <span class="str">'PATCH'</span> }).<span class="fn">catch</span>(() => {});</pre>
+</section>
+
+<!-- ─── PLAYER ─── -->
+<section class="section" id="player">
+  <div class="sec-eyebrow">Section 11</div>
+  <h2 class="sec-title">Player component</h2>
+
+  <div class="code-header"><span class="code-file">EpisodePlayer.tsx</span><span class="code-lang">React — 'use client'</span></div>
+<pre><span class="str">'use client'</span>;
+<span class="cm">// This component is NEVER included in SSR output.
+// Search engines see the episode metadata (title, synopsis, thumbnail)
+// but never try to load an iframe embed. This is the correct SEO boundary.</span>
+
+<span class="kw">export function</span> <span class="fn">EpisodePlayer</span>({ mirrors }: { mirrors: <span class="ty">Mirror</span>[] }) {
+  <span class="kw">const</span> { currentMirror, status, iframeRef, <span class="fn">selectMirror</span> } = <span class="fn">useMirrorFallback</span>(mirrors);
+
+  <span class="kw">if</span> (status === <span class="str">'error'</span>) <span class="kw">return</span> &lt;<span class="ty">PlayerError</span> /&gt;;
+
+  <span class="kw">return</span> (
+    &lt;<span class="ty">div</span> className=<span class="str">"space-y-3"</span>&gt;
+      {status === <span class="str">'loading'</span> &amp;&amp; &lt;<span class="ty">PlayerSkeleton</span> /&gt;}
+      &lt;<span class="ty">iframe</span>
+        ref={iframeRef}
+        src={currentMirror?.embedUrl}
+        className={status === <span class="str">'loading'</span> ? <span class="str">'hidden'</span> : <span class="str">'w-full aspect-video rounded-lg'</span>}
+        <span class="cm">// sandbox restricts what the embedded player is allowed to do</span>
+        sandbox=<span class="str">"allow-scripts allow-same-origin allow-presentation allow-fullscreen"</span>
+        referrerPolicy=<span class="str">"no-referrer"</span>
+        allowFullScreen
+      /&gt;
+      &lt;<span class="ty">MirrorPicker</span> mirrors={mirrors} current={currentMirror} onSelect={selectMirror} /&gt;
+    &lt;/<span class="ty">div</span>&gt;
+  );
+}</pre>
+</section>
+
+<!-- ─── ADS ─── -->
+<section class="section" id="ads">
+  <div class="sec-eyebrow">Section 12</div>
+  <h2 class="sec-title">Ads integration</h2>
+  <p class="sec-desc"><code>AdSlot</code> is the only component that contains ad network code. Every page uses <code>&lt;AdSlot placement="..."&gt;</code>. Swapping from AdSense to Ezoic to Mediavine requires changing one file.</p>
+
+  <div class="code-header"><span class="code-file">AdSlot.tsx</span><span class="code-lang">React — ad network replacement contract</span></div>
+<pre><span class="str">'use client'</span>;
+<span class="cm">// SCALING CONTRACT: This is the ONLY file with ad network code.
+// AD_CONFIG is the single source of truth for ad unit IDs.
+// Swap networks: change AD_CONFIG + AdUnitComponent. All &lt;AdSlot&gt; call sites unchanged.</span>
+
+<span class="kw">const</span> AD_CONFIG = {
+  <span class="str">'above-fold'</span>:      { slot: <span class="str">'1234567890'</span>, minHeight: <span class="num">90</span>  },
+  <span class="str">'below-player'</span>:   { slot: <span class="str">'2345678901'</span>, minHeight: <span class="num">250</span> },
+  <span class="str">'below-episodes'</span>: { slot: <span class="str">'3456789012'</span>, minHeight: <span class="num">250</span> },
+} <span class="kw">as const</span>;
+
+<span class="kw">export function</span> <span class="fn">AdSlot</span>({ placement }) {
+  <span class="kw">const</span> ref = <span class="fn">useRef</span>();
+  <span class="fn">useEffect</span>(() => {
+    <span class="kw">const</span> obs = <span class="kw">new</span> <span class="ty">IntersectionObserver</span>(([e]) => {
+      <span class="kw">if</span> (e.isIntersecting) {
+        <span class="cm">// push() the ad unit lazily — only when the slot is in viewport</span>
+        ((window <span class="kw">as any</span>).adsbygoogle ??= []).<span class="fn">push</span>({});
+        obs.<span class="fn">disconnect</span>();
+      }
+    });
+    <span class="kw">if</span> (ref.current) obs.<span class="fn">observe</span>(ref.current);
+    <span class="kw">return</span> () => obs.<span class="fn">disconnect</span>();
+  }, []);
+
+  <span class="kw">return</span> (
+    <span class="cm">// min-height prevents CLS before ad loads — required for Core Web Vitals</span>
+    &lt;<span class="ty">div</span> ref={ref} style={{ minHeight: AD_CONFIG[placement].minHeight }}&gt;
+      &lt;<span class="ty">ins</span> className=<span class="str">"adsbygoogle"</span>
+           data-ad-client={process.env.NEXT_PUBLIC_ADSENSE_ID}
+           data-ad-slot={AD_CONFIG[placement].slot}
+           data-full-width-responsive=<span class="str">"true"</span> /&gt;
+    &lt;/<span class="ty">div</span>&gt;
+  );
+}</pre>
+
+  <table class="spec-table" style="margin-top:20px">
+    <thead><tr><th>Phase</th><th>Ad network</th><th>Requirement</th><th>Expected RPM</th></tr></thead>
+    <tbody>
+      <tr><td>Phase 1</td><td>Google AdSense</td><td>10+ series, real traffic</td><td>$0.50–$1.50</td></tr>
+      <tr><td>Phase 2</td><td>Ezoic</td><td>10,000+ monthly sessions</td><td>$2–5</td></tr>
+      <tr><td>Phase 3a</td><td>Mediavine / AdThrive</td><td>50,000+ monthly sessions</td><td>$8–15</td></tr>
+      <tr><td>Phase 3b</td><td>Direct deals (VPN, merch, legal streaming)</td><td>Negotiate directly</td><td>$15–30 CPM</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ─── COMMENTS ─── -->
+<section class="section" id="comments">
+  <div class="sec-eyebrow">Section 13</div>
+  <h2 class="sec-title">Comments integration</h2>
+
+  <div class="code-header"><span class="code-file">CommentSection.tsx</span><span class="code-lang">React — comment provider swap contract</span></div>
+<pre><span class="str">'use client'</span>;
+<span class="cm">// COMMENT_PROVIDER env var controls the implementation.
+// Phase 1: 'disqus' (free, instant)
+// Phase 2: 'remark42' (self-hosted Go binary, ~30MB RAM on Hetzner)
+// Phase 3: 'native' (GET /episodes/{id}/comments from your own API)
+// Episode page layout never changes when switching providers.</span>
+
+<span class="kw">export function</span> <span class="fn">CommentSection</span>({ episodeId }) {
+  <span class="kw">const</span> [visible, setVisible] = <span class="fn">useState</span>(<span class="kw">false</span>);
+  <span class="kw">const</span> ref = <span class="fn">useRef</span>();
+
+  <span class="fn">useEffect</span>(() => {
+    <span class="kw">const</span> obs = <span class="kw">new</span> <span class="ty">IntersectionObserver</span>(([e]) => {
+      <span class="kw">if</span> (e.isIntersecting) { <span class="fn">setVisible</span>(<span class="kw">true</span>); obs.<span class="fn">disconnect</span>(); }
+    }, { rootMargin: <span class="str">'200px'</span> }); <span class="cm">// preload 200px before visible</span>
+    <span class="kw">if</span> (ref.current) obs.<span class="fn">observe</span>(ref.current);
+    <span class="kw">return</span> () => obs.<span class="fn">disconnect</span>();
+  }, []);
+
+  <span class="kw">const</span> provider = process.env.NEXT_PUBLIC_COMMENT_PROVIDER ?? <span class="str">'disqus'</span>;
+
+  <span class="kw">return</span> (
+    &lt;<span class="ty">section</span> ref={ref}&gt;
+      {visible && provider === <span class="str">'disqus'</span>   && &lt;<span class="ty">DisqusEmbed</span>   episodeId={episodeId} /&gt;}
+      {visible && provider === <span class="str">'remark42'</span> && &lt;<span class="ty">Remark42Embed</span> episodeId={episodeId} /&gt;}
+      {visible && provider === <span class="str">'native'</span>   && &lt;<span class="ty">NativeComments</span> episodeId={episodeId} /&gt;}
+      {!visible && &lt;<span class="ty">div</span> className=<span class="str">"h-48 animate-pulse bg-gray-900 rounded-lg"</span> /&gt;}
+    &lt;/<span class="ty">section</span>&gt;
+  );
+}</pre>
+</section>
+
+<!-- ─── PHASES ─── -->
+
+<section class="section" id="phase1">
+  <div class="sec-eyebrow">Phase 01 · Day 1–2 · ~8h</div>
+  <h2 class="sec-title">Local development environment</h2>
+  <div class="role-row">
+    <span class="role-pill role-pm">Project Manager</span>
+    <span class="role-pill role-be">Backend Engineer</span>
+    <span class="role-pill role-fe">Frontend Engineer</span>
+    <span class="role-pill role-ie">Infra Engineer</span>
+  </div>
+
+  <div class="phase-progress">
+    <div class="phase-progress-info">
+      <div class="phase-progress-label">Foundation — everything else depends on this</div>
+      <div class="phase-progress-sub">Monorepo · Docker · Migrations · Scaffold · Env contracts</div>
+      <div class="progress-bar-wrap"><div class="progress-bar-fill" style="width:100%"></div></div>
+    </div>
+  </div>
+
+  <h4>Project Manager</h4>
+  <ul>
+    <li>Create GitHub monorepo with protected <code>main</code> branch (require 1 PR review)</li>
+    <li>Set up GitHub Projects board with columns: Backlog → In Progress → Review → Done</li>
+    <li>Write <code>CONTRIBUTING.md</code> with Conventional Commits format (<code>feat:</code>, <code>fix:</code>, <code>chore:</code>)</li>
+    <li>Define environment variable naming conventions — document in README</li>
+    <li>Create milestone: "MVP Live" with 30-day target date</li>
+  </ul>
+
+  <h4>Infra Engineer</h4>
+  <ul>
+    <li>Create monorepo folders: <code>/api</code>, <code>/web</code>, <code>/scraper</code>, <code>/db</code>, <code>/infra</code></li>
+    <li>Write <code>infra/docker-compose.yml</code>: postgres:16, redis:7, adminer</li>
+    <li>Write <code>.env.example</code> for both <code>/api</code> and <code>/web</code> — all required keys, no values</li>
+    <li>Install Playwright browsers: <code>pwsh playwright.ps1 install chromium</code></li>
+    <li>Verify <code>docker compose up</code> starts all services cleanly</li>
+  </ul>
+
+  <h4>Backend Engineer</h4>
+  <ul>
+    <li><code>dotnet new webapi -n AnimeIndex.Api --use-minimal-apis</code></li>
+    <li>Add NuGet: EF Core, Npgsql, Hangfire.PostgreSql, StackExchange.Redis, FluentValidation, Serilog, Mapster</li>
+    <li>Configure Serilog JSON structured logging to stdout</li>
+    <li>Write all EF Core entity classes matching the schema above</li>
+    <li>Run <code>dotnet ef migrations add Initial</code> and <code>dotnet ef database update</code></li>
+    <li>Add <code>/health</code> endpoint returning <code>{status,db,cache,version}</code></li>
+  </ul>
+
+  <h4>Frontend Engineer</h4>
+  <ul>
+    <li><code>npx create-next-app@latest web --typescript --tailwind --app --src-dir</code></li>
+    <li>Install: <code>swr axios clsx next-themes</code></li>
+    <li>Configure <code>next.config.js</code>: <code>images.remotePatterns</code> for cover URL origins</li>
+    <li>Create <code>src/lib/api.ts</code> with base fetch wrapper and <code>ApiError</code> class</li>
+    <li>Create <code>src/lib/types.ts</code> with all TypeScript types matching API response shapes</li>
+    <li>Verify <code>npm run dev</code> starts and <code>/api/health</code> responds</li>
+  </ul>
+
+  <div class="code-header"><span class="code-file">infra/docker-compose.yml</span><span class="code-lang">Docker Compose</span></div>
+<pre>services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: animeindex
+      POSTGRES_USER: animeindex
+      POSTGRES_PASSWORD: devpassword
+    ports: ["5432:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+
+  adminer:
+    image: adminer
+    ports: ["8080:8080"]
+    depends_on: [postgres]
+
+volumes: {pgdata: {}}</pre>
+
+  <div class="deliverables">
+    <span class="del-chip">docker-compose.yml</span><span class="del-chip">monorepo /api /web /scraper</span>
+    <span class="del-chip">.env.example × 2</span><span class="del-chip">EF Core migration 001</span>
+    <span class="del-chip">Next.js scaffold</span><span class="del-chip">/health endpoint</span><span class="del-chip">lib/types.ts</span>
+  </div>
+</section>
+
+<section class="section" id="phase2">
+  <div class="sec-eyebrow">Phase 02 · Day 3–8 · ~30h</div>
+  <h2 class="sec-title">Backend implementation</h2>
+  <div class="role-row">
+    <span class="role-pill role-be">Backend Engineer</span>
+    <span class="role-pill role-ie">Infra Engineer</span>
+    <span class="role-pill role-rv">Reviewer</span>
+  </div>
+
+  <h4>Backend Engineer — API surface</h4>
+  <ul>
+    <li>Implement all 9 public endpoints listed in Section 05 — typed responses, FluentValidation on all query params</li>
+    <li>Implement all 3 admin endpoints with <code>X-Admin-Key</code> middleware guard</li>
+    <li>Wire <code>ICacheService</code> get/set/invalidate on every read endpoint</li>
+    <li>Cache TTLs: series=10min, episodes=5min, mirrors=5min, genres=∞</li>
+    <li>Add EF Core query optimizations: <code>AsSplitQuery</code> on include-heavy queries, partial indexes used</li>
+    <li>Write integration tests for all public endpoints using <code>WebApplicationFactory</code></li>
+    <li>Seed DB with 3 test series + episodes + mirrors for frontend development</li>
+    <li>Implement <code>PATCH /mirrors/{id}/report</code>: atomic increment + conditional disable at threshold</li>
+  </ul>
+
+  <h4>Infra Engineer — scheduler and middleware</h4>
+  <ul>
+    <li>Configure Hangfire with PostgreSQL backing store (same DB, <code>hangfire</code> schema)</li>
+    <li>Register all 5 recurring jobs as stubs (real implementations in Phase 3)</li>
+    <li>Expose Hangfire dashboard at <code>/hangfire</code> with IP-restriction middleware</li>
+    <li>Add sliding-window rate limiter: 60 req/min/IP on public routes, 10 req/min on <code>/mirrors/{id}/report</code></li>
+    <li>Add CORS policy: whitelist <code>localhost:3000</code> and production Vercel domain</li>
+    <li>Configure EF Core connection pooling: <code>Maximum Pool Size=10</code> for Supabase limits</li>
+  </ul>
+
+  <h4>Reviewer — contracts and performance</h4>
+  <ul>
+    <li>Verify all endpoint response shapes match <code>lib/types.ts</code> exactly</li>
+    <li>Verify pagination contract is consistent across all list endpoints</li>
+    <li>Verify error response shape is consistent: <code>{error: string, code: string}</code></li>
+    <li>Run <code>EXPLAIN ANALYZE</code> on the 3 most common queries with test data — confirm index usage</li>
+    <li>Confirm <code>ICacheService</code> interface is sufficient for Upstash HTTP client swap</li>
+  </ul>
+
+  <div class="deliverables">
+    <span class="del-chip">12 API endpoints</span><span class="del-chip">ICacheService + RedisCacheService</span>
+    <span class="del-chip">Hangfire scaffold</span><span class="del-chip">Rate limiting middleware</span>
+    <span class="del-chip">Integration tests</span><span class="del-chip">DB seed data</span><span class="del-chip">CORS config</span>
+  </div>
+</section>
+
+<section class="section" id="phase3">
+  <div class="sec-eyebrow">Phase 03 · Day 9–14 · ~25h</div>
+  <h2 class="sec-title">Scraper implementation</h2>
+  <div class="role-row">
+    <span class="role-pill role-be">Backend Engineer</span>
+    <span class="role-pill role-ie">Infra Engineer</span>
+    <span class="role-pill role-rv">Reviewer</span>
+  </div>
+
+  <h4>Backend Engineer — scraper core</h4>
+  <ul>
+    <li>Define <code>IScrapeStrategy</code> interface and <code>ScrapeResult</code> record (see Section 07)</li>
+    <li>Implement <code>PlaywrightScraperBase</code> with shared browser lifecycle, UA rotation, network interception</li>
+    <li>Implement <code>MirrorProbeService</code>: HTTP HEAD + X-Frame-Options + CSP validation</li>
+    <li>Implement first concrete <code>Source1Strategy</code> targeting your chosen source site</li>
+    <li>Wire scraper results into upsert pipeline: Series → Episodes → Mirrors in a single transaction</li>
+    <li>Implement cache invalidation after every successful upsert</li>
+    <li>Implement dead-letter logic: 3 retries → <code>status=dead_letter</code> + Resend email alert</li>
+    <li>Write unit tests for <code>MirrorProbeService</code> using <code>WireMock.Net</code></li>
+    <li>Connect all 5 Hangfire jobs to real scraper implementations</li>
+  </ul>
+
+  <h4>Infra Engineer — container setup</h4>
+  <ul>
+    <li>Add Playwright .NET package and configure headless Chromium in Docker</li>
+    <li>Write <code>Dockerfile</code> using <code>mcr.microsoft.com/playwright/dotnet</code> base image</li>
+    <li>Configure scraper concurrency limit: max 2 simultaneous browser instances (RAM constraint)</li>
+    <li>Add UA rotation pool of 20 real browser user-agents in <code>appsettings.json</code></li>
+    <li>Verify scraper Dockerfile builds and runs in <code>docker compose up</code></li>
+  </ul>
+
+  <h4>Reviewer — legal and correctness</h4>
+  <ul>
+    <li>Verify <code>IScrapeStrategy</code> is the ONLY interface the scheduler calls — no concrete types in jobs</li>
+    <li>Verify scraper never stores video files, only metadata and embed URLs</li>
+    <li>Confirm all scrape operations are idempotent — re-running produces no duplicate rows</li>
+    <li>Test dead-letter: mock a failing source, confirm job → dead_letter after 3 retries</li>
+    <li>Verify <code>MirrorProbeService</code> correctly rejects <code>X-Frame-Options: DENY</code> and <code>SAMEORIGIN</code></li>
+  </ul>
+
+  <div class="deliverables">
+    <span class="del-chip">IScrapeStrategy</span><span class="del-chip">PlaywrightScraperBase</span>
+    <span class="del-chip">MirrorProbeService</span><span class="del-chip">Source1Strategy</span>
+    <span class="del-chip">5 Hangfire jobs wired</span><span class="del-chip">Scraper Dockerfile</span><span class="del-chip">Dead-letter alert</span>
+  </div>
+</section>
+
+<section class="section" id="phase4">
+  <div class="sec-eyebrow">Phase 04 · Day 15–22 · ~35h</div>
+  <h2 class="sec-title">Frontend implementation</h2>
+  <div class="role-row">
+    <span class="role-pill role-fe">Frontend Engineer</span>
+    <span class="role-pill role-rv">Reviewer</span>
+  </div>
+
+  <h4>Frontend Engineer — pages and components</h4>
+  <ul>
+    <li>Homepage (<code>page.tsx</code>): trending series grid, ISR 1h revalidation, genre filter pills</li>
+    <li>Series page (<code>[slug]/page.tsx</code>): SSR — synopsis, episode list, genre pills, score badge</li>
+    <li>Episode page (<code>[slug]/[episode]/page.tsx</code>): SSR metadata + <code>'use client'</code> player below the fold</li>
+    <li><code>EpisodePlayer</code> + <code>useMirrorFallback</code> hook (see Section 11)</li>
+    <li><code>MirrorPicker</code>: provider tabs with quality badge (720p/1080p), active state, loading skeleton</li>
+    <li><code>SearchBar</code>: debounced input (300ms), URL-synced <code>?q=</code>, keyboard shortcut (Cmd+K)</li>
+    <li><code>SearchPage</code>: SSR results, pagination, empty state, loading state</li>
+    <li><code>EpisodeList</code>: prev/next navigation, episode number jump input, thumbnail grid</li>
+    <li>Add <code>generateMetadata()</code> to all pages — <code>og:title</code>, <code>og:description</code>, <code>og:image</code></li>
+    <li>Add JSON-LD <code>VideoObject</code> schema to episode pages</li>
+    <li>Build <code>GenrePage</code>: genre listing with filtered series, ISR 1h</li>
+    <li>Build <code>not-found.tsx</code> and <code>error.tsx</code> with clear back-navigation</li>
+  </ul>
+
+  <h4>Reviewer — SEO and correctness</h4>
+  <ul>
+    <li>Run <code>curl</code> on episode URL — confirm title/synopsis in raw HTML (SSR working)</li>
+    <li>Confirm <code>EpisodePlayer</code> is <code>'use client'</code> and <code>&lt;iframe&gt;</code> is never in SSR output</li>
+    <li>Test mirror fallback: set all mirror URLs to invalid — confirm error state fires correctly</li>
+    <li>Verify <code>reportMirrorFailure</code> hits <code>PATCH /mirrors/{id}/report</code> on timeout</li>
+    <li>Run Lighthouse on series page: target LCP &lt; 2.5s, CLS &lt; 0.1, TBT &lt; 200ms</li>
+    <li>Verify all API calls use <code>lib/api.ts</code> wrappers — zero raw <code>fetch()</code> in components</li>
+  </ul>
+
+  <div class="deliverables">
+    <span class="del-chip">Homepage (ISR)</span><span class="del-chip">SeriesPage (SSR)</span><span class="del-chip">EpisodePage (hybrid)</span>
+    <span class="del-chip">EpisodePlayer + hook</span><span class="del-chip">SearchPage</span><span class="del-chip">GenrePage</span>
+    <span class="del-chip">generateMetadata() all pages</span><span class="del-chip">JSON-LD VideoObject</span>
+  </div>
+</section>
+
+<section class="section" id="phase5">
+  <div class="sec-eyebrow">Phase 05 · Day 23–24 · ~6h</div>
+  <h2 class="sec-title">Ads integration</h2>
+  <div class="role-row">
+    <span class="role-pill role-fe">Frontend Engineer</span>
+    <span class="role-pill role-rv">Reviewer</span>
+  </div>
+
+  <h4>Frontend Engineer</h4>
+  <ul>
+    <li>Create <code>components/ads/AdSlot.tsx</code> with <code>AD_CONFIG</code> map and placement prop (see Section 12)</li>
+    <li>Create <code>components/ads/AdSenseUnit.tsx</code> wrapping <code>&lt;ins class="adsbygoogle"&gt;</code></li>
+    <li>Add AdSense script to <code>app/layout.tsx</code> via <code>next/script strategy="afterInteractive"</code></li>
+    <li>Place <code>&lt;AdSlot placement="above-fold"&gt;</code> — series and episode pages only, never homepage</li>
+    <li>Place <code>&lt;AdSlot placement="below-player"&gt;</code> on episode page</li>
+    <li>Place <code>&lt;AdSlot placement="below-episodes"&gt;</code> on episode page</li>
+    <li>Add <code>IntersectionObserver</code> lazy-init for all below-fold slots (see code in Section 12)</li>
+    <li>Add GDPR consent banner component: cookie acceptance stored in <code>localStorage</code></li>
+  </ul>
+
+  <h4>Reviewer</h4>
+  <ul>
+    <li>Verify AdSense script loads <code>afterInteractive</code> — not blocking LCP</li>
+    <li>Verify <code>AdSlot</code> is the ONLY component with ad network code — grep codebase to confirm</li>
+    <li>Check all ad slots have <code>min-height</code> containers to prevent CLS</li>
+    <li>Confirm ads never render on homepage (AdSense policy: content must be present)</li>
+  </ul>
+
+  <div class="deliverables">
+    <span class="del-chip">AdSlot component</span><span class="del-chip">AdSenseUnit</span><span class="del-chip">3 ad placements</span>
+    <span class="del-chip">Lazy IntersectionObserver</span><span class="del-chip">Consent banner</span>
+  </div>
+</section>
+
+<section class="section" id="phase6">
+  <div class="sec-eyebrow">Phase 06 · Day 25–26 · ~5h</div>
+  <h2 class="sec-title">Comments integration</h2>
+  <div class="role-row">
+    <span class="role-pill role-fe">Frontend Engineer</span>
+    <span class="role-pill role-rv">Reviewer</span>
+  </div>
+
+  <h4>Frontend Engineer</h4>
+  <ul>
+    <li>Create <code>components/comments/CommentSection.tsx</code> with <code>COMMENT_PROVIDER</code> switch (see Section 13)</li>
+    <li>Implement <code>DisqusEmbed</code>: dynamic script injection, <code>disqus_config</code> with page URL and identifier</li>
+    <li>Implement <code>Remark42Embed</code>: iframe or script embed pointing to <code>REMARK42_URL</code> env var</li>
+    <li>Add <code>IntersectionObserver</code> lazy-load: load comments only when user scrolls within 200px</li>
+    <li>Add loading skeleton (pulse animation, fixed height) shown while provider script loads</li>
+    <li>Add <code>NEXT_PUBLIC_COMMENT_PROVIDER</code> to <code>.env.example</code></li>
+  </ul>
+
+  <h4>Reviewer</h4>
+  <ul>
+    <li>Verify <code>CommentSection</code> is <code>'use client'</code> and never in SSR output</li>
+    <li>Verify Disqus script only loads after scroll — check with DevTools network tab</li>
+    <li>Confirm <code>COMMENT_PROVIDER=remark42</code> switch works without code changes</li>
+  </ul>
+
+  <div class="deliverables">
+    <span class="del-chip">CommentSection (swappable)</span><span class="del-chip">DisqusEmbed</span>
+    <span class="del-chip">Remark42Embed stub</span><span class="del-chip">Lazy-load on scroll</span><span class="del-chip">Loading skeleton</span>
+  </div>
+</section>
+
+<section class="section" id="phase7">
+  <div class="sec-eyebrow">Phase 07 · Day 27–30 · ~12h</div>
+  <h2 class="sec-title">Free-tier deployment</h2>
+  <div class="role-row">
+    <span class="role-pill role-ie">Infra Engineer</span>
+    <span class="role-pill role-be">Backend Engineer</span>
+    <span class="role-pill role-fe">Frontend Engineer</span>
+    <span class="role-pill role-rv">Reviewer</span>
+  </div>
+
+  <h4>Infra Engineer — infrastructure provisioning</h4>
+  <ul>
+    <li>Create Supabase project → copy connection string (Session mode for Hangfire) + direct URL (for migrations)</li>
+    <li>Run EF Core migrations: <code>dotnet ef database update --connection $PROD_DB_DIRECT</code></li>
+    <li>Create Upstash Redis database → copy REST URL + token</li>
+    <li>Create Railway project: API service from <code>/api</code> folder, set all 8 env vars</li>
+    <li>Create second Railway project: scraper worker from <code>/scraper</code> folder</li>
+    <li>Deploy Next.js to Vercel: connect GitHub repo, set <code>NEXT_PUBLIC_API_URL</code></li>
+    <li>Add custom domain (or use <code>*.vercel.app</code> initially)</li>
+    <li>Configure Cloudflare: add site, set nameservers, enable orange-cloud proxy on all records</li>
+    <li>Enable Cloudflare: Bot Fight Mode ON, HSTS ON, Always HTTPS ON, Min TLS 1.2</li>
+    <li>Set Cloudflare Cache Rules: cache <code>/api/series/*</code> and <code>/api/genres</code> for 5 min at edge</li>
+    <li>Set Cloudflare Rate Limit: 100 req/10s per IP on <code>/api/*</code></li>
+    <li>Set Cloudflare WAF rule: block scanner UAs (sqlmap, nikto, nmap)</li>
+    <li>Register on Better Uptime: add monitors for API <code>/health</code> and Vercel frontend</li>
+    <li>Set up Sentry: add DSN to API env vars, verify error capture with a test 500</li>
+    <li>Deploy Cloudflare Worker keep-alive (cron every 25 min → GET your API /health)</li>
+  </ul>
+
+  <h4>Backend Engineer — production verification</h4>
+  <ul>
+    <li>Verify DB connection + Redis connection check in <code>/health</code> response from production</li>
+    <li>Trigger first real scrape: <code>POST /admin/scrape/series</code> with a live source URL</li>
+    <li>Verify Hangfire dashboard accessible at <code>/hangfire</code> in production</li>
+    <li>Confirm dead-letter email alert fires when a scrape job fails 3 times</li>
+  </ul>
+
+  <h4>Frontend Engineer — production verification</h4>
+  <ul>
+    <li>Verify <code>generateMetadata()</code> produces correct <code>og:title</code> and <code>og:image</code> on episode pages</li>
+    <li>Test mirror fallback in production with a known-dead mirror URL</li>
+    <li>Submit <code>sitemap.xml</code> to Google Search Console</li>
+    <li>Verify <code>robots.txt</code> served correctly at <code>/robots.txt</code></li>
+  </ul>
+
+  <h4>Reviewer — production smoke test (must all pass before launch)</h4>
+  <ul>
+    <li>Homepage → series page → episode page → player loads → mirror switch works</li>
+    <li>SSL valid on all subdomains — use ssllabs.com/ssltest (target: A grade)</li>
+    <li>No API keys or secrets visible in browser network tab</li>
+    <li>Rate limiting: 70 req/min from curl → confirm 429 on request 61+</li>
+    <li>Cloudflare proxying: check <code>cf-ray</code> in response headers</li>
+    <li>Load test with k6: 50 VUs × 30s on <code>/api/series</code> → P95 &lt; 500ms</li>
+    <li>Mobile: series and episode pages render correctly at 375px viewport</li>
+    <li>Dark mode: all pages readable in both modes</li>
+  </ul>
+
+  <div class="code-header"><span class="code-file">.github/workflows/deploy.yml</span><span class="code-lang">GitHub Actions</span></div>
+<pre><span class="prop">name</span>: Deploy
+<span class="prop">on</span>:
+  <span class="prop">push</span>:
+    <span class="prop">branches</span>: [main]
+
+<span class="prop">jobs</span>:
+  <span class="prop">deploy-api</span>:
+    <span class="prop">runs-on</span>: ubuntu-latest
+    <span class="prop">steps</span>:
+      - <span class="prop">uses</span>: actions/checkout@v4
+      - <span class="prop">uses</span>: actions/setup-dotnet@v4
+        <span class="prop">with</span>: { <span class="prop">dotnet-version</span>: <span class="str">'8.x'</span> }
+      - <span class="prop">run</span>: dotnet publish api/AnimeIndex.Api -c Release -o ./publish
+      - <span class="prop">name</span>: Deploy API to Railway
+        <span class="prop">uses</span>: bervProject/railway-deploy@main
+        <span class="prop">with</span>:
+          <span class="prop">railway_token</span>: ${{ secrets.RAILWAY_TOKEN }}
+          <span class="prop">service</span>: ${{ secrets.RAILWAY_SERVICE_ID }}
+
+  <span class="prop">deploy-web</span>:
+    <span class="prop">runs-on</span>: ubuntu-latest
+    <span class="prop">needs</span>: deploy-api
+    <span class="prop">steps</span>:
+      - <span class="prop">uses</span>: actions/checkout@v4
+      - <span class="prop">uses</span>: amondnet/vercel-action@v25
+        <span class="prop">with</span>:
+          <span class="prop">vercel-token</span>: ${{ secrets.VERCEL_TOKEN }}
+          <span class="prop">vercel-org-id</span>: ${{ secrets.VERCEL_ORG_ID }}
+          <span class="prop">vercel-project-id</span>: ${{ secrets.VERCEL_PROJECT_ID }}
+          <span class="prop">vercel-args</span>: <span class="str">'--prod'</span>
+          <span class="prop">working-directory</span>: web</pre>
+
+  <div class="deliverables">
+    <span class="del-chip">Live API on Railway</span><span class="del-chip">Live frontend on Vercel</span>
+    <span class="del-chip">Cloudflare DNS + WAF + CDN</span><span class="del-chip">CI/CD pipeline</span>
+    <span class="del-chip">Uptime monitoring</span><span class="del-chip">Sentry error tracking</span>
+    <span class="del-chip">Keep-alive Worker</span><span class="del-chip">Smoke test ✓</span>
+  </div>
+</section>
+
+<!-- ─── SECURITY ─── -->
+<section class="section" id="security">
+  <div class="sec-eyebrow">Section 14</div>
+  <h2 class="sec-title">Security considerations</h2>
+
+  <div class="cards cards-2">
+    <div class="card card-accent4">
+      <div class="card-title">API security</div>
+      <div class="card-sub">Admin endpoints require <code>X-Admin-Key</code> header. Rate limiting via ASP.NET <code>RateLimiter</code> middleware. CORS whitelist — no <code>*</code>. FluentValidation on all inputs. Max search query: 100 chars.</div>
+    </div>
+    <div class="card card-accent4">
+      <div class="card-title">iframe sandboxing</div>
+      <div class="card-sub">All <code>&lt;iframe&gt;</code> embeds use <code>sandbox="allow-scripts allow-same-origin allow-presentation allow-fullscreen"</code>. Restricts what the embedded player can do — no popups, no top-level navigation.</div>
+    </div>
+    <div class="card card-accent4">
+      <div class="card-title">Content Security Policy</div>
+      <div class="card-sub"><code>frame-src *</code> is intentional (must allow arbitrary mirror domains). All other directives are strict. <code>script-src</code> whitelists only AdSense and Disqus domains.</div>
+    </div>
+    <div class="card card-accent4">
+      <div class="card-title">Secrets management</div>
+      <div class="card-sub">Zero secrets in source code. All via Railway/Vercel environment variables. <code>.env.example</code> has keys only, never values. <code>.env</code> in <code>.gitignore</code>.</div>
+    </div>
+  </div>
+</section>
+
+<!-- ─── LEGAL ─── -->
+<section class="section" id="legal">
+  <div class="sec-eyebrow">Section 15</div>
+  <h2 class="sec-title">Legal architecture</h2>
+  <p class="sec-desc">The architecture is designed around the indexer defense — the same legal framing used by search engines. Every technical decision reinforces this position.</p>
+
+  <div class="warn-box">
+    <div class="warn-box-title">Core legal position</div>
+    <p>The platform is a <strong style="color:var(--text)">search index</strong>, not a host. Video is served from third-party hosts. Your servers store only metadata and URLs. The <code>MirrorProbeService</code> only indexes URLs the host has explicitly made embeddable — you are not circumventing any access control.</p>
+  </div>
+
+  <table class="spec-table">
+    <thead><tr><th>Content type</th><th>Legal risk</th><th>Mitigation</th></tr></thead>
+    <tbody>
+      <tr><td>Metadata (title, synopsis)</td><td>Low</td><td>Factual data has weak copyright protection. Transformative use argument applies.</td></tr>
+      <tr><td>Cover images / thumbnails</td><td>Medium</td><td>Host on R2 with attribution. Respond to takedowns within 24 hours.</td></tr>
+      <tr><td>Embed URLs</td><td>Medium-High</td><td>DMCA safe harbor + <code>blocked_slugs</code> table + 24h takedown SLA</td></tr>
+      <tr><td>Actual video files</td><td>High</td><td>Architecture explicitly prevents storing video. <code>MirrorProbeService</code> is the gate.</td></tr>
+    </tbody>
+  </table>
+
+  <h4>DMCA safe harbor checklist</h4>
+  <ul>
+    <li>Register a DMCA agent with the US Copyright Office ($6 one-time fee)</li>
+    <li>Publish a DMCA/takedown page at <code>/dmca</code> with contact email</li>
+    <li><code>DELETE /admin/series/{slug}</code> endpoint: deletes series + adds to <code>blocked_slugs</code></li>
+    <li>Scraper checks <code>blocked_slugs</code> before re-indexing any content</li>
+    <li>Implement repeat-infringer policy: ban IPs/sources that repeatedly re-add blocked content</li>
+    <li>Respond to all takedown requests within 24 hours (Resend email alert when received)</li>
+  </ul>
+</section>
+
+<!-- ─── MONITORING ─── -->
+<section class="section" id="monitoring">
+  <div class="sec-eyebrow">Section 16</div>
+  <h2 class="sec-title">Monitoring strategy</h2>
+
+  <table class="spec-table">
+    <thead><tr><th>What to monitor</th><th>Tool (Phase 1)</th><th>Tool (Phase 2+)</th><th>Alert threshold</th></tr></thead>
+    <tbody>
+      <tr><td>Uptime</td><td>Better Uptime free (60s interval)</td><td>Same</td><td>2 consecutive failures</td></tr>
+      <tr><td>Error tracking</td><td>Sentry free (5k events/mo)</td><td>Sentry Team</td><td>Error rate &gt; 5% / 5min</td></tr>
+      <tr><td>Structured logs</td><td>Railway log drain → Logtail free</td><td>Self-hosted Loki</td><td>Manual inspection</td></tr>
+      <tr><td>DB metrics</td><td>Supabase dashboard</td><td>Prometheus + Grafana</td><td>Connection pool &gt; 80%</td></tr>
+      <tr><td>API latency</td><td>Cloudflare analytics</td><td>Custom Prometheus metrics</td><td>P95 &gt; 500ms</td></tr>
+      <tr><td>Scraper jobs</td><td>Hangfire dashboard</td><td>Same + Prometheus counters</td><td>Dead-letter &gt; 10</td></tr>
+      <tr><td>Mirror health rate</td><td>SQL query on mirror_health_log</td><td>Grafana dashboard</td><td>Active rate &lt; 60% per series</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ─── SCALING ─── -->
+<section class="section" id="scaling">
+  <div class="sec-eyebrow">Section 17</div>
+  <h2 class="sec-title">Scaling roadmap</h2>
+  <p class="sec-desc">Three phases. No rewrites. Each upgrade is an infrastructure-level change or a DI registration swap. The codebase is identical across all three phases.</p>
+
+  <div class="cards cards-3" style="margin-bottom:28px">
+    <div class="card card-accent">
+      <div class="card-title">Phase 1 — Zero budget</div>
+      <div class="card-sub">0 → 10,000 MAU. Railway + Vercel + Supabase + Upstash. Prove the concept. Accumulate content. Reach AdSense approval.</div>
+    </div>
+    <div class="card card-accent3">
+      <div class="card-title">Phase 2 — $20–50/mo</div>
+      <div class="card-sub">10k → 200k MAU. Hetzner VPS for API + dedicated scraper. Ezoic for ads. Remark42 for comments. Same codebase, new infra.</div>
+    </div>
+    <div class="card card-accent2">
+      <div class="card-title">Phase 3 — Cloud-native</div>
+      <div class="card-sub">200k+ MAU. K8s or Fly.io replicas. PG read replica. Redis Cluster. Typesense search. Distributed scraper fleet.</div>
+    </div>
+  </div>
+
+  <h4>Scaling matrix — how each layer upgrades</h4>
+  <div class="scale-matrix">
+    <div class="scale-row">
+      <div class="scale-cell">Layer</div>
+      <div class="scale-cell">Phase 1 → Phase 2 upgrade</div>
+      <div class="scale-cell">Phase 2 → Phase 3 upgrade</div>
+    </div>
+    <div class="scale-row">
+      <div class="scale-cell">API</div>
+      <div class="scale-cell">Railway free → Hetzner CX21 €5/mo. 8× more RAM. Same Docker image.</div>
+      <div class="scale-cell">K8s Deployment with 2–4 replicas. Add Nginx ingress. Same image, same code.</div>
+    </div>
+    <div class="scale-row">
+      <div class="scale-cell">Cache</div>
+      <div class="scale-cell">Upstash free → Upstash paid (100k cmds/day). Change env var only.</div>
+      <div class="scale-cell">Swap <code>RedisCacheService</code> to StackExchange.Redis pointing at Redis Cluster. One DI line.</div>
+    </div>
+    <div class="scale-row">
+      <div class="scale-cell">Database</div>
+      <div class="scale-cell">Supabase → Neon serverless PG (pay-per-use, auto-scaling). Change <code>DATABASE_URL</code>.</div>
+      <div class="scale-cell">Add read replica. Route read queries to replica in <code>AppDbContext</code>. Optionally: PG Citus for horizontal.</div>
+    </div>
+    <div class="scale-row">
+      <div class="scale-cell">Scraper</div>
+      <div class="scale-cell">In-process (Phase 1) → separate Railway service reading from shared Hangfire queue.</div>
+      <div class="scale-cell">Each <code>IScrapeStrategy</code> becomes a K8s Job container. Hangfire → MassTransit + RabbitMQ for distributed coordination.</div>
+    </div>
+    <div class="scale-row">
+      <div class="scale-cell">Search</div>
+      <div class="scale-cell">PostgreSQL tsvector (Phase 1) → still tsvector but with PG full-text config tuning.</div>
+      <div class="scale-cell">Implement <code>ISearchService</code> → <code>TypesenseSearchService</code>. Register in DI. Populate Typesense index via Hangfire job. Zero endpoint changes.</div>
+    </div>
+    <div class="scale-row">
+      <div class="scale-cell">Frontend</div>
+      <div class="scale-cell">Vercel Hobby → Vercel Pro. More build minutes, more concurrent functions.</div>
+      <div class="scale-cell">Vercel Enterprise (multi-region) or self-hosted with <code>next start</code> on K8s. Same <code>NEXT_PUBLIC_API_URL</code>.</div>
+    </div>
+    <div class="scale-row">
+      <div class="scale-cell">CDN</div>
+      <div class="scale-cell">Cloudflare free → tune existing cache rules. Add more rate limit rules (Pro: unlimited rules).</div>
+      <div class="scale-cell">Cloudflare Workers for edge routing and A/B testing. Same DNS. Same WAF rules.</div>
+    </div>
+    <div class="scale-row">
+      <div class="scale-cell">Ads</div>
+      <div class="scale-cell">AdSense → Ezoic (DNS-level integration, Cloudflare compatible). Change <code>AdSenseUnit</code> + <code>AD_CONFIG</code>.</div>
+      <div class="scale-cell">Mediavine / direct deals. Update <code>AdSlot</code> switch statement only. All page call sites unchanged.</div>
+    </div>
+    <div class="scale-row">
+      <div class="scale-cell">Comments</div>
+      <div class="scale-cell">Disqus → Remark42 on Hetzner. Set <code>COMMENT_PROVIDER=remark42</code> + <code>REMARK42_URL</code>. Zero code changes.</div>
+      <div class="scale-cell">Set <code>COMMENT_PROVIDER=native</code>. Implement <code>/episodes/{id}/comments</code> API + <code>NativeComments</code> React component.</div>
+    </div>
+    <div class="scale-row">
+      <div class="scale-cell">Storage</div>
+      <div class="scale-cell">Cloudflare R2 (free at Phase 1 scale). All image URLs are relative paths in DB.</div>
+      <div class="scale-cell">Change <code>STORAGE_BASE_URL</code> env var to AWS S3 or Bunny CDN. Zero DB migrations. Zero API changes.</div>
+    </div>
+  </div>
+
+  <div class="scale-box">
+    <div class="scale-box-title">The no-rewrite guarantee</div>
+    <p>Every scaling move is either (a) an infrastructure-level change with no code impact, or (b) swapping a DI-registered implementation behind an existing interface. The monolith codebase is deployed identically in all three phases. "Scaling" means decomposing the infra topology, not the application code. The four scaling contracts (<code>ICacheService</code>, <code>IScrapeStrategy</code>, <code>AdSlot</code>, <code>COMMENT_PROVIDER</code>) were designed on day one specifically to make this true.</p>
+  </div>
+</section>
+
+</main>
+</div>
+
+<script>
+// Sidebar active state on scroll
+const sections = document.querySelectorAll('section[id], div.hero');
+const navItems = document.querySelectorAll('.nav-item');
+
+const observer = new IntersectionObserver((entries) => {
+  entries.forEach(e => {
+    if (e.isIntersecting) {
+      const id = e.target.id || 'top';
+      navItems.forEach(item => {
+        item.classList.toggle('active', item.getAttribute('href') === '#' + id);
+      });
+    }
+  });
+}, { rootMargin: '-20% 0px -70% 0px' });
+
+sections.forEach(s => observer.observe(s));
+
+// Phase block toggles
+document.querySelectorAll('.phase-header').forEach(header => {
+  header.addEventListener('click', () => {
+    const body = header.nextElementSibling;
+    const chevron = header.querySelector('.phase-chevron');
+    body?.classList.toggle('open');
+    chevron?.classList.toggle('open');
+  });
+});
+</script>
+</body>
+</html>

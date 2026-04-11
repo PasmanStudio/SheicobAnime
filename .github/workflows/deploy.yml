@@ -1,0 +1,75 @@
+name: Deploy — Production
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false  # Never cancel a deploy mid-flight
+
+jobs:
+  # Run DB migrations before deploying new API version
+  migrate:
+    name: Run DB migrations
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.x'
+      - name: Restore
+        run: dotnet restore api/AnimeIndex.sln
+      - name: Run migrations
+        run: |
+          dotnet ef database update \
+            --project api/AnimeIndex.Api \
+            --connection "${{ secrets.SUPABASE_DB_URL_DIRECT }}"
+
+  deploy-api:
+    name: Deploy API to Railway
+    needs: migrate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.x'
+      - name: Publish
+        run: dotnet publish api/AnimeIndex.Api -c Release -o ./publish
+      - name: Deploy to Railway
+        uses: bervProject/railway-deploy@main
+        with:
+          railway_token: ${{ secrets.RAILWAY_TOKEN }}
+          service: ${{ secrets.RAILWAY_SERVICE_ID }}
+
+  deploy-scraper:
+    name: Deploy Scraper to Railway
+    needs: migrate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.x'
+      - name: Publish scraper
+        run: dotnet publish api/AnimeIndex.Scraper -c Release -o ./publish-scraper
+      - name: Deploy scraper to Railway
+        uses: bervProject/railway-deploy@main
+        with:
+          railway_token: ${{ secrets.RAILWAY_TOKEN }}
+          service: ${{ secrets.RAILWAY_SCRAPER_SERVICE_ID }}
+
+  deploy-web:
+    name: Deploy frontend to Vercel
+    needs: deploy-api
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: amondnet/vercel-action@v25
+        with:
+          vercel-token: ${{ secrets.VERCEL_TOKEN }}
+          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
+          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
+          vercel-args: '--prod'
+          working-directory: web

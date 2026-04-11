@@ -1,0 +1,83 @@
+name: CI — Test
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  test-api:
+    name: .NET 8 API tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: animeindex_test
+          POSTGRES_USER: animeindex
+          POSTGRES_PASSWORD: testpassword
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.x'
+
+      - name: Restore dependencies
+        run: dotnet restore api/AnimeIndex.sln
+
+      - name: Build
+        run: dotnet build api/AnimeIndex.sln --no-restore --configuration Release
+
+      - name: Run tests
+        run: dotnet test api/AnimeIndex.sln --no-build --configuration Release --logger trx
+        env:
+          DATABASE_URL: "Host=localhost;Database=animeindex_test;Username=animeindex;Password=testpassword;Maximum Pool Size=5"
+          REDIS_URL: "localhost:6379"
+          ADMIN_API_KEY: "test-admin-key"
+          ASPNETCORE_ENVIRONMENT: "Test"
+
+  test-web:
+    name: Next.js type check + build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: web
+
+      - name: Type check
+        run: npm run type-check
+        working-directory: web
+
+      - name: Build
+        run: npm run build
+        working-directory: web
+        env:
+          NEXT_PUBLIC_API_URL: "http://localhost:5000"
+          NEXT_PUBLIC_ADSENSE_ID: "ca-pub-0000000000000000"
+          NEXT_PUBLIC_DISQUS_SHORTNAME: "test"
+          NEXT_PUBLIC_COMMENT_PROVIDER: "disqus"
