@@ -78,7 +78,7 @@ The MVP is complete when:
 2. Series page shows episodes
 3. Episode page loads a working iframe player
 4. Mirror fallback works (set a mirror to dead → confirms next loads)
-5. AdSense script loads after interactive
+5. Ad slots load after consent (stub mode in dev)
 6. Disqus comments load on scroll
 7. All 5 Hangfire jobs running in production
 8. /health returns {status:'ok',db:'ok',cache:'ok'}

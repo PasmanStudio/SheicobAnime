@@ -94,7 +94,8 @@ CORS_ORIGINS         Comma-separated allowed origins
 ### Frontend (Vercel)
 ```
 NEXT_PUBLIC_API_URL           Production API base URL
-NEXT_PUBLIC_ADSENSE_ID        ca-pub-XXXX
+NEXT_PUBLIC_AD_PROVIDER       adsterra | propellerads | stub (AdSense incompatible)
+NEXT_PUBLIC_ADSTERRA_ZONE_*   Adsterra zone IDs per placement
 NEXT_PUBLIC_DISQUS_SHORTNAME
 NEXT_PUBLIC_COMMENT_PROVIDER  disqus | remark42 | native
 NEXT_PUBLIC_REMARK42_URL      (Phase 2+)
