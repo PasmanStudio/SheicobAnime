@@ -17,9 +17,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '8.x'
+          dotnet-version: '9.x'
       - name: Restore
         run: dotnet restore api/AnimeIndex.sln
+      - name: Install EF CLI tool
+        run: dotnet tool install --global dotnet-ef
       - name: Run migrations
         run: |
           dotnet ef database update \
@@ -34,7 +36,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '8.x'
+          dotnet-version: '9.x'
       - name: Publish
         run: dotnet publish api/AnimeIndex.Api -c Release -o ./publish
       - name: Deploy to Railway
@@ -51,9 +53,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '8.x'
+          dotnet-version: '9.x'
       - name: Publish scraper
-        run: dotnet publish api/AnimeIndex.Scraper -c Release -o ./publish-scraper
+        run: dotnet publish scraper/AnimeIndex.Scraper/AnimeIndex.Scraper.csproj -c Release -o ./publish-scraper
       - name: Deploy scraper to Railway
         uses: bervProject/railway-deploy@main
         with:

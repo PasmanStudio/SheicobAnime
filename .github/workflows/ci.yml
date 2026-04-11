@@ -8,7 +8,7 @@ on:
 
 jobs:
   test-api:
-    name: .NET 8 API tests
+    name: .NET 9 API tests
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -37,7 +37,7 @@ jobs:
 
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '8.x'
+          dotnet-version: '9.x'
 
       - name: Restore dependencies
         run: dotnet restore api/AnimeIndex.sln
@@ -51,7 +51,7 @@ jobs:
           DATABASE_URL: "Host=localhost;Database=animeindex_test;Username=animeindex;Password=testpassword;Maximum Pool Size=5"
           REDIS_URL: "localhost:6379"
           ADMIN_API_KEY: "test-admin-key"
-          ASPNETCORE_ENVIRONMENT: "Test"
+          ASPNETCORE_ENVIRONMENT: "Testing"
 
   test-web:
     name: Next.js type check + build
