@@ -17,9 +17,27 @@ concurrency:
   cancel-in-progress: false  # Never cancel a deploy mid-flight
 
 jobs:
+  # Guard: skip deploy entirely when production secrets are not yet configured
+  check-secrets:
+    name: Check production secrets configured
+    runs-on: ubuntu-latest
+    outputs:
+      ready: ${{ steps.check.outputs.ready }}
+    steps:
+      - id: check
+        run: |
+          if [ -n "${{ secrets.SUPABASE_DB_URL_DIRECT }}" ] && [ -n "${{ secrets.RAILWAY_TOKEN }}" ]; then
+            echo "ready=true" >> $GITHUB_OUTPUT
+          else
+            echo "ready=false" >> $GITHUB_OUTPUT
+            echo "::warning::Production secrets not configured — skipping deploy (Phase 7 prerequisite)"
+          fi
+
   # Run DB migrations before deploying new API version
   migrate:
     name: Run DB migrations
+    needs: check-secrets
+    if: needs.check-secrets.outputs.ready == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
@@ -39,6 +57,7 @@ jobs:
   deploy-api:
     name: Deploy API to Railway
     needs: migrate
+    if: needs.migrate.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
@@ -56,6 +75,7 @@ jobs:
   deploy-scraper:
     name: Deploy Scraper to Railway
     needs: migrate
+    if: needs.migrate.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
@@ -73,6 +93,7 @@ jobs:
   deploy-web:
     name: Deploy frontend to Vercel
     needs: deploy-api
+    if: needs.deploy-api.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4

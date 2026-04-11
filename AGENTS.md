@@ -68,6 +68,32 @@ Every PR must pass:
 4. No architectural contract violations (see security-reviewer chatmode)
 5. No secrets introduced in code
 
+## Phase completion checklist — MANDATORY before declaring "done"
+
+An agent MUST run ALL of these before reporting a phase complete:
+
+```powershell
+# 1. Backend build + tests green
+cd api ; dotnet build AnimeIndex.sln ; dotnet test AnimeIndex.sln
+
+# 2. Frontend type-check + build green
+cd web ; npm run type-check ; npm run build
+
+# 3. No untracked files left uncommitted
+git status  # ZERO '??' entries allowed
+
+# 4. Close every phase issue
+gh issue list --state open --json number,title,labels | ConvertFrom-Json |
+  Where-Object { $_.labels.name -match "phase:<N>" } |
+  ForEach-Object { gh issue close $_.number }
+
+# 5. Wait for CI to go green
+gh run watch (gh run list --limit 1 --json databaseId --jq '.[0].databaseId')
+# Must end with 'completed' / 'success' — never leave on 'in_progress'
+```
+
+If ANY of these steps fail, fix the problem before marking the phase done.
+
 ## File naming conventions
 
 ### C# (API)

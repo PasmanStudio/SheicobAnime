@@ -104,6 +104,37 @@ NEXT_PUBLIC_REMARK42_URL      (Phase 2+)
 Phase: **MVP (Phase 1)** — free-tier infrastructure, modular monolith
 Target: 30 days to production, $0/month cost
 
+## Definition of Done — ALWAYS enforce before declaring a phase complete
+
+A phase is NOT complete until ALL of the following are verified:
+
+### 1. Local build green
+```bash
+# Backend
+cd api && dotnet build AnimeIndex.sln && dotnet test AnimeIndex.sln
+
+# Frontend
+cd web && npm run type-check && npm run build
+```
+Both commands must exit 0 with zero errors/warnings.
+
+### 2. All new files committed and pushed
+Run `git status` before committing — untracked files (`??`) are build failures waiting to happen.
+**Always `git status` after `git add` to confirm every new file is staged.**
+
+### 3. GitHub Issues closed
+Every issue for the completed phase must be closed via `gh issue close <N>`.
+Check with: `gh issue list --state open --json number,title,labels | ConvertFrom-Json | Where-Object { $_.labels.name -match "phase:<N>" }`
+
+### 4. CI pipeline green
+After `git push`, verify the Actions run passes:
+```bash
+gh run list --limit 3 --json status,conclusion,name
+# Wait for completion:
+gh run watch $(gh run list --limit 1 --json databaseId --jq '.[0].databaseId')
+```
+A phase is NOT done until the latest run shows `conclusion: success`.
+
 ## Key files to always check before editing
 - `/api/AnimeIndex.Api/Infrastructure/Cache/ICacheService.cs` — cache contract
 - `/api/AnimeIndex.Api/Infrastructure/Scraping/IScrapeStrategy.cs` — scraper contract
