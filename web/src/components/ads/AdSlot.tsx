@@ -1,12 +1,118 @@
+"use client";
+
+import { useState, useEffect } from "react";
+import dynamic from "next/dynamic";
+import {
+  AD_CONFIG,
+  getAdProvider,
+  hasValidZone,
+  type AdPlacement,
+} from "@/lib/ad-config";
+import { hasAdConsent } from "./ConsentBanner";
+
+// Lazy load provider-specific components to reduce bundle size
+const AdsterraBanner = dynamic(() => import("./AdsterraBanner"), {
+  ssr: false,
+  loading: () => <AdSkeleton />,
+});
+
+const PropellerAdsBanner = dynamic(() => import("./PropellerAdsBanner"), {
+  ssr: false,
+  loading: () => <AdSkeleton />,
+});
+
 export interface AdSlotProps {
-  placement: string;
+  /** Placement key from AD_CONFIG */
+  placement: AdPlacement;
+  /** Optional className for the wrapper */
+  className?: string;
 }
 
 /**
- * Phase-5 stub — renders nothing until AdSense/ad integration is wired.
- * AD_CONFIG (added in Phase 5) is the only place that holds ad unit IDs.
+ * Skeleton placeholder to prevent CLS while ad loads.
  */
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-export default function AdSlot(_props: AdSlotProps) {
-  return null;
+function AdSkeleton() {
+  return (
+    <div
+      className="bg-zinc-800/50 animate-pulse rounded"
+      style={{ minHeight: 90, minWidth: 728, maxWidth: "100%" }}
+      aria-hidden="true"
+    />
+  );
+}
+
+/**
+ * AdSlot — ONLY ad component to use in pages.
+ * Uses AD_CONFIG for zone IDs and AD_PROVIDER for network selection.
+ *
+ * Features:
+ * - Multi-provider support (Adsterra, PropellerAds, stub)
+ * - Lazy loading to prevent CLS
+ * - Consent-aware (no ads without GDPR consent)
+ * - Server renders nothing (prevents hydration mismatch)
+ *
+ * Contract: AD_CONFIG is the ONLY place with ad zone IDs.
+ */
+export default function AdSlot({ placement, className }: AdSlotProps) {
+  const [mounted, setMounted] = useState(false);
+  const [hasConsent, setHasConsent] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+    setHasConsent(hasAdConsent());
+  }, []);
+
+  // SSR: render nothing to avoid hydration issues
+  if (!mounted) {
+    return null;
+  }
+
+  const provider = getAdProvider();
+  const config = AD_CONFIG[placement];
+
+  // Stub mode: show placeholder in development
+  if (provider === "stub") {
+    return (
+      <div
+        className={`flex items-center justify-center bg-zinc-800/30 border border-dashed border-zinc-600 rounded text-zinc-500 text-xs ${className ?? ""}`}
+        style={{
+          minWidth: config.width,
+          minHeight: config.height,
+          maxWidth: "100%",
+        }}
+      >
+        Ad: {placement}
+      </div>
+    );
+  }
+
+  // No consent: don't load ads
+  if (!hasConsent) {
+    return null;
+  }
+
+  // No valid zone: skip silently
+  if (!hasValidZone(placement)) {
+    return null;
+  }
+
+  // Render provider-specific banner
+  return (
+    <div className={`flex justify-center ${className ?? ""}`}>
+      {provider === "adsterra" && config.adsterraZone && (
+        <AdsterraBanner
+          zoneId={config.adsterraZone}
+          width={config.width}
+          height={config.height}
+        />
+      )}
+      {provider === "propellerads" && config.propellerZone && (
+        <PropellerAdsBanner
+          zoneId={config.propellerZone}
+          width={config.width}
+          height={config.height}
+        />
+      )}
+    </div>
+  );
 }

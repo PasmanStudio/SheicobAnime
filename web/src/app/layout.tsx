@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import localFont from "next/font/local";
 import "./globals.css";
 import SiteHeader from "@/components/layout/SiteHeader";
+import ConsentBanner from "@/components/ads/ConsentBanner";
 
 const geistSans = localFont({
   src: "./fonts/GeistVF.woff",
@@ -37,6 +38,7 @@ export default function RootLayout({
         <footer className="border-t border-neutral-800 py-6 text-center text-xs text-neutral-600">
           © {new Date().getFullYear()} SheicobAnime — indexes publicly embeddable mirrors only.
         </footer>
+        <ConsentBanner />
       </body>
     </html>
   );
