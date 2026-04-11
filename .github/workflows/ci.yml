@@ -1,5 +1,7 @@
 name: CI — Test
 
+run-name: "CI — ${{ github.event_name == 'pull_request' && format('PR #{0}', github.event.number) || github.ref_name }} @ ${{ github.sha }}"
+
 on:
   pull_request:
     branches: [main]
@@ -8,6 +10,9 @@ on:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+permissions:
+  contents: read
 
 jobs:
   test-api:
@@ -36,17 +41,20 @@ jobs:
           --health-retries 5
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@3951f0dfe7a214d7898bceaf4aa672853b64e75c # v4
         with:
           dotnet-version: '9.x'
 
       - name: Restore dependencies
-        run: dotnet restore api/AnimeIndex.sln
+        run: dotnet restore api/AnimeIndex.sln --locked-mode
 
       - name: Build
         run: dotnet build api/AnimeIndex.sln --no-restore --configuration Release
+
+      - name: Static analysis (warnings as errors)
+        run: dotnet build api/AnimeIndex.sln --no-restore --configuration Release /p:TreatWarningsAsErrors=true
 
       - name: Run tests
         run: dotnet test api/AnimeIndex.sln --no-build --configuration Release --logger trx
@@ -60,9 +68,9 @@ jobs:
     name: Next.js type check + build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4
         with:
           node-version: '24'
           cache: 'npm'
