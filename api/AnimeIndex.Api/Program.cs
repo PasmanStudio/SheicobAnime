@@ -41,6 +41,7 @@ try
     }
 
     // ─── Sentry ──────────────────────────────────────────
+    var sentryEnabled = false;
     if (!isTesting)
     {
         var sentryDsn = builder.Configuration["SENTRY_DSN"];
@@ -53,6 +54,7 @@ try
                 o.SendDefaultPii = false;
                 o.Environment = builder.Environment.EnvironmentName;
             });
+            sentryEnabled = true;
         }
     }
 
@@ -148,7 +150,7 @@ try
 
     // ─── Middleware pipeline ─────────────────────────────
     if (!isTesting) app.UseSerilogRequestLogging();
-    if (!isTesting) app.UseSentryTracing();
+    if (sentryEnabled) app.UseSentryTracing();
     app.UseRateLimiter();
     app.UseCors();
 
