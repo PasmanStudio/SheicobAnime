@@ -6,6 +6,7 @@ using AnimeIndex.Api.DTOs.Admin;
 using AnimeIndex.Api.Endpoints;
 using AnimeIndex.Api.Infrastructure.Auth;
 using AnimeIndex.Api.Infrastructure.Cache;
+using AnimeIndex.Api.Infrastructure.Scraping;
 using AnimeIndex.Api.Validators;
 using FluentValidation;
 using Hangfire;
@@ -118,6 +119,14 @@ try
 
     // ─── Auth filters (transient for DI) ─────────────────
     builder.Services.AddTransient<AdminKeyEndpointFilter>();
+
+    // ─── HTTP clients ─────────────────────────────────────
+    builder.Services.AddHttpClient("probe", c =>
+    {
+        c.Timeout = TimeSpan.FromSeconds(10);
+        c.DefaultRequestHeaders.UserAgent.ParseAdd("SheicobAnime-Probe/1.0");
+    });
+    builder.Services.AddScoped<MirrorProbeService>();
 
     var app = builder.Build();
 

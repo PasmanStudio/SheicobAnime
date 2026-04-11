@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk.Worker">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>AnimeIndex.Scraper</RootNamespace>
+  </PropertyGroup>
+
+  <!-- Shared types: AppDbContext, entities, IScrapeStrategy, ScrapeResult, MirrorProbeService -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\api\AnimeIndex.Api\AnimeIndex.Api.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Pin EF Core to same version as API project to override Hangfire.PostgreSql 9.0.1 transitive dep -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="9.0.5" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="9.0.5" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="9.0.4" />
+    <PackageReference Include="Microsoft.Playwright" Version="1.51.0" />
+    <PackageReference Include="Hangfire.AspNetCore" Version="1.8.23" />
+    <PackageReference Include="Hangfire.PostgreSql" Version="1.21.1" />
+    <PackageReference Include="Serilog.Extensions.Hosting" Version="10.0.0" />
+    <PackageReference Include="Serilog.Sinks.Console" Version="6.1.1" />
+  </ItemGroup>
+
+</Project>
