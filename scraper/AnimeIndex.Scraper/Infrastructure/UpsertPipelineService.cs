@@ -15,9 +15,9 @@ public class UpsertPipelineService(AppDbContext db)
     /// </summary>
     public async Task<Guid> UpsertSeriesAsync(SeriesScrapedData data, CancellationToken ct = default)
     {
-        await db.Database.ExecuteSqlRawAsync("""
+        await db.Database.ExecuteSqlAsync($"""
             INSERT INTO series (id, slug, title, cover_url, status, type, created_at, updated_at)
-            VALUES (gen_random_uuid(), {0}, {1}, {2}, {3}, {4}, now(), now())
+            VALUES (gen_random_uuid(), {data.Slug}, {data.Title}, {data.CoverUrl}, {data.Status}, {data.Type}, now(), now())
             ON CONFLICT (slug) DO UPDATE SET
                 title        = EXCLUDED.title,
                 cover_url    = COALESCE(EXCLUDED.cover_url, series.cover_url),
@@ -25,9 +25,7 @@ public class UpsertPipelineService(AppDbContext db)
                 type         = COALESCE(EXCLUDED.type, series.type),
                 updated_at   = now(),
                 last_scraped_at = now()
-            """,
-            [data.Slug, data.Title, data.CoverUrl, data.Status, data.Type],
-            ct);
+            """, ct);
 
         return await db.Series
             .Where(s => s.Slug == data.Slug)
@@ -41,15 +39,13 @@ public class UpsertPipelineService(AppDbContext db)
     /// </summary>
     public async Task<Guid> UpsertEpisodeAsync(EpisodeScrapedData data, CancellationToken ct = default)
     {
-        await db.Database.ExecuteSqlRawAsync("""
+        await db.Database.ExecuteSqlAsync($"""
             INSERT INTO episodes (id, series_id, episode_number, title, is_published, created_at)
-            VALUES (gen_random_uuid(), {0}, {1}, {2}, true, now())
+            VALUES (gen_random_uuid(), {data.SeriesId}, {data.EpisodeNumber}, {data.Title}, true, now())
             ON CONFLICT (series_id, episode_number) DO UPDATE SET
                 title        = COALESCE(EXCLUDED.title, episodes.title),
                 is_published = true
-            """,
-            [data.SeriesId, data.EpisodeNumber, data.Title],
-            ct);
+            """, ct);
 
         return await db.Episodes
             .Where(e => e.SeriesId == data.SeriesId && e.EpisodeNumber == data.EpisodeNumber)
@@ -63,11 +59,11 @@ public class UpsertPipelineService(AppDbContext db)
     /// </summary>
     public async Task UpsertMirrorAsync(MirrorScrapedData data, CancellationToken ct = default)
     {
-        await db.Database.ExecuteSqlRawAsync("""
+        await db.Database.ExecuteSqlAsync($"""
             INSERT INTO mirrors
                 (id, episode_id, provider_name, embed_url, quality_label, priority, is_active,
                  consecutive_failures, created_at)
-            VALUES (gen_random_uuid(), {0}, {1}, {2}, {3}, {4}, true, 0, now())
+            VALUES (gen_random_uuid(), {data.EpisodeId}, {data.ProviderName}, {data.EmbedUrl}, {data.QualityLabel}, {data.Priority}, true, 0, now())
             ON CONFLICT (episode_id, embed_url) DO UPDATE SET
                 provider_name        = EXCLUDED.provider_name,
                 quality_label        = EXCLUDED.quality_label,
@@ -75,8 +71,6 @@ public class UpsertPipelineService(AppDbContext db)
                 is_active            = true,
                 consecutive_failures = 0,
                 last_checked_at      = now()
-            """,
-            [data.EpisodeId, data.ProviderName, data.EmbedUrl, data.QualityLabel, data.Priority],
-            ct);
+            """, ct);
     }
 }

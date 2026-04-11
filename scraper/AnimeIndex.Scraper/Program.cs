@@ -78,9 +78,10 @@ try
 
         recurring.AddOrUpdate<ScrapeSchedulerJob>(
             "scrape-scheduler",
+            "scraper",
             job => job.RunAsync(CancellationToken.None),
             cron,
-            new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc, QueueName = "scraper" });
+            new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc });
     }
 
     await app.RunAsync();
