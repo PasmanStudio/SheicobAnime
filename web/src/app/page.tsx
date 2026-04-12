@@ -1,10 +1,10 @@
-import type { Metadata } from "next";
+import AdSlot from "@/components/ads/AdSlot";
+import SeriesCard from "@/components/ui/SeriesCard";
 import { getSeries } from "@/lib/api";
-import type { Series, PaginatedResponse } from "@/lib/types";
+import type { PaginatedResponse, Series } from "@/lib/types";
+import type { Metadata } from "next";
 
 export const dynamic = "force-dynamic";
-import SeriesCard from "@/components/ui/SeriesCard";
-import AdSlot from "@/components/ads/AdSlot";
 
 export const metadata: Metadata = {
   title: "SheicobAnime — Watch Anime Online",

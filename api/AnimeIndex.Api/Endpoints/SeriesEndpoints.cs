@@ -57,7 +57,7 @@ public static class SeriesEndpoints
 
         query = sort switch
         {
-            "score" => query.OrderByDescending(s => s.Score).ThenByDescending(s => s.UpdatedAt),
+            "score" => query.OrderByDescending(s => s.Score).ThenBy(s => s.Title),
             "year" => query.OrderByDescending(s => s.Year).ThenByDescending(s => s.UpdatedAt),
             _ => query.OrderByDescending(s => s.UpdatedAt)
         };

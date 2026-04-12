@@ -42,7 +42,7 @@ public static class AdminEndpoints
 
         var job = new ScrapeJob
         {
-            JobType = "url_scrape",
+            JobType = $"scrape:{request.Source}",
             Status = "pending",
             ScheduledAt = DateTime.UtcNow,
             // SeriesId set later by the scraper when it identifies the series

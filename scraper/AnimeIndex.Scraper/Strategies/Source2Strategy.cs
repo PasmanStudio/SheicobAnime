@@ -121,7 +121,7 @@ public sealed class Source2Strategy(
             MirrorsIndexed: mirrorCount);
     }
 
-    // ── Directory browsing (/directorio) ────────────────────
+    // ── Directory browsing (/directorio?p=N) ────────────────
 
     private async Task<IReadOnlyList<SeriesScrapedData>> DiscoverSeriesAsync(
         string baseUrl, int maxPages, int delayMs, CancellationToken ct)
@@ -133,72 +133,92 @@ public sealed class Source2Strategy(
             if (ct.IsCancellationRequested) break;
             if (await CheckCircuitBreakerAsync(ct)) break;
 
-            var url = $"{baseUrl.TrimEnd('/')}/directorio/{page}/";
+            var url = $"{baseUrl.TrimEnd('/')}/directorio?p={page}";
             if (!await GoToAsync(url, ct))
             {
                 logger.LogWarning("Cannot reach {Url}", url);
                 break;
             }
 
-            // JKAnime /directorio: cards with <div class="anime__item">
-            // or <div class="card"> containing <a href="/{slug}/">
-            var cards = await Page.Locator("div.anime__item, div.card, div.custom_item").AllAsync();
-            if (cards.Count == 0)
+            // JKAnime embeds directory data as `var animes = {...}` JSON in an inline script.
+            // Extract it via JS evaluation instead of fragile CSS selectors.
+            string? animesJson = null;
+            try
             {
-                logger.LogDebug("No cards found on page {Page} — end of directory", page);
+                await Page.WaitForFunctionAsync("typeof animes !== 'undefined' && animes.data && animes.data.length > 0",
+                    new PageWaitForFunctionOptions { Timeout = 10_000 });
+                animesJson = await Page.EvaluateAsync<string>("JSON.stringify(animes)");
+            }
+            catch (TimeoutException)
+            {
+                logger.LogDebug("No animes variable found on page {Page} — end of directory", page);
                 break;
             }
 
-            foreach (var card in cards)
+            if (string.IsNullOrWhiteSpace(animesJson))
             {
-                try
-                {
-                    var linkEl = card.Locator("a").First;
-                    var href = await linkEl.GetAttributeAsync("href");
-                    if (string.IsNullOrWhiteSpace(href)) continue;
-
-                    // Extract slug from /{slug}/
-                    var segments = href.Split('/', StringSplitOptions.RemoveEmptyEntries);
-                    var slug = segments.LastOrDefault();
-                    if (string.IsNullOrWhiteSpace(slug)) continue;
-
-                    // Title from heading or link text
-                    string? title = null;
-                    var titleEl = card.Locator("h5, h4, h3, .title").First;
-                    if (await titleEl.CountAsync() > 0)
-                        title = (await titleEl.InnerTextAsync()).Trim();
-                    title ??= (await linkEl.InnerTextAsync()).Trim();
-
-                    if (string.IsNullOrWhiteSpace(title)) continue;
-
-                    // Cover image
-                    string? coverUrl = null;
-                    var imgEl = card.Locator("img").First;
-                    if (await imgEl.CountAsync() > 0)
-                    {
-                        coverUrl = await imgEl.GetAttributeAsync("src")
-                            ?? await imgEl.GetAttributeAsync("data-src");
-                    }
-
-                    result.Add(new SeriesScrapedData(
-                        Slug: slug.Trim(),
-                        Title: title,
-                        CoverUrl: coverUrl,
-                        Status: "ongoing",
-                        Type: "tv"));
-                }
-                catch (Exception ex)
-                {
-                    logger.LogDebug(ex, "Failed to parse a card on page {Page}", page);
-                }
+                logger.LogDebug("Empty animes data on page {Page} — end of directory", page);
+                break;
             }
 
-            logger.LogDebug("Page {Page}: discovered {Count} series", page, cards.Count);
+            var animesPage = System.Text.Json.JsonSerializer.Deserialize<JkDirectoryPage>(animesJson);
+            if (animesPage?.Data is null || animesPage.Data.Count == 0)
+            {
+                logger.LogDebug("No series data on page {Page} — end of directory", page);
+                break;
+            }
+
+            foreach (var item in animesPage.Data)
+            {
+                if (string.IsNullOrWhiteSpace(item.Slug) || string.IsNullOrWhiteSpace(item.Title))
+                    continue;
+
+                var status = item.Status switch
+                {
+                    "currently" => "ongoing",
+                    "completed" => "completed",
+                    "notyet" => "upcoming",
+                    _ => "ongoing"
+                };
+
+                var type = item.Type?.ToLowerInvariant() switch
+                {
+                    "tv" => "tv",
+                    "movie" => "movie",
+                    "ova" => "ova",
+                    "ona" => "ona",
+                    "special" => "special",
+                    _ => "tv"
+                };
+
+                result.Add(new SeriesScrapedData(
+                    Slug: item.Slug.Trim(),
+                    Title: item.Title.Trim(),
+                    CoverUrl: item.Image,
+                    Status: status,
+                    Type: type,
+                    Synopsis: string.IsNullOrWhiteSpace(item.Synopsis) ? null : item.Synopsis.Trim()));
+            }
+
+            logger.LogDebug("Page {Page}: discovered {Count} series", page, animesPage.Data.Count);
             await JitterDelayAsync(delayMs, ct);
         }
 
         return result;
     }
+
+    // JSON model for `var animes` on /directorio pages
+    private sealed record JkDirectoryPage(
+        [property: System.Text.Json.Serialization.JsonPropertyName("current_page")] int CurrentPage,
+        [property: System.Text.Json.Serialization.JsonPropertyName("data")] IReadOnlyList<JkDirectoryItem> Data);
+
+    private sealed record JkDirectoryItem(
+        [property: System.Text.Json.Serialization.JsonPropertyName("slug")] string? Slug,
+        [property: System.Text.Json.Serialization.JsonPropertyName("title")] string? Title,
+        [property: System.Text.Json.Serialization.JsonPropertyName("synopsis")] string? Synopsis,
+        [property: System.Text.Json.Serialization.JsonPropertyName("image")] string? Image,
+        [property: System.Text.Json.Serialization.JsonPropertyName("type")] string? Type,
+        [property: System.Text.Json.Serialization.JsonPropertyName("status")] string? Status);
 
     // ── Series detail page (/{slug}/) ───────────────────────
 
@@ -214,21 +234,21 @@ public sealed class Source2Strategy(
 
         try
         {
-            // Title
-            var title = await Page.Locator("h1, h2.title_anime, .anime__details__title h3").First.InnerTextAsync();
+            // Title — div.anime_info h3
+            var title = await Page.Locator("div.anime_info h3").First.InnerTextAsync();
 
-            // Synopsis
+            // Synopsis — p.scroll inside anime_info
             string? synopsis = null;
-            var synopsisEl = Page.Locator("p.sinopsis, .anime__details__text p, div.sinopsis");
+            var synopsisEl = Page.Locator("div.anime_info p.scroll");
             if (await synopsisEl.CountAsync() > 0)
                 synopsis = (await synopsisEl.First.InnerTextAsync()).Trim();
 
-            // Cover from CDN pattern: cdn.jkdesa.com/assets/images/animes/image/{slug}.jpg
+            // Cover from CDN pattern
             var coverUrl = $"https://cdn.jkdesa.com/assets/images/animes/image/{slug}.jpg";
 
-            // Genres from genre links
+            // Genres from genre links inside card-bod
             var genres = new List<string>();
-            var genreLinks = await Page.Locator("span.anime__details__genre a, .generos a, a.btn-genero").AllAsync();
+            var genreLinks = await Page.Locator("div.card-bod a[href*='/genero/']").AllAsync();
             foreach (var g in genreLinks)
             {
                 var genreName = (await g.InnerTextAsync()).Trim();
@@ -236,32 +256,39 @@ public sealed class Source2Strategy(
                     genres.Add(genreName);
             }
 
-            // Status from info list
+            // Status from div.enemision class (currently | completed | notyet)
             string? status = null;
-            string? type = null;
-            var infoItems = await Page.Locator("ul.anime__details__widget li, .anime-type-peli li, span.info-value").AllAsync();
-            foreach (var item in infoItems)
+            var statusEl = Page.Locator("div.card-bod div.enemision");
+            if (await statusEl.CountAsync() > 0)
             {
-                var text = (await item.InnerTextAsync()).Trim().ToLowerInvariant();
-
-                if (text.Contains("estado"))
+                var statusClass = await statusEl.First.GetAttributeAsync("class") ?? "";
+                if (statusClass.Contains("currently"))
+                    status = "ongoing";
+                else if (statusClass.Contains("completed"))
+                    status = "completed";
+                else
                 {
-                    if (text.Contains("emision") || text.Contains("emisión"))
+                    var statusText = (await statusEl.First.InnerTextAsync()).Trim().ToLowerInvariant();
+                    if (statusText.Contains("emision") || statusText.Contains("emisión"))
                         status = "ongoing";
-                    else if (text.Contains("finalizado"))
+                    else if (statusText.Contains("finalizado"))
                         status = "completed";
-                    else if (text.Contains("proximamente") || text.Contains("próximamente"))
+                    else if (statusText.Contains("estrenar"))
                         status = "upcoming";
                 }
+            }
 
-                if (text.Contains("tipo"))
-                {
-                    if (text.Contains("tv")) type = "tv";
-                    else if (text.Contains("película") || text.Contains("pelicula") || text.Contains("movie")) type = "movie";
-                    else if (text.Contains("ova")) type = "ova";
-                    else if (text.Contains("ona")) type = "ona";
-                    else if (text.Contains("especial") || text.Contains("special")) type = "special";
-                }
+            // Type from li[rel="tipo"] text content
+            string? type = null;
+            var tipoEl = Page.Locator("div.card-bod li[rel='tipo']");
+            if (await tipoEl.CountAsync() > 0)
+            {
+                var tipoText = (await tipoEl.First.InnerTextAsync()).Trim().ToLowerInvariant();
+                if (tipoText.Contains("serie") || tipoText.Contains("tv")) type = "tv";
+                else if (tipoText.Contains("película") || tipoText.Contains("pelicula") || tipoText.Contains("movie")) type = "movie";
+                else if (tipoText.Contains("ova")) type = "ova";
+                else if (tipoText.Contains("ona")) type = "ona";
+                else if (tipoText.Contains("especial") || tipoText.Contains("special")) type = "special";
             }
 
             await JitterDelayAsync(delayMs, ct);
@@ -291,30 +318,32 @@ public sealed class Source2Strategy(
 
         try
         {
-            // JKAnime episode list: numbered links in episode navigation
-            var rows = await Page.Locator("div.anime__pagination a, a.emark, div.ep-list a").AllAsync();
+            // JKAnime loads episode links dynamically inside div.capitulos.
+            // Wait for episode links to appear (they have pattern /{slug}/{N}/).
+            try
+            {
+                await Page.WaitForSelectorAsync("div.capitulos a[href]",
+                    new PageWaitForSelectorOptions { Timeout = 10_000 });
+            }
+            catch (TimeoutException)
+            {
+                logger.LogDebug("No episode links loaded for {Slug} — may be upcoming", slug);
+                return result;
+            }
+
+            var rows = await Page.Locator($"div.capitulos a[href*='/{slug}/']").AllAsync();
 
             foreach (var row in rows)
             {
                 try
                 {
                     var href = await row.GetAttributeAsync("href");
-                    var text = (await row.InnerTextAsync()).Trim();
+                    if (href is null) continue;
 
-                    // Extract episode number from text or href (/{slug}/{N}/)
-                    short epNum = 0;
-                    if (short.TryParse(text, out var fromText))
-                    {
-                        epNum = fromText;
-                    }
-                    else if (href is not null)
-                    {
-                        var match = System.Text.RegularExpressions.Regex.Match(href, @"/(\d+)/?$");
-                        if (match.Success && short.TryParse(match.Groups[1].Value, out var fromHref))
-                            epNum = fromHref;
-                    }
-
-                    if (epNum <= 0) continue;
+                    // Extract episode number from href: /{slug}/{N}/
+                    var match = System.Text.RegularExpressions.Regex.Match(href, @"/(\d+)/?$");
+                    if (!match.Success || !short.TryParse(match.Groups[1].Value, out var epNum) || epNum <= 0)
+                        continue;
 
                     result.Add(new EpisodeScrapedData(
                         SeriesId: seriesId,

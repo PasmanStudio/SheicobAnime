@@ -1,13 +1,13 @@
 import type {
-  Series,
-  Episode,
-  Mirror,
-  Genre,
-  PaginatedResponse,
-  HealthResponse,
-  SeriesQueryParams,
-  SearchQueryParams,
-  EpisodeQueryParams,
+    Episode,
+    EpisodeQueryParams,
+    Genre,
+    HealthResponse,
+    Mirror,
+    PaginatedResponse,
+    SearchQueryParams,
+    Series,
+    SeriesQueryParams,
 } from "./types";
 
 // ─── Configuration ───────────────────────────────────
