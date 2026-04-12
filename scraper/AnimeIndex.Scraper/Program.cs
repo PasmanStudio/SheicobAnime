@@ -136,6 +136,12 @@ try
             });
             await db.SaveChangesAsync();
         }
+
+        // Trigger scheduler immediately on startup to process any pending jobs
+        // (instead of waiting for the next cron tick)
+        var jobClient = scope.ServiceProvider.GetRequiredService<IBackgroundJobClient>();
+        jobClient.Enqueue<ScrapeSchedulerJob>(j => j.RunAsync(CancellationToken.None));
+        Log.Information("Enqueued immediate ScrapeSchedulerJob run on startup");
     }
 
     await app.RunAsync();
