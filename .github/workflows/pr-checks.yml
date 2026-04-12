@@ -1,0 +1,168 @@
+name: PR Checks
+
+run-name: "PR Checks — #${{ github.event.number }}"
+
+on:
+  pull_request:
+    branches: [main]
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+permissions:
+  contents: read
+
+jobs:
+  contract-verification:
+    name: Verify scaling contracts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+
+      - name: Verify 4 scaling contracts intact
+        run: |
+          set -e
+          echo "🔍 Verifying the 4 scaling contracts..."
+          errors=0
+
+          # 1. ICacheService — cache contract
+          if [ ! -f "api/AnimeIndex.Api/Infrastructure/Cache/ICacheService.cs" ]; then
+            echo "❌ ICacheService.cs is missing!"
+            errors=$((errors + 1))
+          else
+            if ! grep -q "interface ICacheService" "api/AnimeIndex.Api/Infrastructure/Cache/ICacheService.cs"; then
+              echo "❌ ICacheService interface definition not found in ICacheService.cs!"
+              errors=$((errors + 1))
+            else
+              echo "✅ ICacheService contract intact"
+            fi
+          fi
+
+          # 2. IScrapeStrategy — scraper contract
+          if [ ! -f "api/AnimeIndex.Api/Infrastructure/Scraping/IScrapeStrategy.cs" ]; then
+            echo "❌ IScrapeStrategy.cs is missing!"
+            errors=$((errors + 1))
+          else
+            if ! grep -q "interface IScrapeStrategy" "api/AnimeIndex.Api/Infrastructure/Scraping/IScrapeStrategy.cs"; then
+              echo "❌ IScrapeStrategy interface definition not found in IScrapeStrategy.cs!"
+              errors=$((errors + 1))
+            else
+              echo "✅ IScrapeStrategy contract intact"
+            fi
+          fi
+
+          # 3. AdSlot — ad contract
+          if [ ! -f "web/src/components/ads/AdSlot.tsx" ]; then
+            echo "❌ AdSlot.tsx is missing!"
+            errors=$((errors + 1))
+          else
+            if ! grep -q "AD_CONFIG" "web/src/components/ads/AdSlot.tsx"; then
+              echo "❌ AD_CONFIG reference not found in AdSlot.tsx!"
+              errors=$((errors + 1))
+            else
+              echo "✅ AdSlot contract intact"
+            fi
+          fi
+
+          # 4. CommentSection — comment contract
+          if [ ! -f "web/src/components/comments/CommentSection.tsx" ]; then
+            echo "❌ CommentSection.tsx is missing!"
+            errors=$((errors + 1))
+          else
+            if ! grep -q "COMMENT_PROVIDER\|commentProvider" "web/src/components/comments/CommentSection.tsx"; then
+              echo "❌ COMMENT_PROVIDER switch not found in CommentSection.tsx!"
+              errors=$((errors + 1))
+            else
+              echo "✅ CommentSection contract intact"
+            fi
+          fi
+
+          if [ $errors -gt 0 ]; then
+            echo ""
+            echo "💥 $errors contract violation(s) detected! Fix before merging."
+            exit 1
+          fi
+          echo ""
+          echo "🎉 All 4 scaling contracts verified."
+
+  api-ci:
+    name: API build + test
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: animeindex_test
+          POSTGRES_USER: animeindex
+          POSTGRES_PASSWORD: testpassword
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: '9.x'
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ hashFiles('api/**/packages.lock.json', 'scraper/**/packages.lock.json', 'api/**/*.csproj', 'scraper/**/*.csproj') }}
+          restore-keys: nuget-
+
+      - name: Restore
+        run: dotnet restore api/AnimeIndex.sln --locked-mode
+
+      - name: Build
+        run: dotnet build api/AnimeIndex.sln --no-restore --configuration Release
+
+      - name: Test
+        run: dotnet test api/AnimeIndex.sln --no-build --configuration Release --logger trx
+        env:
+          DATABASE_URL: "Host=localhost;Database=animeindex_test;Username=animeindex;Password=testpassword;Maximum Pool Size=5"
+          REDIS_URL: "localhost:6379"
+          ADMIN_API_KEY: "test-admin-key"
+          ASPNETCORE_ENVIRONMENT: "Testing"
+
+  web-ci:
+    name: Frontend type-check + build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+
+      - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: web
+
+      - name: Type check
+        run: npm run type-check
+        working-directory: web
+
+      - name: Build
+        run: npm run build
+        working-directory: web
+        env:
+          NEXT_PUBLIC_API_URL: "http://localhost:5000"
+          NEXT_PUBLIC_AD_PROVIDER: "stub"
+          NEXT_PUBLIC_DISQUS_SHORTNAME: "test"
+          NEXT_PUBLIC_COMMENT_PROVIDER: "disqus"

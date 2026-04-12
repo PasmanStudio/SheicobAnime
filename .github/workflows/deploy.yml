@@ -2,12 +2,18 @@ name: Deploy — Production
 
 run-name: "Deploy — ${{ github.ref_name }} @ ${{ github.sha }}"
 
+# Deploys after CI passes on push to main.
+# Rollback: Railway → click "Rollback" on failed deploy. Vercel → promote previous deployment.
+# DB: no automatic rollback — always take a backup before running migrations.
+
 on:
   push:
     branches: [main]
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
 
 permissions:
   contents: read
@@ -17,9 +23,82 @@ concurrency:
   cancel-in-progress: false  # Never cancel a deploy mid-flight
 
 jobs:
-  # Guard: skip deploy entirely when production secrets are not yet configured
+  # ─── CI gate: verify code is green before deploying ───
+  ci-api:
+    name: CI — API build + test
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: animeindex_test
+          POSTGRES_USER: animeindex
+          POSTGRES_PASSWORD: testpassword
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: '9.x'
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ hashFiles('api/**/*.csproj', 'scraper/**/*.csproj') }}
+          restore-keys: nuget-
+      - name: Restore
+        run: dotnet restore api/AnimeIndex.sln --locked-mode
+      - name: Build
+        run: dotnet build api/AnimeIndex.sln --no-restore --configuration Release
+      - name: Test
+        run: dotnet test api/AnimeIndex.sln --no-build --configuration Release --logger trx
+        env:
+          DATABASE_URL: "Host=localhost;Database=animeindex_test;Username=animeindex;Password=testpassword;Maximum Pool Size=5"
+          REDIS_URL: "localhost:6379"
+          ADMIN_API_KEY: "test-admin-key"
+          ASPNETCORE_ENVIRONMENT: "Testing"
+
+  ci-web:
+    name: CI — Frontend type-check + build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+      - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: web/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+        working-directory: web
+      - name: Type check
+        run: npm run type-check
+        working-directory: web
+      - name: Build
+        run: npm run build
+        working-directory: web
+        env:
+          NEXT_PUBLIC_API_URL: "http://localhost:5000"
+          NEXT_PUBLIC_AD_PROVIDER: "stub"
+          NEXT_PUBLIC_DISQUS_SHORTNAME: "test"
+          NEXT_PUBLIC_COMMENT_PROVIDER: "disqus"
+
+  # ─── Guard: skip deploy if secrets are not yet configured ───
   check-secrets:
-    name: Check production secrets configured
+    name: Check production secrets
     runs-on: ubuntu-latest
     outputs:
       ready: ${{ steps.check.outputs.ready }}
@@ -30,13 +109,13 @@ jobs:
             echo "ready=true" >> $GITHUB_OUTPUT
           else
             echo "ready=false" >> $GITHUB_OUTPUT
-            echo "::warning::Production secrets not configured — skipping deploy (Phase 7 prerequisite)"
+            echo "::warning::Production secrets not configured — skipping deploy"
           fi
 
-  # Run DB migrations before deploying new API version
+  # ─── Database migration (runs after CI passes) ───
   migrate:
     name: Run DB migrations
-    needs: check-secrets
+    needs: [ci-api, ci-web, check-secrets]
     if: needs.check-secrets.outputs.ready == 'true'
     runs-on: ubuntu-latest
     steps:
@@ -44,6 +123,12 @@ jobs:
       - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
           dotnet-version: '9.x'
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ hashFiles('api/**/*.csproj', 'scraper/**/*.csproj') }}
+          restore-keys: nuget-
       - name: Restore
         run: dotnet restore api/AnimeIndex.sln --locked-mode
       - name: Install EF CLI tool
@@ -54,10 +139,10 @@ jobs:
             --project api/AnimeIndex.Api \
             --connection "${{ secrets.SUPABASE_DB_URL_DIRECT }}"
 
+  # ─── Deploy services (after migration succeeds) ───
   deploy-api:
     name: Deploy API to Railway
     needs: migrate
-    if: needs.migrate.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
@@ -75,7 +160,6 @@ jobs:
   deploy-scraper:
     name: Deploy Scraper to Railway
     needs: migrate
-    if: needs.migrate.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
@@ -93,7 +177,6 @@ jobs:
   deploy-web:
     name: Deploy frontend to Vercel
     needs: deploy-api
-    if: needs.deploy-api.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
@@ -104,3 +187,32 @@ jobs:
           vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
           vercel-args: '--prod'
           working-directory: web
+
+  # ─── Post-deploy notification ───
+  notify:
+    name: Deployment status
+    needs: [deploy-api, deploy-scraper, deploy-web]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Summarize deployment
+        run: |
+          echo "## Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Service | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| API | ${{ needs.deploy-api.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Scraper | ${{ needs.deploy-scraper.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Frontend | ${{ needs.deploy-web.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Commit: \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${{ needs.deploy-api.result }}" != "success" ] || \
+             [ "${{ needs.deploy-scraper.result }}" != "success" ] || \
+             [ "${{ needs.deploy-web.result }}" != "success" ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "⚠️ **Rollback instructions:**" >> $GITHUB_STEP_SUMMARY
+            echo "- Railway: Dashboard → Rollback on failed deployment" >> $GITHUB_STEP_SUMMARY
+            echo "- Vercel: Dashboard → Promote previous deployment" >> $GITHUB_STEP_SUMMARY
+            echo "- DB: Restore from backup (no auto-rollback)" >> $GITHUB_STEP_SUMMARY
+          fi

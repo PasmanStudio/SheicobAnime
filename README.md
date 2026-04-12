@@ -1,8 +1,12 @@
 # SheicobAnime
 
+[![API CI](https://github.com/PasmanStudio/SheicobAnime/actions/workflows/api.yml/badge.svg)](https://github.com/PasmanStudio/SheicobAnime/actions/workflows/api.yml)
+[![Web CI](https://github.com/PasmanStudio/SheicobAnime/actions/workflows/web.yml/badge.svg)](https://github.com/PasmanStudio/SheicobAnime/actions/workflows/web.yml)
+[![Deploy](https://github.com/PasmanStudio/SheicobAnime/actions/workflows/deploy.yml/badge.svg)](https://github.com/PasmanStudio/SheicobAnime/actions/workflows/deploy.yml)
+
 Anime streaming index platform. Indexes publicly embeddable video mirrors — never hosts video directly.
 
-**Stack:** .NET 8 · Next.js 14 · PostgreSQL · Playwright · Hangfire · Redis · Cloudflare
+**Stack:** .NET 9 · Next.js 14 · PostgreSQL · Playwright · Hangfire · Redis · Cloudflare
 **Budget:** $0/month (free-tier infrastructure)
 **Timeline:** 30 days to MVP
 

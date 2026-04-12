@@ -1,22 +1,32 @@
-name: CI — Test
+name: API CI
 
-run-name: "CI — ${{ github.event_name == 'pull_request' && format('PR #{0}', github.event.number) || github.ref_name }} @ ${{ github.sha }}"
+run-name: "API CI — ${{ github.event_name == 'pull_request' && format('PR #{0}', github.event.number) || github.ref_name }}"
 
 on:
   pull_request:
     branches: [main]
+    paths:
+      - 'api/**'
+      - 'scraper/**'
+      - '.github/workflows/api.yml'
   push:
     branches: [main]
+    paths:
+      - 'api/**'
+      - 'scraper/**'
+      - '.github/workflows/api.yml'
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
 
 permissions:
   contents: read
 
 jobs:
-  test-api:
-    name: .NET 9 API tests
+  build-and-test:
+    name: .NET 9 build + test
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -47,48 +57,40 @@ jobs:
         with:
           dotnet-version: '9.x'
 
-      - name: Restore dependencies
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ hashFiles('api/**/packages.lock.json', 'scraper/**/packages.lock.json', 'api/**/*.csproj', 'scraper/**/*.csproj') }}
+          restore-keys: nuget-
+
+      - name: Restore
         run: dotnet restore api/AnimeIndex.sln --locked-mode
 
       - name: Build
         run: dotnet build api/AnimeIndex.sln --no-restore --configuration Release
 
-      - name: Static analysis (warnings as errors)
+      - name: Warnings as errors
         run: dotnet build api/AnimeIndex.sln --no-restore --configuration Release /p:TreatWarningsAsErrors=true
 
-      - name: Run tests
-        run: dotnet test api/AnimeIndex.sln --no-build --configuration Release --logger trx
+      - name: Test with coverage
+        run: |
+          dotnet test api/AnimeIndex.sln \
+            --no-build \
+            --configuration Release \
+            --logger trx \
+            --collect:"XPlat Code Coverage" \
+            --results-directory ./test-results
         env:
           DATABASE_URL: "Host=localhost;Database=animeindex_test;Username=animeindex;Password=testpassword;Maximum Pool Size=5"
           REDIS_URL: "localhost:6379"
           ADMIN_API_KEY: "test-admin-key"
           ASPNETCORE_ENVIRONMENT: "Testing"
 
-  test-web:
-    name: Next.js type check + build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
-
-      - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
         with:
-          node-version: '24'
-          cache: 'npm'
-          cache-dependency-path: web/package-lock.json
-
-      - name: Install dependencies
-        run: npm ci
-        working-directory: web
-
-      - name: Type check
-        run: npm run type-check
-        working-directory: web
-
-      - name: Build
-        run: npm run build
-        working-directory: web
-        env:
-          NEXT_PUBLIC_API_URL: "http://localhost:5000"
-          NEXT_PUBLIC_AD_PROVIDER: "stub"
-          NEXT_PUBLIC_DISQUS_SHORTNAME: "test"
-          NEXT_PUBLIC_COMMENT_PROVIDER: "disqus"
+          name: api-test-results
+          path: ./test-results
+          retention-days: 7
