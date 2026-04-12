@@ -248,6 +248,15 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
       - name: Install Vercel CLI
         run: npm install -g vercel@latest
+      - name: Ensure Vercel env vars are set
+        run: |
+          # Add NEXT_PUBLIC_API_URL if not already set (idempotent via add --force)
+          echo "https://api-production-1f24.up.railway.app" | vercel env add NEXT_PUBLIC_API_URL production --force --token=${{ secrets.VERCEL_TOKEN }}
+          echo "stub" | vercel env add NEXT_PUBLIC_AD_PROVIDER production --force --token=${{ secrets.VERCEL_TOKEN }}
+          echo "disqus" | vercel env add NEXT_PUBLIC_COMMENT_PROVIDER production --force --token=${{ secrets.VERCEL_TOKEN }}
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
       - name: Deploy to Vercel
         run: vercel deploy --prod --token=${{ secrets.VERCEL_TOKEN }}
         env:
