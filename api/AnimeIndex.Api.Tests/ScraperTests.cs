@@ -236,6 +236,31 @@ public class ScraperTests
         Assert.Equal(aired, ep.AiredAt);
     }
 
+    [Fact]
+    public void UpsertPipelineService_HasSyncEpisodeCountMethod()
+    {
+        var db = CreateInMemoryDb();
+        var service = new UpsertPipelineService(db);
+        var method = service.GetType().GetMethod("SyncEpisodeCountAsync");
+
+        Assert.NotNull(method);
+        Assert.Equal(typeof(Task), method.ReturnType);
+    }
+
+    [Fact]
+    public void SeriesScrapedData_YearCanBeSet()
+    {
+        var data = new SeriesScrapedData(
+            Slug: "test-year",
+            Title: "Test Year",
+            CoverUrl: null,
+            Status: "ongoing",
+            Type: "tv",
+            Year: 2023);
+
+        Assert.Equal((short)2023, data.Year);
+    }
+
     // ── Stub for IHttpClientFactory ────────────────────────
 
     private sealed class StubHttpClientFactory : IHttpClientFactory

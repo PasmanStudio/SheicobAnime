@@ -81,6 +81,20 @@ public class UpsertPipelineService(AppDbContext db)
     }
 
     /// <summary>
+    /// Syncs series.episode_count with the actual number of episodes in the database.
+    /// Call after upserting all episodes for a series.
+    /// </summary>
+    public async Task SyncEpisodeCountAsync(Guid seriesId, CancellationToken ct = default)
+    {
+        await db.Database.ExecuteSqlAsync($"""
+            UPDATE series SET episode_count = (
+                SELECT COUNT(*)::smallint FROM episodes WHERE series_id = {seriesId}
+            ), updated_at = now()
+            WHERE id = {seriesId}
+            """, ct);
+    }
+
+    /// <summary>
     /// Upserts a mirror. Conflict key: (episode_id, embed_url).
     /// Resets consecutive_failures to 0 and marks is_active = true on re-discovery.
     /// </summary>

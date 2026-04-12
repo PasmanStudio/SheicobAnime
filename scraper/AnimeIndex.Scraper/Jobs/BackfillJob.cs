@@ -210,6 +210,9 @@ public class BackfillJob(
                     await JitterDelayAsync(delayMs, ct);
                 }
 
+                // Sync episode count from actual DB records
+                await upsert.SyncEpisodeCountAsync(series.Id, ct);
+
                 enrichedCount++;
 
                 // Update progress every 10 series
@@ -362,6 +365,20 @@ public class BackfillJob(
                 else if (tipoText.Contains("especial") || tipoText.Contains("special")) type = "special";
             }
 
+            // Year — extract from metadata list items (e.g. "Emitido: Oct 2023", "Año: 2023")
+            short? year = null;
+            var metaItems = await Page.Locator("div.card-bod ul li").AllAsync();
+            foreach (var li in metaItems)
+            {
+                var text = (await li.InnerTextAsync()).Trim();
+                var yearMatch = System.Text.RegularExpressions.Regex.Match(text, @"\b(19|20)\d{2}\b");
+                if (yearMatch.Success && short.TryParse(yearMatch.Value, out var parsedYear))
+                {
+                    year = parsedYear;
+                    break;
+                }
+            }
+
             await JitterDelayAsync(delayMs, ct);
 
             return new SeriesScrapedData(
@@ -371,6 +388,7 @@ public class BackfillJob(
                 Status: status ?? "ongoing",
                 Type: type ?? "tv",
                 Synopsis: synopsis,
+                Year: year,
                 Genres: genres.Count > 0 ? genres : null);
         }
         catch (Exception ex)

@@ -59,6 +59,9 @@ public sealed class Source1Strategy(
         // ── Discover series from /browse pages ────────────────
         var discovered = await DiscoverSeriesAsync(baseUrl, maxPages, delayMs, ct);
 
+        if (discovered.Count == 0)
+            logger.LogWarning("AnimeFlv returned 0 series — likely blocked by Cloudflare or domain changed. Verify {BaseUrl}/browse is accessible.", baseUrl);
+
         foreach (var series in discovered)
         {
             if (ct.IsCancellationRequested) break;
@@ -110,6 +113,9 @@ public sealed class Source1Strategy(
 
                 await JitterDelayAsync(delayMs, ct);
             }
+
+            // Sync episode count from actual DB records
+            await upsert.SyncEpisodeCountAsync(seriesId, ct);
         }
 
         logger.LogInformation(
@@ -146,7 +152,13 @@ public sealed class Source1Strategy(
             var cards = await Page.Locator("ul.ListAnimes li article.Anime").AllAsync();
             if (cards.Count == 0)
             {
-                logger.LogDebug("No cards found on page {Page} — end of directory", page);
+                // Diagnostic: log page title and body snippet to diagnose CF blocks / DOM changes
+                var pageTitle = await Page.TitleAsync();
+                var bodySnippet = await Page.Locator("body").First.InnerTextAsync();
+                if (bodySnippet.Length > 500) bodySnippet = bodySnippet[..500];
+                logger.LogWarning(
+                    "No cards found on page {Page} — title={Title}, body={Body}",
+                    page, pageTitle, bodySnippet);
                 break;
             }
 
