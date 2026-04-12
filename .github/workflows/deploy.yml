@@ -133,26 +133,32 @@ jobs:
         run: dotnet restore api/AnimeIndex.sln --locked-mode
       - name: Install EF CLI tool
         run: dotnet tool install --global dotnet-ef
-      - name: Force IPv4 for Supabase (GH Actions lacks IPv6)
-        run: |
-          # Extract hostname from ADO.NET connection string
-          DB_HOST=$(echo "${{ secrets.SUPABASE_DB_URL_DIRECT }}" | grep -oP '(?<=Host=)[^;]+')
-          if [ -z "$DB_HOST" ]; then
-            echo "::error::Could not extract Host from connection string"
-            exit 1
-          fi
-          IPV4=$(dig +short A "$DB_HOST" | head -1)
-          if [ -z "$IPV4" ]; then
-            echo "::error::Could not resolve IPv4 for $DB_HOST"
-            exit 1
-          fi
-          echo "Resolved $DB_HOST → $IPV4"
-          echo "$IPV4 $DB_HOST" | sudo tee -a /etc/hosts
+      # DATABASE_URL uses the session-mode pooler (IPv4-reachable from GH Actions).
+      # Supabase direct hostname is IPv6-only, which GH Actions cannot reach.
+      # Session-mode pooler supports full transaction semantics needed for EF migrations.
       - name: Run migrations
         run: |
+          CONN="${{ secrets.DATABASE_URL }}"
+          # Convert postgresql:// URI to ADO.NET format if needed
+          if [[ "$CONN" == postgresql://* ]] || [[ "$CONN" == postgres://* ]]; then
+            # Parse URI: postgresql://user:pass@host:port/db
+            PROTO="${CONN%%://*}"
+            REST="${CONN#*://}"
+            USERINFO="${REST%%@*}"
+            HOSTINFO="${REST#*@}"
+            DB_USER="${USERINFO%%:*}"
+            DB_PASS="${USERINFO#*:}"
+            HOST_PORT="${HOSTINFO%%/*}"
+            DB_NAME="${HOSTINFO#*/}"
+            DB_NAME="${DB_NAME%%\?*}"  # strip query params
+            DB_HOST="${HOST_PORT%%:*}"
+            DB_PORT="${HOST_PORT#*:}"
+            [ "$DB_PORT" = "$DB_HOST" ] && DB_PORT=5432
+            CONN="Host=${DB_HOST};Port=${DB_PORT};Database=${DB_NAME};Username=${DB_USER};Password=${DB_PASS};SSL Mode=Require;Trust Server Certificate=true"
+          fi
           dotnet ef database update \
             --project api/AnimeIndex.Api \
-            --connection "${{ secrets.SUPABASE_DB_URL_DIRECT }}"
+            --connection "$CONN"
 
   # ─── Deploy services (after migration succeeds) ───
   deploy-api:
