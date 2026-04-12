@@ -5,7 +5,6 @@ using AnimeIndex.Api.DTOs.Admin;
 using AnimeIndex.Api.Infrastructure.Auth;
 using AnimeIndex.Api.Infrastructure.Cache;
 using FluentValidation;
-using Hangfire;
 using Mapster;
 using Microsoft.EntityFrameworkCore;
 
@@ -208,10 +207,6 @@ public static class AdminEndpoints
 
         db.ScrapeJobs.Add(job);
         await db.SaveChangesAsync(ct);
-
-        // Trigger the scheduler immediately so the backfill is picked up
-        // without waiting for the next cron tick (both API and Scraper share Hangfire PG storage)
-        try { RecurringJob.TriggerJob("scrape-scheduler"); } catch { /* scheduler may not exist yet */ }
 
         return Results.Created($"/admin/backfill/{job.Id}/progress", new { jobId = job.Id, status = "queued", maxPages = request.MaxPages });
     }
