@@ -60,7 +60,7 @@ export default function EpisodePlayer({
           className="w-full h-full"
           allowFullScreen
           allow="fullscreen; autoplay; encrypted-media; picture-in-picture"
-          sandbox="allow-scripts allow-same-origin allow-presentation allow-popups"
+          referrerPolicy="no-referrer"
         />
       </div>
 

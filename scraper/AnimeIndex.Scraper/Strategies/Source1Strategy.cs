@@ -498,18 +498,18 @@ public sealed class Source1Strategy(
             }
         }
 
-        // Deduplicate and create mirror records
-        short priority = 0;
+        // Deduplicate and create mirror records (sorted by provider quality)
         foreach (var url in capturedEmbeds)
         {
             var providerName = ExtractProviderName(url);
+            if (BlockedProviders.Contains(providerName)) continue;
 
             mirrors.Add(new MirrorScrapedData(
                 EpisodeId: episodeId,
                 ProviderName: providerName,
                 EmbedUrl: url,
                 QualityLabel: 720,
-                Priority: priority++));
+                Priority: GetProviderPriority(providerName)));
         }
 
         logger.LogDebug("Episode {Url}: captured {Count} mirrors from {Tabs} tabs",
@@ -518,6 +518,22 @@ public sealed class Source1Strategy(
         await JitterDelayAsync(delayMs, ct);
         return mirrors;
     }
+
+    private static readonly HashSet<string> BlockedProviders = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "mega", "mediafire",
+    };
+
+    private static readonly Dictionary<string, short> ProviderPriorities = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["okru"] = 1, ["mp4upload"] = 2, ["sendvid"] = 3, ["yourupload"] = 4,
+        ["filemoon"] = 5, ["streamwish"] = 6, ["voe"] = 7, ["vidhide"] = 8,
+        ["streamtape"] = 9, ["fembed"] = 10, ["doodstream"] = 11, ["nozomi"] = 12,
+        ["mixdrop"] = 13, ["desu"] = 14,
+    };
+
+    private static short GetProviderPriority(string provider) =>
+        ProviderPriorities.TryGetValue(provider, out var p) ? p : (short)50;
 
     private static string ExtractProviderName(string url)
     {
@@ -542,6 +558,10 @@ public sealed class Source1Strategy(
                 var h when h.Contains("filemoon") => "filemoon",
                 var h when h.Contains("streamwish") => "streamwish",
                 var h when h.Contains("voe") => "voe",
+                var h when h.Contains("vidhide") => "vidhide",
+                var h when h.Contains("mega") => "mega",
+                var h when h.Contains("nozomi") => "nozomi",
+                var h when h.Contains("desu") => "desu",
                 var h when h.Contains("youtube") => "youtube",
                 _ => host.Split('.')[0]
             };

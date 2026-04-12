@@ -465,20 +465,20 @@ public sealed class Source2Strategy(
             logger.LogDebug(ex, "Failed extracting OK.ru mirror on {Url}", episodeUrl);
         }
 
-        // ── 3. Build mirror records ──
-        short priority = 0;
+        // ── 3. Build mirror records (sorted by provider quality) ──
         foreach (var url in capturedEmbeds)
         {
             if (IsJkAnimeDomain(url)) continue;
 
             var providerName = ExtractProviderName(url);
+            if (BlockedProviders.Contains(providerName)) continue;
 
             mirrors.Add(new MirrorScrapedData(
                 EpisodeId: episodeId,
                 ProviderName: providerName,
                 EmbedUrl: url,
                 QualityLabel: 720,
-                Priority: priority++));
+                Priority: GetProviderPriority(providerName)));
         }
 
         logger.LogDebug("Episode {Url}: captured {Count} real mirrors", episodeUrl, mirrors.Count);
@@ -490,6 +490,22 @@ public sealed class Source2Strategy(
     private static bool IsJkAnimeDomain(string url) =>
         url.Contains("jkanime.net", StringComparison.OrdinalIgnoreCase) ||
         url.Contains("jkdesa.com", StringComparison.OrdinalIgnoreCase);
+
+    private static readonly HashSet<string> BlockedProviders = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "mega", "mediafire",
+    };
+
+    private static readonly Dictionary<string, short> ProviderPriorities = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["okru"] = 1, ["mp4upload"] = 2, ["sendvid"] = 3, ["yourupload"] = 4,
+        ["filemoon"] = 5, ["streamwish"] = 6, ["voe"] = 7, ["vidhide"] = 8,
+        ["streamtape"] = 9, ["fembed"] = 10, ["doodstream"] = 11, ["nozomi"] = 12,
+        ["mixdrop"] = 13, ["desu"] = 14,
+    };
+
+    private static short GetProviderPriority(string provider) =>
+        ProviderPriorities.TryGetValue(provider, out var p) ? p : (short)50;
 
     private static string ExtractProviderName(string url)
     {

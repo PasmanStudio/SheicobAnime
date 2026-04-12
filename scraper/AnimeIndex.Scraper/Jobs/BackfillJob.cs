@@ -569,19 +569,22 @@ public class BackfillJob(
             logger.LogDebug(ex, "Failed extracting OK.ru mirror on {Url}", episodeUrl);
         }
 
-        // ── 3. Build mirror records ──
-        short priority = 0;
+        // ── 3. Build mirror records (sorted by provider quality) ──
         foreach (var url in capturedEmbeds)
         {
             if (IsJkAnimeDomain(url)) continue;
 
             var providerName = ExtractProviderName(url);
+
+            // Skip providers known to have bad embed experience
+            if (BlockedProviders.Contains(providerName)) continue;
+
             mirrors.Add(new MirrorScrapedData(
                 EpisodeId: episodeId,
                 ProviderName: providerName,
                 EmbedUrl: url,
                 QualityLabel: 720,
-                Priority: priority++));
+                Priority: GetProviderPriority(providerName)));
         }
 
         logger.LogDebug("Episode {Url}: captured {Count} real mirrors", episodeUrl, mirrors.Count);
@@ -593,6 +596,37 @@ public class BackfillJob(
     private static bool IsJkAnimeDomain(string url) =>
         url.Contains("jkanime.net", StringComparison.OrdinalIgnoreCase) ||
         url.Contains("jkdesa.com", StringComparison.OrdinalIgnoreCase);
+
+    // ── Provider quality system ─────────────────────────────
+    // Lower number = higher priority = shown first in the player UI.
+    // Providers with fewer ads/captchas get better priority.
+
+    private static readonly HashSet<string> BlockedProviders = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "mega",       // Requires decryption key, heavy JS, often doesn't play in iframe
+        "mediafire",  // Download-only, no embed player
+    };
+
+    private static readonly Dictionary<string, short> ProviderPriorities = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["okru"]        = 1,   // cleanest, fewest ads
+        ["mp4upload"]   = 2,
+        ["sendvid"]     = 3,
+        ["yourupload"]  = 4,
+        ["filemoon"]    = 5,
+        ["streamwish"]  = 6,   // ads but plays reliably
+        ["voe"]         = 7,
+        ["vidhide"]     = 8,
+        ["streamtape"]  = 9,
+        ["fembed"]      = 10,
+        ["doodstream"]  = 11,
+        ["nozomi"]      = 12,
+        ["mixdrop"]     = 13,  // captcha overlay before play
+        ["desu"]        = 14,
+    };
+
+    private static short GetProviderPriority(string provider) =>
+        ProviderPriorities.TryGetValue(provider, out var p) ? p : (short)50;
 
     // ── Helpers ─────────────────────────────────────────────
 
