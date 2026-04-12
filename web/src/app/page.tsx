@@ -1,8 +1,10 @@
 import AdSlot from "@/components/ads/AdSlot";
+import HeroCarousel from "@/components/ui/HeroCarousel";
 import SeriesCard from "@/components/ui/SeriesCard";
 import { getSeries } from "@/lib/api";
 import type { PaginatedResponse, Series } from "@/lib/types";
 import type { Metadata } from "next";
+import Link from "next/link";
 
 export const dynamic = "force-dynamic";
 
@@ -25,11 +27,24 @@ export default async function HomePage() {
   }
 
   return (
-    <div className="container mx-auto px-4 py-8 space-y-10">
+    <div className="container mx-auto px-4 py-6 space-y-10">
+      {/* Hero Carousel */}
+      {recent.data.length > 0 && (
+        <HeroCarousel series={recent.data} />
+      )}
+
       <AdSlot placement="home_top" />
 
       <section>
-        <h2 className="text-xl font-bold text-white mb-4">Recently Updated</h2>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-xl font-bold text-white">Últimos Actualizados</h2>
+          <Link
+            href="/directory?sort=updated"
+            className="text-sm text-indigo-400 hover:text-indigo-300 transition-colors"
+          >
+            Ver todos →
+          </Link>
+        </div>
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
           {recent.data.map((s) => (
             <SeriesCard key={s.id} series={s} />
@@ -40,7 +55,15 @@ export default async function HomePage() {
       <AdSlot placement="home_mid" />
 
       <section>
-        <h2 className="text-xl font-bold text-white mb-4">Top Rated</h2>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-xl font-bold text-white">Más Populares</h2>
+          <Link
+            href="/directory?sort=score"
+            className="text-sm text-indigo-400 hover:text-indigo-300 transition-colors"
+          >
+            Ver todos →
+          </Link>
+        </div>
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
           {topRated.data.map((s) => (
             <SeriesCard key={s.id} series={s} />

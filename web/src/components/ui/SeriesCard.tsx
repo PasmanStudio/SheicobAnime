@@ -1,6 +1,28 @@
-import Link from "next/link";
+import type { Series, SeriesStatus, SeriesType } from "@/lib/types";
 import Image from "next/image";
-import type { Series } from "@/lib/types";
+import Link from "next/link";
+
+const TYPE_LABELS: Record<SeriesType, string> = {
+  tv: "Serie",
+  movie: "Película",
+  ova: "OVA",
+  ona: "ONA",
+  special: "Especial",
+};
+
+const STATUS_LABELS: Record<SeriesStatus, string> = {
+  ongoing: "En emisión",
+  completed: "Concluido",
+  upcoming: "Por estrenar",
+  hiatus: "En pausa",
+};
+
+const STATUS_COLORS: Record<SeriesStatus, string> = {
+  ongoing: "bg-green-600",
+  completed: "bg-blue-600",
+  upcoming: "bg-amber-600",
+  hiatus: "bg-neutral-600",
+};
 
 interface SeriesCardProps {
   series: Series;
@@ -27,6 +49,21 @@ export default function SeriesCard({ series }: SeriesCardProps) {
             No cover
           </div>
         )}
+
+        {/* Type + Status badges (top) */}
+        <div className="absolute top-1.5 left-1.5 flex flex-wrap gap-1">
+          {series.type && (
+            <span className="bg-indigo-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded">
+              {TYPE_LABELS[series.type] ?? series.type}
+            </span>
+          )}
+          {series.status && (
+            <span className={`${STATUS_COLORS[series.status] ?? "bg-neutral-600"} text-white text-[10px] font-bold px-1.5 py-0.5 rounded`}>
+              {STATUS_LABELS[series.status] ?? series.status}
+            </span>
+          )}
+        </div>
+
         {series.score !== null && (
           <span className="absolute top-1.5 right-1.5 bg-black/70 text-indigo-400 text-xs font-semibold px-1.5 py-0.5 rounded">
             ★ {series.score.toFixed(1)}

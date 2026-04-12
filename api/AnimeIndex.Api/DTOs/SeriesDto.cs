@@ -23,3 +23,10 @@ public record SeriesStubDto(
     string Slug,
     string Title,
     string? CoverUrl);
+
+public record SeriesSuggestDto(
+    string Slug,
+    string Title,
+    string? CoverUrl,
+    string? Type,
+    string? Status);

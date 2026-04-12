@@ -2,9 +2,9 @@ import Link from "next/link";
 import SearchBar from "./SearchBar";
 
 const NAV_LINKS = [
-  { href: "/", label: "Home" },
-  { href: "/search", label: "Browse" },
-  { href: "/genres", label: "Genres" },
+  { href: "/", label: "Inicio" },
+  { href: "/directory", label: "Directorio" },
+  { href: "/genres", label: "Géneros" },
 ] as const;
 
 export default function SiteHeader() {

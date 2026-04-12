@@ -8,6 +8,7 @@ import type {
     SearchQueryParams,
     Series,
     SeriesQueryParams,
+    SeriesSuggest,
 } from "./types";
 
 // ─── Configuration ───────────────────────────────────
@@ -96,6 +97,12 @@ export async function searchSeries(
 ): Promise<PaginatedResponse<Series>> {
   return request<PaginatedResponse<Series>>(
     `/series/search${toQueryString({ ...params })}`
+  );
+}
+
+export async function suggestSeries(q: string): Promise<SeriesSuggest[]> {
+  return request<SeriesSuggest[]>(
+    `/series/suggest${toQueryString({ q })}`
   );
 }
 

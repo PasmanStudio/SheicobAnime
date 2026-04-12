@@ -25,6 +25,8 @@ export type AdPlacement =
   | "episode_bottom"
   | "search_top"
   | "search_bottom"
+  | "directory_top"
+  | "directory_bottom"
   | "genres_top"
   | "genre_top"
   | "genre_bottom";
@@ -144,6 +146,20 @@ export const AD_CONFIG: Record<AdPlacement, AdPlacementConfig> = {
     width: 728,
     height: 90,
     description: "Banner at bottom of search results",
+  },
+  directory_top: {
+    adsterraZone: process.env.NEXT_PUBLIC_ADSTERRA_ZONE_DIR_TOP ?? "",
+    propellerZone: process.env.NEXT_PUBLIC_PROPELLER_ZONE_DIR_TOP ?? "",
+    width: 728,
+    height: 90,
+    description: "Banner at top of directory page",
+  },
+  directory_bottom: {
+    adsterraZone: process.env.NEXT_PUBLIC_ADSTERRA_ZONE_DIR_BOTTOM ?? "",
+    propellerZone: process.env.NEXT_PUBLIC_PROPELLER_ZONE_DIR_BOTTOM ?? "",
+    width: 728,
+    height: 90,
+    description: "Banner at bottom of directory page",
   },
   genres_top: {
     adsterraZone: process.env.NEXT_PUBLIC_ADSTERRA_ZONE_GENRES_TOP ?? "",

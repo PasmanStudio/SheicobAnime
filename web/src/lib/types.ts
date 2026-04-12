@@ -46,6 +46,14 @@ export interface SeriesStub {
   coverUrl: string | null;
 }
 
+export interface SeriesSuggest {
+  slug: string;
+  title: string;
+  coverUrl: string | null;
+  type: SeriesType | null;
+  status: SeriesStatus | null;
+}
+
 export interface Mirror {
   id: string;
   episodeId: string;
@@ -92,7 +100,8 @@ export interface SeriesQueryParams {
   type?: SeriesType;
   genre?: string;
   year?: number;
-  sort?: "score" | "updated" | "year";
+  letter?: string;
+  sort?: "score" | "updated" | "year" | "title" | "title_desc";
 }
 
 export interface SearchQueryParams {
