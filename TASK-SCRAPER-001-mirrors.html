@@ -1,0 +1,1007 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TASK-001 — Scraper JKAnime / FLVAnime</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Sora:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #f9f9f8;
+  --bg2: #ffffff;
+  --bg3: #f3f2f0;
+  --bg4: #eae9e6;
+  --border: #e2e0db;
+  --border2: #ccc9c2;
+  --text: #1a1918;
+  --muted: #6b6860;
+  --accent: #0f6e56;
+  --accent2: #185fa5;
+  --accent3: #7c3aed;
+  --warn: #b45309;
+  --danger: #b91c1c;
+  --mono: 'JetBrains Mono', monospace;
+  --sans: 'Sora', sans-serif;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 14px;
+  line-height: 1.7;
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 48px 32px 96px;
+}
+@media(max-width:700px) { body { padding: 24px 16px 64px; } }
+
+/* Header */
+.doc-header { border-bottom: 2px solid var(--text); padding-bottom: 24px; margin-bottom: 40px; }
+.doc-badge { font-family: var(--mono); font-size: 11px; background: var(--text); color: var(--bg); padding: 3px 10px; border-radius: 2px; display: inline-block; margin-bottom: 14px; letter-spacing: .08em; }
+.doc-title { font-size: 28px; font-weight: 600; line-height: 1.2; margin-bottom: 8px; }
+.doc-meta { display: flex; gap: 24px; flex-wrap: wrap; margin-top: 16px; }
+.doc-meta-item { font-size: 12px; }
+.doc-meta-label { color: var(--muted); font-family: var(--mono); text-transform: uppercase; letter-spacing: .08em; font-size: 10px; display: block; }
+.doc-meta-value { font-weight: 500; margin-top: 1px; }
+
+/* TOC */
+.toc { background: var(--bg3); border: 1px solid var(--border); border-radius: 8px; padding: 20px 24px; margin-bottom: 40px; }
+.toc-title { font-family: var(--mono); font-size: 10px; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); margin-bottom: 12px; }
+.toc-list { list-style: none; }
+.toc-item { font-size: 13px; padding: 3px 0; }
+.toc-item a { color: var(--accent2); text-decoration: none; }
+.toc-item a:hover { text-decoration: underline; }
+.toc-sub { padding-left: 20px; }
+.toc-sub .toc-item { font-size: 12px; color: var(--muted); }
+
+/* Sections */
+.section { margin-bottom: 56px; }
+.section-eyebrow { font-family: var(--mono); font-size: 10px; text-transform: uppercase; letter-spacing: .12em; color: var(--muted); margin-bottom: 6px; }
+.section-title { font-size: 20px; font-weight: 600; margin-bottom: 16px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+p { color: var(--muted); margin-bottom: 12px; font-size: 13.5px; line-height: 1.75; }
+p strong { color: var(--text); font-weight: 500; }
+
+/* Subtask blocks */
+.subtask { background: var(--bg2); border: 1px solid var(--border); border-radius: 10px; margin-bottom: 24px; overflow: hidden; }
+.subtask-header { padding: 14px 20px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 14px; }
+.subtask-id { font-family: var(--mono); font-size: 11px; font-weight: 500; padding: 3px 10px; border-radius: 3px; white-space: nowrap; }
+.id-core { background: rgba(15,110,86,.1); color: var(--accent); border: 1px solid rgba(15,110,86,.2); }
+.id-edge { background: rgba(24,95,165,.1); color: var(--accent2); border: 1px solid rgba(24,95,165,.2); }
+.id-hard { background: rgba(124,58,237,.1); color: var(--accent3); border: 1px solid rgba(124,58,237,.2); }
+.id-infra { background: rgba(180,83,9,.1); color: var(--warn); border: 1px solid rgba(180,83,9,.2); }
+.subtask-name { font-weight: 600; font-size: 15px; flex: 1; }
+.priority-badge { font-family: var(--mono); font-size: 10px; padding: 2px 8px; border-radius: 3px; }
+.p-critical { background: rgba(185,28,28,.1); color: var(--danger); border: 1px solid rgba(185,28,28,.2); }
+.p-high { background: rgba(180,83,9,.1); color: var(--warn); border: 1px solid rgba(180,83,9,.2); }
+.p-medium { background: rgba(15,110,86,.1); color: var(--accent); border: 1px solid rgba(15,110,86,.2); }
+.subtask-body { padding: 20px; }
+
+/* Subsections inside subtask */
+.st-label { font-family: var(--mono); font-size: 10px; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); margin: 20px 0 8px; }
+.st-label:first-child { margin-top: 0; }
+
+/* Code blocks */
+pre { background: #1a1918; color: #e8e6e0; border-radius: 8px; padding: 16px 18px; overflow-x: auto; font-family: var(--mono); font-size: 12px; line-height: 1.7; margin: 12px 0; }
+code { font-family: var(--mono); font-size: 12px; background: var(--bg3); padding: 2px 6px; border-radius: 3px; color: var(--text); border: 1px solid var(--border); }
+.kw { color: #79c0ff; }
+.str { color: #a5d6ff; }
+.cm { color: #6a737d; font-style: italic; }
+.fn { color: #d2a8ff; }
+.ty { color: #ffa657; }
+.num { color: #79c0ff; }
+.prop { color: #7ee787; }
+
+/* Lists */
+ul, ol { padding-left: 20px; margin-bottom: 12px; }
+li { font-size: 13px; color: var(--muted); padding: 3px 0; line-height: 1.6; }
+li strong { color: var(--text); }
+
+/* AC checklist */
+.ac-list { list-style: none; padding: 0; }
+.ac-item { display: flex; gap: 10px; align-items: flex-start; padding: 5px 0; border-bottom: 1px solid var(--border); font-size: 12.5px; color: var(--muted); }
+.ac-item:last-child { border-bottom: none; }
+.ac-box { width: 14px; height: 14px; border: 1.5px solid var(--border2); border-radius: 3px; flex-shrink: 0; margin-top: 2px; }
+
+/* Warning/info boxes */
+.warn-box { background: rgba(180,83,9,.06); border-left: 3px solid var(--warn); border-radius: 0 6px 6px 0; padding: 12px 14px; margin: 12px 0; }
+.warn-box-label { font-family: var(--mono); font-size: 10px; color: var(--warn); text-transform: uppercase; letter-spacing: .08em; margin-bottom: 5px; font-weight: 500; }
+.warn-box p { margin: 0; }
+.info-box { background: rgba(24,95,165,.06); border-left: 3px solid var(--accent2); border-radius: 0 6px 6px 0; padding: 12px 14px; margin: 12px 0; }
+.info-box p { margin: 0; }
+.legal-box { background: rgba(185,28,28,.06); border-left: 3px solid var(--danger); border-radius: 0 6px 6px 0; padding: 12px 14px; margin: 12px 0; }
+.legal-box-label { font-family: var(--mono); font-size: 10px; color: var(--danger); text-transform: uppercase; letter-spacing: .08em; margin-bottom: 5px; font-weight: 500; }
+.legal-box p { margin: 0; font-size: 13px; }
+
+/* Table */
+.spec-table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 12.5px; }
+.spec-table th { text-align: left; padding: 8px 12px; border-bottom: 2px solid var(--border2); font-family: var(--mono); font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+.spec-table td { padding: 8px 12px; border-bottom: 1px solid var(--border); color: var(--muted); vertical-align: top; }
+.spec-table td:first-child { font-weight: 500; color: var(--text); font-family: var(--mono); font-size: 12px; }
+.spec-table tr:last-child td { border-bottom: none; }
+
+/* Dependency chain */
+.dep-chain { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 8px 0; }
+.dep-chip { font-family: var(--mono); font-size: 11px; padding: 3px 10px; border-radius: 3px; background: var(--bg3); border: 1px solid var(--border); color: var(--muted); }
+.dep-arrow { color: var(--border2); font-size: 12px; }
+
+/* File path */
+.filepath { font-family: var(--mono); font-size: 11px; background: var(--bg3); padding: 6px 12px; border-radius: 4px; border: 1px solid var(--border); display: inline-block; margin: 4px 0; color: var(--accent2); }
+
+/* Summary table at bottom */
+.summary { background: var(--bg2); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+.summary-header { padding: 14px 20px; background: var(--text); color: var(--bg); font-weight: 600; font-size: 14px; }
+</style>
+</head>
+<body>
+
+<div class="doc-header">
+  <span class="doc-badge">TASK-SCRAPER-001</span>
+  <h1 class="doc-title">Scraper de mirrors por episodio<br>JKAnime / FLVAnime</h1>
+  <div class="doc-meta">
+    <div class="doc-meta-item"><span class="doc-meta-label">Feature</span><span class="doc-meta-value">Ingestion layer — IScrapeStrategy</span></div>
+    <div class="doc-meta-item"><span class="doc-meta-label">Fase MVP</span><span class="doc-meta-value">Phase 3 — Scraper implementation</span></div>
+    <div class="doc-meta-item"><span class="doc-meta-label">Estimación</span><span class="doc-meta-value">~16–20h de desarrollo</span></div>
+    <div class="doc-meta-item"><span class="doc-meta-label">Stack</span><span class="doc-meta-value">Playwright .NET · C# · PostgreSQL</span></div>
+    <div class="doc-meta-item"><span class="doc-meta-label">Archivos</span><span class="doc-meta-value">4 archivos nuevos · 2 modificaciones</span></div>
+  </div>
+</div>
+
+<!-- TOC -->
+<div class="toc">
+  <div class="toc-title">Contenido</div>
+  <ul class="toc-list">
+    <li class="toc-item"><a href="#context">1. Contexto y modelo mental</a></li>
+    <li class="toc-item"><a href="#clarification">2. Aclaración conceptual crítica</a></li>
+    <li class="toc-item"><a href="#subtasks">3. Subtareas técnicas</a></li>
+    <ul class="toc-list toc-sub">
+      <li class="toc-item"><a href="#st01">ST-01 · PlaywrightScraperBase — infraestructura compartida</a></li>
+      <li class="toc-item"><a href="#st02">ST-02 · Network interceptor — captura pasiva de embed URLs</a></li>
+      <li class="toc-item"><a href="#st03">ST-03 · Extracción del HTML inicial — lista de servidores y primer embed</a></li>
+      <li class="toc-item"><a href="#st04">ST-04 · Loop de click por servidor — activar los demás embeds</a></li>
+      <li class="toc-item"><a href="#st05">ST-05 · Decodificación — base64, obfuscation y dominios rotativos</a></li>
+      <li class="toc-item"><a href="#st06">ST-06 · MirrorProbeService — gate de embebibilidad legal y técnica</a></li>
+      <li class="toc-item"><a href="#st07">ST-07 · Upsert pipeline — persistencia idempotente en DB</a></li>
+      <li class="toc-item"><a href="#st08">ST-08 · Error handling, retry y dead-letter</a></li>
+      <li class="toc-item"><a href="#st09">ST-09 · Cálculo de prioridad por servidor</a></li>
+      <li class="toc-item"><a href="#st10">ST-10 · Tests y criterios de aceptación end-to-end</a></li>
+    </ul>
+    <li class="toc-item"><a href="#servers">4. Comportamiento por servidor</a></li>
+    <li class="toc-item"><a href="#files">5. Archivos a crear / modificar</a></li>
+    <li class="toc-item"><a href="#dod">6. Definition of Done</a></li>
+  </ul>
+</div>
+
+<!-- CONTEXT -->
+<section class="section" id="context">
+  <div class="section-eyebrow">Sección 01</div>
+  <h2 class="section-title">Contexto y modelo mental</h2>
+
+  <p>Una página de episodio en JKAnime (ej: <code>jkanime.net/jujutsu-kaisen.../4/</code>) tiene tres capas de información. El scraper solo necesita llegar a la Capa 2 — los embed URLs. <strong>Nunca debe ir a la Capa 3.</strong></p>
+
+  <table class="spec-table">
+    <thead><tr><th>Capa</th><th>Qué es</th><th>Lo necesitamos?</th><th>Por qué</th></tr></thead>
+    <tbody>
+      <tr><td>Capa 1</td><td>Página del episodio en JKAnime/FLVAnime. HTML con lista de servidores disponibles.</td><td>Es el punto de entrada. Sí.</td><td>Sin esto no sabemos qué servidores existen ni sus embed URLs.</td></tr>
+      <tr><td>Capa 2</td><td>Embed URL de cada servidor. Ej: <code>streamwish.com/e/ABC</code>, <code>voe.sx/e/XYZ</code>. Es la URL del iframe.</td><td>SÍ — esto es todo lo que guardamos.</td><td>Nuestro player muestra este iframe. El usuario ve el contenido. Nuestro trabajo termina acá.</td></tr>
+      <tr><td>Capa 3</td><td>URL del stream real: <code>cdn.streamwish.com/hls/TOKEN_EXPIRA/index.m3u8</code>. Token-protected, expira en horas.</td><td>NO. Nunca.</td><td>El iframe de Capa 2 construye este URL internamente con su propio JS. Si nosotros lo extraemos y guardamos, expira y no sirve. Además, extraer streams equivale a hosting indirecto — riesgo legal.</td></tr>
+    </tbody>
+  </table>
+
+  <div class="legal-box">
+    <div class="legal-box-label">Límite legal crítico</div>
+    <p>El scraper NO debe nunca intentar extraer la URL del stream (m3u8/mp4 directo). Solo guarda el embed URL del iframe — que es exactamente lo mismo que hace un link de YouTube embebido. Ir más allá nos saca de la posición de "índice" y nos acerca a "hosting".</p>
+  </div>
+</section>
+
+<!-- CLARIFICATION -->
+<section class="section" id="clarification">
+  <div class="section-eyebrow">Sección 02</div>
+  <h2 class="section-title">Aclaración conceptual crítica — dos mecanismos</h2>
+
+  <p>JKAnime y FLVAnime usan <strong>dos mecanismos diferentes</strong> para entregar las embed URLs de sus servidores. El scraper debe manejar ambos porque en la misma página pueden coexistir:</p>
+
+  <div class="subtask" style="border-color: var(--border2)">
+    <div class="subtask-header" style="background: var(--bg3)">
+      <span class="subtask-name">Mecanismo A — Data attributes en el HTML inicial</span>
+    </div>
+    <div class="subtask-body">
+      <p>El HTML ya contiene las embed URLs en atributos <code>data-*</code> de los botones de servidor, o como una variable JS en el <code>&lt;script&gt;</code> inline de la página. A veces en base64.</p>
+<pre><span class="cm">// En el DOM:</span>
+&lt;div <span class="prop">class</span>=<span class="str">"server-item"</span> <span class="prop">data-embed</span>=<span class="str">"aHR0cHM6Ly9zdHJlYW..."</span> <span class="prop">data-server</span>=<span class="str">"VOE"</span>&gt;
+
+<span class="cm">// En el script inline de la página:</span>
+<span class="kw">var</span> <span class="prop">servers</span> = [
+  { name: <span class="str">"Desu"</span>,   embed: <span class="str">"https://desu.me/embed/XXXXXX"</span> },
+  { name: <span class="str">"VOE"</span>,    embed: <span class="str">"aHR0cHM6Ly92b2Uuc3gvZS9ZWVk="</span> }, <span class="cm">// base64</span>
+  { name: <span class="str">"Magi"</span>,   embed: <span class="str">"https://magi.su/embed/ZZZZ"</span>  }
+];</pre>
+      <p><strong>Cómo extraerlo:</strong> Con Playwright, evaluar el DOM una vez que carga la página. Parsear la variable JS con <code>page.EvaluateAsync</code>.</p>
+    </div>
+  </div>
+
+  <div class="subtask" style="border-color: var(--border2)">
+    <div class="subtask-header" style="background: var(--bg3)">
+      <span class="subtask-name">Mecanismo B — AJAX request al hacer click en cada servidor</span>
+    </div>
+    <div class="subtask-body">
+      <p>Algunos servidores no tienen la URL pre-cargada. Al hacer click en el botón, el browser hace un fetch a un endpoint interno de JKAnime que retorna el embed URL.</p>
+<pre><span class="cm">// Browser hace esto al clickear "Streamwish":</span>
+GET /ajax/server/?id=<span class="num">12345</span>&server=<span class="num">2</span>&lang=<span class="num">1</span>
+Content-Type: application/json
+
+<span class="cm">// Response:</span>
+{ <span class="str">"embed"</span>: <span class="str">"https://swdyu.com/e/HASHHASH"</span>, <span class="str">"server"</span>: <span class="str">"Streamwish"</span> }</pre>
+      <p><strong>Cómo extraerlo:</strong> Con el interceptor de responses de Playwright (<code>page.Response</code>), escuchar todos los requests a <code>/ajax/</code> y parsear el JSON. También cambia el <code>src</code> del iframe en el DOM — capturarlo con <code>MutationObserver</code> o leyendo el iframe src después del click.</p>
+    </div>
+  </div>
+</section>
+
+<!-- SUBTASKS -->
+<section class="section" id="subtasks">
+  <div class="section-eyebrow">Sección 03</div>
+  <h2 class="section-title">Subtareas técnicas</h2>
+
+  <!-- ST-01 -->
+  <div class="subtask" id="st01">
+    <div class="subtask-header">
+      <span class="subtask-id id-infra">ST-01</span>
+      <span class="subtask-name">PlaywrightScraperBase — infraestructura compartida de browser</span>
+      <span class="priority-badge p-critical">CRÍTICO</span>
+    </div>
+    <div class="subtask-body">
+
+      <div class="st-label">Qué hace</div>
+      <p>Clase abstracta base que todas las estrategias de scraping heredan. Maneja el ciclo de vida del browser Chromium: creación, reutilización, cierre. Implementa rotación de user-agents, jitter delay, y el interceptor de red pasivo.</p>
+
+      <div class="st-label">Por qué existe como clase separada</div>
+      <p>Si cada <code>IScrapeStrategy</code> creara su propio browser, en Phase 1 (Railway 512MB) explotaría la memoria — Chromium consume 250–400MB por instancia. La base centraliza el lifecycle y limita la concurrencia a <strong>MAX_CONCURRENT_BROWSERS = 2</strong>. En Phase 3 esto se reemplaza por un pool de containers, no por esta clase.</p>
+
+      <div class="st-label">Cómo implementarlo</div>
+<pre><span class="kw">public abstract class</span> <span class="ty">PlaywrightScraperBase</span> : <span class="ty">IScrapeStrategy</span>, <span class="ty">IAsyncDisposable</span>
+{
+    <span class="kw">private static readonly</span> <span class="ty">SemaphoreSlim</span> _concurrencyLimiter = <span class="kw">new</span>(<span class="num">2</span>, <span class="num">2</span>);
+    <span class="kw">private</span> <span class="ty">IPlaywright</span>? _playwright;
+    <span class="kw">private</span> <span class="ty">IBrowser</span>? _browser;
+
+    <span class="kw">private static readonly</span> <span class="ty">string</span>[] UserAgents = [
+        <span class="str">"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"</span>,
+        <span class="str">"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"</span>,
+        <span class="str">"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"</span>,
+        <span class="cm">// 7 más — mezclar Windows, Mac, Linux para evitar fingerprinting</span>
+    ];
+
+    <span class="kw">protected async</span> <span class="ty">Task</span>&lt;<span class="ty">IPage</span>&gt; <span class="fn">CreatePageAsync</span>(<span class="ty">ConcurrentBag</span>&lt;<span class="ty">string</span>&gt; capturedEmbeds)
+    {
+        _playwright ??= <span class="kw">await</span> <span class="ty">Playwright</span>.<span class="fn">CreateAsync</span>();
+        _browser ??= <span class="kw">await</span> _playwright.Chromium.<span class="fn">LaunchAsync</span>(<span class="kw">new</span>() {
+            Headless = <span class="kw">true</span>,
+            Args = [
+                <span class="str">"--no-sandbox"</span>,           <span class="cm">// requerido en Docker/Railway</span>
+                <span class="str">"--disable-gpu"</span>,
+                <span class="str">"--disable-dev-shm-usage"</span>, <span class="cm">// evita OOM en containers</span>
+                <span class="str">"--disable-extensions"</span>,
+                <span class="str">"--disable-background-timer-throttling"</span>
+            ]
+        });
+
+        <span class="kw">var</span> ua = UserAgents[Random.Shared.<span class="fn">Next</span>(UserAgents.Length)];
+        <span class="kw">var</span> page = <span class="kw">await</span> _browser.<span class="fn">NewPageAsync</span>(<span class="kw">new</span>() {
+            UserAgent = ua,
+            ViewportSize = <span class="kw">new</span>() { Width = <span class="num">1280</span>, Height = <span class="num">720</span> },
+            ExtraHTTPHeaders = <span class="kw">new</span> Dictionary&lt;<span class="ty">string</span>, <span class="ty">string</span>&gt; {
+                [<span class="str">"Accept-Language"</span>] = <span class="str">"es-ES,es;q=0.9,en;q=0.8"</span>
+            }
+        });
+
+        <span class="cm">// Interceptor pasivo: escucha todos los requests/responses</span>
+        page.RequestFinished += (_, req) => {
+            <span class="kw">if</span> (<span class="fn">LooksLikeEmbedUrl</span>(req.Url)) capturedEmbeds.<span class="fn">Add</span>(req.Url);
+        };
+
+        page.Response += <span class="kw">async</span> (_, resp) => {
+            <span class="kw">if</span> (resp.Url.<span class="fn">Contains</span>(<span class="str">"/ajax/"</span>) &amp;&amp; resp.Status == <span class="num">200</span>)
+                <span class="kw">await</span> <span class="fn">TryExtractEmbedFromAjaxResponseAsync</span>(resp, capturedEmbeds);
+        };
+
+        <span class="kw">return</span> page;
+    }
+
+    <span class="cm">// Delay aleatorio 2–5 segundos entre acciones de scraping</span>
+    <span class="kw">protected static async</span> <span class="ty">Task</span> <span class="fn">JitterAsync</span>()
+        => <span class="kw">await</span> <span class="ty">Task</span>.<span class="fn">Delay</span>(<span class="ty">Random</span>.Shared.<span class="fn">Next</span>(<span class="num">2000</span>, <span class="num">5000</span>));
+
+    <span class="kw">private static bool</span> <span class="fn">LooksLikeEmbedUrl</span>(<span class="ty">string</span> url)
+    {
+        <span class="kw">var</span> knownEmbedPatterns = <span class="kw">new</span>[] {
+            <span class="str">"/embed/"</span>, <span class="str">"/e/"</span>, <span class="str">"streamwish"</span>, <span class="str">"voe.sx"</span>,
+            <span class="str">"filemoon"</span>, <span class="str">"mixdrop"</span>, <span class="str">"mp4upload"</span>, <span class="str">"streamtape"</span>,
+            <span class="str">"dood"</span>, <span class="str">"desu.me"</span>, <span class="str">"magi.su"</span>
+        };
+        <span class="kw">return</span> url.<span class="fn">StartsWith</span>(<span class="str">"https://"</span>) &amp;&amp;
+               knownEmbedPatterns.<span class="fn">Any</span>(p => url.<span class="fn">Contains</span>(p, StringComparison.OrdinalIgnoreCase));
+    }
+
+    <span class="kw">public abstract string</span> SourceName { <span class="kw">get</span>; }
+    <span class="kw">public abstract bool</span> <span class="fn">CanHandle</span>(<span class="ty">string</span> url);
+    <span class="kw">public abstract</span> <span class="ty">Task</span>&lt;<span class="ty">ScrapeResult</span>&gt; <span class="fn">ScrapeSeriesAsync</span>(<span class="ty">string</span> url, <span class="ty">CancellationToken</span> ct);
+    <span class="kw">public abstract</span> <span class="ty">Task</span>&lt;<span class="ty">ScrapeResult</span>&gt; <span class="fn">ScrapeEpisodeMirrorsAsync</span>(<span class="ty">string</span> url, <span class="ty">CancellationToken</span> ct);
+
+    <span class="kw">public async</span> <span class="ty">ValueTask</span> <span class="fn">DisposeAsync</span>()
+    {
+        <span class="kw">if</span> (_browser != <span class="kw">null</span>) <span class="kw">await</span> _browser.<span class="fn">DisposeAsync</span>();
+        _playwright?.<span class="fn">Dispose</span>();
+    }
+}</pre>
+
+      <div class="st-label">Archivo a crear</div>
+      <span class="filepath">api/AnimeIndex.Api/Infrastructure/Scraping/PlaywrightScraperBase.cs</span>
+
+      <div class="st-label">Criterios de aceptación</div>
+      <ul class="ac-list">
+        <li class="ac-item"><div class="ac-box"></div><span>Máximo 2 instancias de Chromium corriendo simultáneamente (SemaphoreSlim lo garantiza)</span></li>
+        <li class="ac-item"><div class="ac-box"></div><span>User-agent rota en cada llamada a <code>CreatePageAsync</code></span></li>
+        <li class="ac-item"><div class="ac-box"></div><span>El interceptor de red captura URLs de embed correctamente antes de que la página cargue</span></li>
+        <li class="ac-item"><div class="ac-box"></div><span><code>DisposeAsync</code> cierra el browser — sin memory leaks en el test suite</span></li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- ST-02 -->
+  <div class="subtask" id="st02">
+    <div class="subtask-header">
+      <span class="subtask-id id-core">ST-02</span>
+      <span class="subtask-name">Network interceptor — captura pasiva de embed URLs vía AJAX</span>
+      <span class="priority-badge p-critical">CRÍTICO</span>
+    </div>
+    <div class="subtask-body">
+
+      <div class="st-label">Qué hace</div>
+      <p>Escucha todos los responses de red durante la sesión de Playwright. Cuando detecta una respuesta JSON del endpoint <code>/ajax/server/</code> (o equivalente en FLVAnime), extrae el embed URL del JSON y lo agrega al bag de capturados.</p>
+
+      <div class="st-label">Por qué es necesario (y no alcanza con leer el HTML)</div>
+      <p>Cuando el usuario clickea el botón "Streamwish" en JKAnime, el browser hace un fetch <strong>dinámico</strong> a un endpoint interno. La URL del embed no está en el HTML inicial — se genera en el servidor y se retorna en ese momento. Sin interceptar esa respuesta, solo obtenemos el primer server (Desu). Los demás quedan invisibles para un scraper que solo lee HTML.</p>
+
+      <div class="st-label">Cómo implementarlo</div>
+<pre><span class="kw">private static async</span> <span class="ty">Task</span> <span class="fn">TryExtractEmbedFromAjaxResponseAsync</span>(
+    <span class="ty">IResponse</span> resp,
+    <span class="ty">ConcurrentBag</span>&lt;<span class="ty">string</span>&gt; capturedEmbeds)
+{
+    <span class="kw">try</span>
+    {
+        <span class="kw">var</span> text = <span class="kw">await</span> resp.<span class="fn">TextAsync</span>();
+        <span class="kw">if</span> (<span class="ty">string</span>.<span class="fn">IsNullOrWhiteSpace</span>(text)) <span class="kw">return</span>;
+
+        <span class="kw">using var</span> doc = <span class="ty">JsonDocument</span>.<span class="fn">Parse</span>(text);
+        <span class="kw">var</span> root = doc.RootElement;
+
+        <span class="cm">// JKAnime retorna: {"embed": "https://...", "server": "streamwish"}</span>
+        <span class="kw">if</span> (root.<span class="fn">TryGetProperty</span>(<span class="str">"embed"</span>, <span class="kw">out var</span> embedProp))
+        {
+            <span class="kw">var</span> url = embedProp.<span class="fn">GetString</span>();
+            <span class="kw">if</span> (!<span class="ty">string</span>.<span class="fn">IsNullOrEmpty</span>(url) &amp;&amp; url.<span class="fn">StartsWith</span>(<span class="str">"https://"</span>))
+                capturedEmbeds.<span class="fn">Add</span>(url);
+        }
+
+        <span class="cm">// FLVAnime puede tener estructura diferente: {"url": "...", "type": "iframe"}</span>
+        <span class="kw">if</span> (root.<span class="fn">TryGetProperty</span>(<span class="str">"url"</span>, <span class="kw">out var</span> urlProp))
+        {
+            <span class="kw">var</span> url = urlProp.<span class="fn">GetString</span>();
+            <span class="kw">if</span> (!<span class="ty">string</span>.<span class="fn">IsNullOrEmpty</span>(url) &amp;&amp; url.<span class="fn">StartsWith</span>(<span class="str">"https://"</span>))
+                capturedEmbeds.<span class="fn">Add</span>(url);
+        }
+    }
+    <span class="kw">catch</span> (<span class="ty">Exception</span>)
+    {
+        <span class="cm">// Silenciar — no todos los responses son JSON embeds. Esto es expected.</span>
+    }
+}</pre>
+
+      <div class="warn-box">
+        <div class="warn-box-label">Importante</div>
+        <p>El handler <code>page.Response</code> se dispara en el thread del browser loop. <strong>No hacer awaits bloqueantes</strong> dentro de él. El <code>resp.TextAsync()</code> sí es await pero es non-blocking en el contexto de Playwright. Nunca hacer DB calls o HTTP calls dentro de este handler.</p>
+      </div>
+
+      <div class="st-label">Criterios de aceptación</div>
+      <ul class="ac-list">
+        <li class="ac-item"><div class="ac-box"></div><span>Captura respuestas de <code>/ajax/server/</code> correctamente parseando el JSON</span></li>
+        <li class="ac-item"><div class="ac-box"></div><span>No lanza excepciones cuando el response no es JSON (la mayoría de responses no lo son)</span></li>
+        <li class="ac-item"><div class="ac-box"></div><span>Solo agrega URLs que empiecen con <code>https://</code> — no relative paths ni data: URIs</span></li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- ST-03 -->
+  <div class="subtask" id="st03">
+    <div class="subtask-header">
+      <span class="subtask-id id-core">ST-03</span>
+      <span class="subtask-name">Extracción del HTML inicial — lista de servidores y primer embed</span>
+      <span class="priority-badge p-critical">CRÍTICO</span>
+    </div>
+    <div class="subtask-body">
+
+      <div class="st-label">Qué hace</div>
+      <p>Después de navegar a la página del episodio y esperar <code>networkidle</code>, lee el DOM para: (1) obtener la lista de nombres de servidores disponibles, (2) capturar el embed URL del primer servidor que ya está cargado en el iframe, y (3) extraer cualquier embed URL que esté pre-cargada en <code>data-embed</code> o variables JS.</p>
+
+      <div class="st-label">Por qué esperamos networkidle y no solo DOMContentLoaded</div>
+      <p><code>DOMContentLoaded</code> se dispara cuando el HTML está parseado, pero JKAnime ejecuta JS después que inicializa los servidores, carga iframes externos, y pide recursos adicionales. Con <code>networkidle</code> esperamos a que no haya requests activos por 500ms — garantiza que el JS de inicialización ya corrió y el primer iframe ya tiene <code>src</code>.</p>
+
+      <div class="st-label">Cómo implementarlo</div>
+<pre><span class="kw">public override async</span> <span class="ty">Task</span>&lt;<span class="ty">ScrapeResult</span>&gt; <span class="fn">ScrapeEpisodeMirrorsAsync</span>(
+    <span class="ty">string</span> episodeUrl, <span class="ty">CancellationToken</span> ct = <span class="kw">default</span>)
+{
+    <span class="kw">await</span> _concurrencyLimiter.<span class="fn">WaitAsync</span>(ct);
+    <span class="kw">try</span>
+    {
+        <span class="kw">var</span> capturedEmbeds = <span class="kw">new</span> <span class="ty">ConcurrentBag</span>&lt;<span class="ty">string</span>&gt;();
+        <span class="kw">await using var</span> page = <span class="kw">await</span> <span class="fn">CreatePageAsync</span>(capturedEmbeds);
+
+        <span class="cm">// Navegar y esperar que el JS de inicialización termine</span>
+        <span class="kw">await</span> page.<span class="fn">GotoAsync</span>(episodeUrl, <span class="kw">new</span>() {
+            WaitUntil = WaitUntilState.NetworkIdle,
+            Timeout = <span class="num">30_000</span>
+        });
+
+        <span class="cm">// Capturar el iframe src del primer servidor (ya está en el DOM)</span>
+        <span class="kw">var</span> iframeSrc = <span class="kw">await</span> page.<span class="fn">EvalOnSelectorAsync</span>&lt;<span class="ty">string</span>?&gt;(
+            <span class="str">"#player iframe, .player-container iframe, iframe[allowfullscreen]"</span>,
+            <span class="str">"el => el.src || el.getAttribute('data-src')"</span>
+        );
+        <span class="kw">if</span> (!<span class="ty">string</span>.<span class="fn">IsNullOrEmpty</span>(iframeSrc)) capturedEmbeds.<span class="fn">Add</span>(iframeSrc);
+
+        <span class="cm">// Extraer la lista de servidores disponibles del DOM</span>
+        <span class="kw">var</span> serverList = <span class="kw">await</span> page.<span class="fn">EvaluateAsync</span>&lt;<span class="ty">ServerInfo</span>[]&gt;(<span class="str">@"
+            () => {
+                // Intento 1: data attributes directos
+                const btns = document.querySelectorAll('[data-embed], [data-server], .server-item');
+                if (btns.length > 0) {
+                    return Array.from(btns).map(el => ({
+                        name: el.dataset.name || el.dataset.server || el.textContent?.trim(),
+                        embed: el.dataset.embed || null
+                    }));
+                }
+                // Intento 2: variable JS global servers[]
+                if (typeof servers !== 'undefined') return servers;
+                if (typeof window.servers !== 'undefined') return window.servers;
+                return [];
+            }
+        "</span>);
+
+        <span class="cm">// Agregar embeds pre-cargados que venían en el HTML</span>
+        <span class="kw">foreach</span> (<span class="kw">var</span> s <span class="kw">in</span> serverList.<span class="fn">Where</span>(s => !<span class="ty">string</span>.<span class="fn">IsNullOrEmpty</span>(s.Embed)))
+            capturedEmbeds.<span class="fn">Add</span>(s.Embed!);
+
+        <span class="kw">return</span> (page, serverList, capturedEmbeds); <span class="cm">// pasamos al ST-04</span>
+    }
+    <span class="kw">finally</span> { _concurrencyLimiter.<span class="fn">Release</span>(); }
+}</pre>
+
+      <div class="st-label">Qué hacer si el selector del iframe cambia</div>
+      <p>JKAnime puede cambiar los class names de sus elementos. El selector <code>"#player iframe, .player-container iframe, iframe[allowfullscreen]"</code> es deliberadamente amplio — trata de cubrir variantes. Si falla, el interceptor de red de ST-02 ya capturó el URL igualmente cuando el iframe se cargó. Son capas redundantes de captura.</p>
+
+      <div class="st-label">Criterios de aceptación</div>
+      <ul class="ac-list">
+        <li class="ac-item"><div class="ac-box"></div><span>Obtiene al menos 1 embed URL (el del primer servidor) después de navegar</span></li>
+        <li class="ac-item"><div class="ac-box"></div><span>Retorna la lista de nombres de servidores (para el loop de ST-04)</span></li>
+        <li class="ac-item"><div class="ac-box"></div><span>No falla si la variable JS <code>servers</code> no existe — retorna array vacío, no excepción</span></li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- ST-04 -->
+  <div class="subtask" id="st04">
+    <div class="subtask-header">
+      <span class="subtask-id id-core">ST-04</span>
+      <span class="subtask-name">Loop de click por servidor — activar y capturar los demás embeds</span>
+      <span class="priority-badge p-high">ALTO</span>
+    </div>
+    <div class="subtask-body">
+
+      <div class="st-label">Qué hace</div>
+      <p>Itera sobre cada botón de servidor, lo clickea, espera que el AJAX retorne y que el iframe actualice su src, y captura el nuevo embed URL. Es el paso que activa los servidores que no venían pre-cargados en el HTML.</p>
+
+      <div class="st-label">Por qué hay que clickear en lugar de llamar el API directamente</div>
+      <p>Aunque el endpoint <code>/ajax/server/</code> es visible, requiere parámetros específicos (IDs internos de episodio y servidor) que <strong>solo están disponibles en el contexto de la página cargada</strong> — en variables JS o en data attributes que se generan dinámicamente. Simular los clicks es más robusto que tratar de reverse-engineer los parámetros del API.</p>
+
+      <div class="st-label">Cómo implementarlo</div>
+<pre><span class="kw">private async</span> <span class="ty">Task</span> <span class="fn">ClickAllServersAsync</span>(
+    <span class="ty">IPage</span> page,
+    <span class="ty">ConcurrentBag</span>&lt;<span class="ty">string</span>&gt; capturedEmbeds,
+    <span class="ty">CancellationToken</span> ct)
+{
+    <span class="kw">var</span> serverButtons = <span class="kw">await</span> page.<span class="fn">QuerySelectorAllAsync</span>(
+        <span class="str">".server-item, [data-server], .tab-server, ul.servers li"</span>
+    );
+
+    <span class="kw">var</span> previousSrc = <span class="str">""</span>;
+
+    <span class="kw">foreach</span> (<span class="kw">var</span> btn <span class="kw">in</span> serverButtons)
+    {
+        ct.<span class="fn">ThrowIfCancellationRequested</span>();
+
+        <span class="kw">try</span>
+        {
+            <span class="cm">// Clickear el botón del servidor</span>
+            <span class="kw">await</span> btn.<span class="fn">ClickAsync</span>(<span class="kw">new</span>() { Timeout = <span class="num">5000</span> });
+
+            <span class="cm">// Esperar a que el iframe src cambie (indica que el AJAX retornó)</span>
+            <span class="kw">try</span> {
+                <span class="kw">await</span> page.<span class="fn">WaitForFunctionAsync</span>(<span class="str">$@"
+                    () => {{
+                        const iframe = document.querySelector('#player iframe, .player-container iframe');
+                        return iframe?.src &amp;&amp; iframe.src !== '{previousSrc}' &amp;&amp; iframe.src.startsWith('https://');
+                    }}"</span>, timeout: <span class="num">8000</span>);
+            }
+            <span class="kw">catch</span> (<span class="ty">TimeoutException</span>) {
+                <span class="cm">// El iframe no cambió — puede que este server no cargó. Continuar.</span>
+            }
+
+            <span class="cm">// Leer el src actualizado del iframe</span>
+            <span class="kw">var</span> newSrc = <span class="kw">await</span> page.<span class="fn">EvalOnSelectorAsync</span>&lt;<span class="ty">string</span>?&gt;(
+                <span class="str">"#player iframe, .player-container iframe"</span>,
+                <span class="str">"el => el.src"</span>
+            );
+
+            <span class="kw">if</span> (!<span class="ty">string</span>.<span class="fn">IsNullOrEmpty</span>(newSrc) &amp;&amp;
+                newSrc != previousSrc &amp;&amp;
+                newSrc.<span class="fn">StartsWith</span>(<span class="str">"https://"</span>))
+            {
+                capturedEmbeds.<span class="fn">Add</span>(newSrc);
+                previousSrc = newSrc;
+            }
+
+            <span class="cm">// Jitter obligatorio entre clicks — no spamear el sitio</span>
+            <span class="kw">await</span> <span class="fn">JitterAsync</span>();
+        }
+        <span class="kw">catch</span> (<span class="ty">Exception</span> ex) when (ex <span class="kw">is not</span> <span class="ty">OperationCanceledException</span>)
+        {
+            <span class="cm">// Un servidor que no cargó no debe abortar toda la operación</span>
+            _logger.<span class="fn">LogWarning</span>(<span class="str">"Server button click failed: {Error}"</span>, ex.Message);
+        }
+    }
+}</pre>
+
+      <div class="warn-box">
+        <div class="warn-box-label">Timing crítico</div>
+        <p>El <code>WaitForFunctionAsync</code> que detecta el cambio de src es más confiable que un <code>Task.Delay</code> fijo. Si el AJAX es lento (servidor congestionado), el delay fijo fallaría. El wait por función espera la condición real.</p>
+      </div>
+
+      <div class="st-label">Criterios de aceptación</div>
+      <ul class="ac-list">
+        <li class="ac-item"><div class="ac-box"></div><span>Un servidor que falla no cancela el loop — los demás se procesan igual</span></li>
+        <li class="ac-item"><div class="ac-box"></div><span>No guarda el mismo src dos veces (la comparación con <code>previousSrc</code> lo previene)</span></li>
+        <li class="ac-item"><div class="ac-box"></div><span>Hay jitter entre cada click (no se spamea el servidor fuente)</span></li>
+        <li class="ac-item"><div class="ac-box"></div><span>El CancellationToken se respeta — si se cancela el job, el loop termina limpiamente</span></li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- ST-05 -->
+  <div class="subtask" id="st05">
+    <div class="subtask-header">
+      <span class="subtask-id id-edge">ST-05</span>
+      <span class="subtask-name">Decodificación — base64, obfuscation y dominios rotativos</span>
+      <span class="priority-badge p-high">ALTO</span>
+    </div>
+    <div class="subtask-body">
+
+      <div class="st-label">Qué hace</div>
+      <p>Procesa todas las URLs capturadas para: (1) decodificar las que vienen en base64, (2) normalizar URLs con dominios rotativos de hosters que cambian su dominio frecuentemente, (3) descartar URLs que claramente no son embeds (recursos JS/CSS capturados por error).</p>
+
+      <div class="st-label">Por qué algunas URLs vienen en base64</div>
+      <p>JKAnime y sitios similares codifican las URLs de embed en base64 en el HTML como medida anti-scraping superficial. No es encriptación — es solo ofuscación básica. Ejemplo: <code>aHR0cHM6Ly92b2Uuc3gvZS9YWVo=</code> → <code>https://voe.sx/e/XYZ</code>.</p>
+
+      <div class="st-label">El problema de dominios rotativos</div>
+      <p>Streamwish usa múltiples dominios: <code>swdyu.com</code>, <code>swhhsy.com</code>, <code>swvids.com</code>, etc. El hoster rota dominios para evitar bloqueos de ISPs y listas negras. Lo importante es que el <strong>path es siempre el mismo</strong> (ej: <code>/e/HASH</code>). El scraper debe guardar el dominio que encontró en ese momento — no normalizar. <code>MirrorProbeService</code> verificará si es embebible.</p>
+
+      <div class="st-label">Cómo implementarlo</div>
+<pre><span class="kw">private static</span> <span class="ty">IEnumerable</span>&lt;<span class="ty">string</span>&gt; <span class="fn">NormalizeAndDeduplicateUrls</span>(
+    <span class="ty">IEnumerable</span>&lt;<span class="ty">string</span>&gt; rawUrls)
+{
+    <span class="kw">var</span> seen = <span class="kw">new</span> <span class="ty">HashSet</span>&lt;<span class="ty">string</span>&gt;(StringComparer.OrdinalIgnoreCase);
+
+    <span class="kw">foreach</span> (<span class="kw">var</span> raw <span class="kw">in</span> rawUrls)
+    {
+        <span class="cm">// Intento 1: decodificar base64 si aplica</span>
+        <span class="kw">var</span> url = <span class="fn">TryBase64Decode</span>(raw) ?? raw;
+
+        <span class="cm">// Descartar si no es HTTPS</span>
+        <span class="kw">if</span> (!url.<span class="fn">StartsWith</span>(<span class="str">"https://"</span>)) <span class="kw">continue</span>;
+
+        <span class="cm">// Descartar recursos que no son embeds</span>
+        <span class="kw">if</span> (<span class="fn">IsResourceUrl</span>(url)) <span class="kw">continue</span>; <span class="cm">// .js, .css, .png, fonts, etc.</span>
+
+        <span class="cm">// Descartar la propia URL del sitio fuente (no queremos capturarnos a nosotros)</span>
+        <span class="kw">if</span> (url.<span class="fn">Contains</span>(<span class="str">"jkanime.net"</span>) || url.<span class="fn">Contains</span>(<span class="str">"flvanime"</span>)) <span class="kw">continue</span>;
+
+        <span class="cm">// Deduplicar</span>
+        <span class="kw">if</span> (seen.<span class="fn">Add</span>(url)) <span class="kw">yield return</span> url;
+    }
+}
+
+<span class="kw">private static</span> <span class="ty">string</span>? <span class="fn">TryBase64Decode</span>(<span class="ty">string</span> input)
+{
+    <span class="kw">try</span> {
+        <span class="kw">var</span> bytes = <span class="ty">Convert</span>.<span class="fn">FromBase64String</span>(input);
+        <span class="kw">var</span> decoded = <span class="ty">Encoding</span>.UTF8.<span class="fn">GetString</span>(bytes);
+        <span class="kw">return</span> decoded.<span class="fn">StartsWith</span>(<span class="str">"https://"</span>) ? decoded : <span class="kw">null</span>;
+    }
+    <span class="kw">catch</span> { <span class="kw">return null</span>; }
+}
+
+<span class="kw">private static bool</span> <span class="fn">IsResourceUrl</span>(<span class="ty">string</span> url)
+{
+    <span class="kw">var</span> resourceExtensions = <span class="kw">new</span>[] { <span class="str">".js"</span>, <span class="str">".css"</span>, <span class="str">".png"</span>, <span class="str">".jpg"</span>, <span class="str">".woff"</span>, <span class="str">".ico"</span>, <span class="str">".gif"</span>, <span class="str">".svg"</span> };
+    <span class="kw">return</span> resourceExtensions.<span class="fn">Any</span>(ext => url.<span class="fn">Contains</span>(ext, StringComparison.OrdinalIgnoreCase));
+}</pre>
+
+      <div class="st-label">Criterios de aceptación</div>
+      <ul class="ac-list">
+        <li class="ac-item"><div class="ac-box"></div><span><code>TryBase64Decode("aHR0cHM6Ly92b2Uuc3gvZS9YWVo=")</code> retorna <code>"https://voe.sx/e/XYZ"</code></span></li>
+        <li class="ac-item"><div class="ac-box"></div><span>URLs de recursos (.js, .css, .png) son descartadas correctamente</span></li>
+        <li class="ac-item"><div class="ac-box"></div><span>La misma URL capturada dos veces (por interceptor y por lectura de iframe) solo aparece una vez en el resultado</span></li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- ST-06 -->
+  <div class="subtask" id="st06">
+    <div class="subtask-header">
+      <span class="subtask-id id-core">ST-06</span>
+      <span class="subtask-name">MirrorProbeService — gate de embebibilidad legal y técnica</span>
+      <span class="priority-badge p-critical">CRÍTICO — NO SALTEAR</span>
+    </div>
+    <div class="subtask-body">
+
+      <div class="st-label">Qué hace</div>
+      <p>Para cada URL capturada y normalizada, hace un <code>HTTP HEAD</code> y verifica que el servidor permite ser embebido en un iframe. Rechaza silenciosamente cualquier URL que tenga <code>X-Frame-Options: DENY</code>, <code>X-Frame-Options: SAMEORIGIN</code>, o <code>Content-Security-Policy</code> con <code>frame-ancestors 'none'</code>.</p>
+
+      <div class="st-label">Por qué este step es tanto legal como técnico</div>
+      <p><strong>Técnico:</strong> Si guardamos una URL que bloquea iframes, cuando el usuario la carge en nuestro player simplemente no va a mostrar nada — iframe en blanco. El fallback loop se activará innecesariamente.</p>
+      <p><strong>Legal:</strong> Solo indexamos URLs que el host ha explícitamente decidido hacer embebibles. Un host que pone <code>X-Frame-Options: DENY</code> está diciendo "no queremos que esto se embed en otros sitios". Respetar eso es la diferencia entre un index y una infracción.</p>
+
+      <div class="st-label">Comportamiento por servidor (basado en patrones conocidos)</div>
+      <table class="spec-table">
+        <thead><tr><th>Servidor</th><th>X-Frame-Options típico</th><th>Resultado esperado</th></tr></thead>
+        <tbody>
+          <tr><td>Streamwish / VOE / Mp4upload</td><td>Ausente o ALLOW</td><td>PASS — guardar</td></tr>
+          <tr><td>Filemoon</td><td>Variable por dominio</td><td>Probar — puede pasar o no</td></tr>
+          <tr><td>Mixdrop</td><td>Generalmente OK</td><td>PASS — guardar</td></tr>
+          <tr><td>Streamtape</td><td>Variable</td><td>Probar — puede fallar</td></tr>
+          <tr><td>Doodstream</td><td>DENY o SAMEORIGIN frecuente</td><td>FAIL — descartar</td></tr>
+          <tr><td>Mega</td><td>DENY siempre</td><td>FAIL — descartar siempre</td></tr>
+        </tbody>
+      </table>
+
+      <div class="st-label">Cómo implementarlo</div>
+<pre><span class="kw">public async</span> <span class="ty">Task</span>&lt;<span class="ty">MirrorProbeResult</span>&gt; <span class="fn">ProbeAsync</span>(<span class="ty">string</span> url, <span class="ty">CancellationToken</span> ct = <span class="kw">default</span>)
+{
+    <span class="cm">// Validar scheme — nunca hacer requests a javascript: o data: URIs</span>
+    <span class="kw">if</span> (!Uri.<span class="fn">TryCreate</span>(url, UriKind.Absolute, <span class="kw">out var</span> uri) ||
+        uri.Scheme != <span class="str">"https"</span>)
+        <span class="kw">return</span> <span class="ty">MirrorProbeResult</span>.<span class="fn">Fail</span>(<span class="str">"Invalid URL scheme"</span>);
+
+    <span class="kw">try</span>
+    {
+        <span class="kw">var</span> req = <span class="kw">new</span> <span class="ty">HttpRequestMessage</span>(<span class="ty">HttpMethod</span>.Head, url);
+        req.Headers.Add(<span class="str">"User-Agent"</span>, <span class="str">"Mozilla/5.0 (compatible; AnimeIndexBot/1.0)"</span>);
+
+        <span class="kw">using var</span> cts = <span class="ty">CancellationTokenSource</span>.<span class="fn">CreateLinkedTokenSource</span>(ct);
+        cts.CancelAfter(<span class="ty">TimeSpan</span>.<span class="fn">FromSeconds</span>(<span class="num">10</span>)); <span class="cm">// timeout 10s por probe</span>
+
+        <span class="kw">var</span> sw = <span class="ty">Stopwatch</span>.<span class="fn">StartNew</span>();
+        <span class="kw">var</span> response = <span class="kw">await</span> _client.<span class="fn">SendAsync</span>(req, cts.Token);
+        sw.<span class="fn">Stop</span>();
+
+        <span class="kw">if</span> (!response.IsSuccessStatusCode)
+            <span class="kw">return</span> <span class="ty">MirrorProbeResult</span>.<span class="fn">Fail</span>(<span class="str">$"HTTP {(int)response.StatusCode}"</span>);
+
+        <span class="cm">// Check X-Frame-Options</span>
+        <span class="kw">if</span> (response.Headers.<span class="fn">TryGetValues</span>(<span class="str">"X-Frame-Options"</span>, <span class="kw">out var</span> xfo))
+        {
+            <span class="kw">var</span> val = xfo.<span class="fn">FirstOrDefault</span>()?.<span class="fn">ToUpperInvariant</span>();
+            <span class="kw">if</span> (val <span class="kw">is</span> <span class="str">"DENY"</span> <span class="kw">or</span> <span class="str">"SAMEORIGIN"</span>)
+                <span class="kw">return</span> <span class="ty">MirrorProbeResult</span>.<span class="fn">Fail</span>(<span class="str">$"X-Frame-Options: {val}"</span>);
+        }
+
+        <span class="cm">// Check Content-Security-Policy frame-ancestors</span>
+        <span class="kw">if</span> (response.Headers.<span class="fn">TryGetValues</span>(<span class="str">"Content-Security-Policy"</span>, <span class="kw">out var</span> csp))
+        {
+            <span class="kw">var</span> cspVal = csp.<span class="fn">FirstOrDefault</span>() ?? <span class="str">""</span>;
+            <span class="kw">if</span> (cspVal.<span class="fn">Contains</span>(<span class="str">"frame-ancestors 'none'"</span>) ||
+                cspVal.<span class="fn">Contains</span>(<span class="str">"frame-ancestors 'self'"</span>))
+                <span class="kw">return</span> <span class="ty">MirrorProbeResult</span>.<span class="fn">Fail</span>(<span class="str">"CSP blocks iframe embedding"</span>);
+        }
+
+        <span class="kw">return</span> <span class="ty">MirrorProbeResult</span>.<span class="fn">Ok</span>((int)sw.ElapsedMilliseconds);
+    }
+    <span class="kw">catch</span> (<span class="ty">Exception</span> ex)
+    {
+        <span class="kw">return</span> <span class="ty">MirrorProbeResult</span>.<span class="fn">Fail</span>(ex.Message);
+    }
+}</pre>
+
+      <div class="st-label">Criterios de aceptación</div>
+      <ul class="ac-list">
+        <li class="ac-item"><div class="ac-box"></div><span>Rechaza URLs con scheme no-https (<code>javascript:</code>, <code>http:</code>, <code>data:</code>)</span></li>
+        <li class="ac-item"><div class="ac-box"></div><span>Rechaza correctamente un URL con <code>X-Frame-Options: DENY</code> (testeable con WireMock)</span></li>
+        <li class="ac-item"><div class="ac-box"></div><span>Rechaza correctamente un URL con <code>X-Frame-Options: SAMEORIGIN</code></span></li>
+        <li class="ac-item"><div class="ac-box"></div><span>Acepta un URL sin <code>X-Frame-Options</code> y HTTP 200</span></li>
+        <li class="ac-item"><div class="ac-box"></div><span>Timeout de 10 segundos — no bloquea el pipeline si un hoster es lento</span></li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- ST-07 -->
+  <div class="subtask" id="st07">
+    <div class="subtask-header">
+      <span class="subtask-id id-core">ST-07</span>
+      <span class="subtask-name">Upsert pipeline — persistencia idempotente en base de datos</span>
+      <span class="priority-badge p-critical">CRÍTICO</span>
+    </div>
+    <div class="subtask-body">
+
+      <div class="st-label">Qué hace</div>
+      <p>Para cada embed URL que pasó el MirrorProbe, calcula su prioridad, determina el nombre del proveedor a partir del dominio, y ejecuta un <code>INSERT ... ON CONFLICT DO UPDATE</code> en la tabla <code>mirrors</code>. Luego invalida la caché de Redis para ese episodio.</p>
+
+      <div class="st-label">Por qué ON CONFLICT y no INSERT simple</div>
+      <p>El scraper de "re-check de salud" (Hangfire job <code>MirrorHealthCheck</code>) re-scrapea episodios existentes para verificar si los mirrors siguen activos. Si usáramos <code>INSERT</code> simple, fallara con duplicate key. Con <code>ON CONFLICT (episode_id, embed_url) DO UPDATE</code> el re-scrapeo es idempotente — solo actualiza <code>last_checked_at</code> y <code>priority</code>, sin duplicar filas.</p>
+
+      <div class="st-label">Cómo determinar el provider_name desde el dominio</div>
+<pre><span class="kw">private static string</span> <span class="fn">InferProviderName</span>(<span class="ty">string</span> embedUrl)
+{
+    <span class="kw">if</span> (!<span class="ty">Uri</span>.<span class="fn">TryCreate</span>(embedUrl, UriKind.Absolute, <span class="kw">out var</span> uri)) <span class="kw">return</span> <span class="str">"unknown"</span>;
+    <span class="kw">var</span> host = uri.Host.<span class="fn">ToLower</span>();
+
+    <span class="kw">return</span> host <span class="kw">switch</span>
+    {
+        <span class="kw">var</span> h <span class="kw">when</span> h.<span class="fn">Contains</span>(<span class="str">"streamwish"</span>) || h.<span class="fn">Contains</span>(<span class="str">"swdyu"</span>) || h.<span class="fn">Contains</span>(<span class="str">"swhhsy"</span>) => <span class="str">"Streamwish"</span>,
+        <span class="kw">var</span> h <span class="kw">when</span> h.<span class="fn">Contains</span>(<span class="str">"voe.sx"</span>) => <span class="str">"VOE"</span>,
+        <span class="kw">var</span> h <span class="kw">when</span> h.<span class="fn">Contains</span>(<span class="str">"desu.me"</span>) => <span class="str">"Desu"</span>,
+        <span class="kw">var</span> h <span class="kw">when</span> h.<span class="fn">Contains</span>(<span class="str">"magi.su"</span>) => <span class="str">"Magi"</span>,
+        <span class="kw">var</span> h <span class="kw">when</span> h.<span class="fn">Contains</span>(<span class="str">"filemoon"</span>) => <span class="str">"Filemoon"</span>,
+        <span class="kw">var</span> h <span class="kw">when</span> h.<span class="fn">Contains</span>(<span class="str">"mixdrop"</span>) => <span class="str">"Mixdrop"</span>,
+        <span class="kw">var</span> h <span class="kw">when</span> h.<span class="fn">Contains</span>(<span class="str">"mp4upload"</span>) => <span class="str">"Mp4upload"</span>,
+        <span class="kw">var</span> h <span class="kw">when</span> h.<span class="fn">Contains</span>(<span class="str">"streamtape"</span>) => <span class="str">"Streamtape"</span>,
+        <span class="kw">var</span> h <span class="kw">when</span> h.<span class="fn">Contains</span>(<span class="str">"dood"</span>) => <span class="str">"Doodstream"</span>,
+        _ => uri.Host <span class="cm">// fallback: usar el host completo como nombre</span>
+    };
+}
+
+<span class="cm">// Upsert SQL</span>
+<span class="kw">await</span> db.Database.<span class="fn">ExecuteSqlRawAsync</span>(<span class="str">@"
+    INSERT INTO mirrors (id, episode_id, provider_name, embed_url, quality_label, priority, is_active, last_checked_at)
+    VALUES (gen_random_uuid(), @episodeId, @provider, @embedUrl, @quality, @priority, true, now())
+    ON CONFLICT (episode_id, embed_url) DO UPDATE SET
+        provider_name  = EXCLUDED.provider_name,
+        quality_label  = EXCLUDED.quality_label,
+        priority       = EXCLUDED.priority,
+        is_active      = true,
+        consecutive_failures = 0,
+        last_checked_at = now()"</span>,
+    <span class="kw">new</span> NpgsqlParameter(<span class="str">"@episodeId"</span>,  episodeId),
+    <span class="kw">new</span> NpgsqlParameter(<span class="str">"@provider"</span>,   providerName),
+    <span class="kw">new</span> NpgsqlParameter(<span class="str">"@embedUrl"</span>,   embedUrl),
+    <span class="kw">new</span> NpgsqlParameter(<span class="str">"@quality"</span>,    qualityLabel),
+    <span class="kw">new</span> NpgsqlParameter(<span class="str">"@priority"</span>,   priority)
+);</pre>
+
+      <div class="st-label">Criterios de aceptación</div>
+      <ul class="ac-list">
+        <li class="ac-item"><div class="ac-box"></div><span>Correr el scraper dos veces sobre el mismo episodio no duplica filas en <code>mirrors</code></span></li>
+        <li class="ac-item"><div class="ac-box"></div><span>Al re-scrapear, un mirror que estaba <code>is_active=false</code> se reactiva si sigue disponible</span></li>
+        <li class="ac-item"><div class="ac-box"></div><span>El cache key <code>episode:{id}:mirrors</code> se invalida en Redis después del upsert</span></li>
+        <li class="ac-item"><div class="ac-box"></div><span>Streamwish en dominio <code>swdyu.com</code> y en <code>swhhsy.com</code> ambos se mapean a <code>provider_name="Streamwish"</code></span></li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- ST-08 -->
+  <div class="subtask" id="st08">
+    <div class="subtask-header">
+      <span class="subtask-id id-edge">ST-08</span>
+      <span class="subtask-name">Error handling, retry y dead-letter</span>
+      <span class="priority-badge p-high">ALTO</span>
+    </div>
+    <div class="subtask-body">
+
+      <div class="st-label">Qué hace</div>
+      <p>Maneja los casos de fallo del scraper: timeout de Playwright, cloudflare blocking, cambio de estructura del sitio fuente. Implementa la política de 3 intentos con backoff exponencial antes de marcar el job como <code>dead_letter</code>.</p>
+
+      <div class="st-label">Estructura de errores esperados</div>
+      <table class="spec-table">
+        <thead><tr><th>Error</th><th>Causa</th><th>Política</th></tr></thead>
+        <tbody>
+          <tr><td>Playwright TimeoutException</td><td>El sitio fuente cargó lento o cambió su estructura</td><td>Retry hasta 3x con 5min/15min/1h backoff</td></tr>
+          <tr><td>No se capturaron embed URLs</td><td>El sitio cambió su HTML / JS</td><td>Retry 1x. Si sigue vacío → dead_letter + alerta</td></tr>
+          <tr><td>HTTP 403 / Cloudflare block</td><td>IP de Railway bloqueada por el sitio fuente</td><td>Dead-letter inmediato + alerta — requiere proxy en Phase 2</td></tr>
+          <tr><td>Todos los mirrors fallan el MirrorProbe</td><td>El hoster cambió su CSP policy</td><td>Loguear warning. Guardar de todos modos con <code>is_active=false</code>. No fallar el job.</td></tr>
+        </tbody>
+      </table>
+
+      <div class="st-label">Importante — distinción entre error de scraper y mirror no embebible</div>
+      <p>Si el scraper corre exitosamente pero todos los mirrors resultan no embebibles (Doodstream y Mega son los únicos servers), eso <strong>no es un error del job</strong>. El job completó exitosamente — simplemente ese episodio no tiene mirrors embebibles en este momento. El job no va a dead-letter.</p>
+
+      <div class="st-label">Criterios de aceptación</div>
+      <ul class="ac-list">
+        <li class="ac-item"><div class="ac-box"></div><span>Un Playwright timeout no cancela otros jobs en Hangfire</span></li>
+        <li class="ac-item"><div class="ac-box"></div><span>Después de 3 intentos fallidos, el job se marca <code>status=dead_letter</code> en <code>scrape_jobs</code></span></li>
+        <li class="ac-item"><div class="ac-box"></div><span>Al llegar a dead_letter se envía un email via Resend al <code>ADMIN_EMAIL</code></span></li>
+        <li class="ac-item"><div class="ac-box"></div><span>El stack trace completo se guarda en <code>scrape_jobs.error_message</code></span></li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- ST-09 -->
+  <div class="subtask" id="st09">
+    <div class="subtask-header">
+      <span class="subtask-id id-edge">ST-09</span>
+      <span class="subtask-name">Cálculo de prioridad por servidor</span>
+      <span class="priority-badge p-medium">MEDIO</span>
+    </div>
+    <div class="subtask-body">
+
+      <div class="st-label">Qué hace</div>
+      <p>Calcula el campo <code>priority</code> (entero, menor = más prioritario) para cada mirror antes del upsert. Determina qué servidor se muestra primero al usuario cuando carga el episodio.</p>
+
+      <div class="st-label">Fórmula</div>
+<pre><span class="cm">// priority = base por proveedor + penalización por calidad baja + penalización por fallos históricos
+
+// Tabla de bases por proveedor (menor = mejor)
+private static readonly Dictionary&lt;string, int&gt; ProviderBasePriority = new() {
+    ["Desu"]        = 0,    // Servidor propio JKAnime — generalmente más estable
+    ["VOE"]         = 5,    // Muy confiable y embebible
+    ["Streamwish"]  = 10,   // Confiable pero dominio rotativo
+    ["Magi"]        = 15,
+    ["Filemoon"]    = 20,
+    ["Mixdrop"]     = 25,
+    ["Mp4upload"]   = 30,
+    ["Streamtape"]  = 35,
+    ["Doodstream"]  = 50,   // Alta base porque frecuentemente no embede
+};
+
+private static int CalculatePriority(string providerName, int responseMs, int existingFailures = 0)
+{
+    var base_ = ProviderBasePriority.GetValueOrDefault(providerName, 40);
+    var latencyPenalty = responseMs > 2000 ? 5 : 0;      // penalizar si es lento al probe
+    var failurePenalty = existingFailures * 10;            // penalizar historial de fallos
+
+    return base_ + latencyPenalty + failurePenalty;
+}</span></pre>
+
+      <div class="st-label">Criterios de aceptación</div>
+      <ul class="ac-list">
+        <li class="ac-item"><div class="ac-box"></div><span>Desu siempre tiene priority menor (o igual) que cualquier otro servidor</span></li>
+        <li class="ac-item"><div class="ac-box"></div><span>Un mirror con 3 fallos históricos tiene priority mayor que uno sin fallos del mismo proveedor</span></li>
+        <li class="ac-item"><div class="ac-box"></div><span>El endpoint <code>GET /episodes/{id}/mirrors</code> retorna los mirrors ordenados por <code>priority ASC</code></span></li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- ST-10 -->
+  <div class="subtask" id="st10">
+    <div class="subtask-header">
+      <span class="subtask-id id-infra">ST-10</span>
+      <span class="subtask-name">Tests y criterios de aceptación end-to-end</span>
+      <span class="priority-badge p-high">ALTO</span>
+    </div>
+    <div class="subtask-body">
+
+      <div class="st-label">Tests unitarios — MirrorProbeService (con WireMock.Net)</div>
+<pre><span class="cm">// Testear los casos críticos de MirrorProbeService sin hacer requests reales</span>
+[Theory]
+[InlineData(<span class="str">"DENY"</span>,       <span class="kw">false</span>)]
+[InlineData(<span class="str">"SAMEORIGIN"</span>, <span class="kw">false</span>)]
+[InlineData(<span class="str">"ALLOWALL"</span>,   <span class="kw">true</span>)]   <span class="cm">// valor no estándar pero algunos hosters lo usan</span>
+[InlineData(<span class="kw">null</span>,          <span class="kw">true</span>)]   <span class="cm">// ausencia de header = permite embed</span>
+<span class="kw">public async</span> <span class="ty">Task</span> <span class="fn">IsEmbeddable_RespectsXFrameOptions</span>(<span class="ty">string</span>? xfo, <span class="ty">bool</span> expected)
+{
+    <span class="kw">var</span> server = <span class="ty">WireMockServer</span>.<span class="fn">Start</span>();
+    server.<span class="fn">Given</span>(<span class="ty">Request</span>.<span class="fn">Create</span>().<span class="fn">WithPath</span>(<span class="str">"/embed/test"</span>).<span class="fn">UsingHead</span>())
+          .<span class="fn">RespondWith</span>(<span class="ty">Response</span>.<span class="fn">Create</span>()
+              .<span class="fn">WithStatusCode</span>(<span class="num">200</span>)
+              .<span class="fn">WithHeader</span>(<span class="str">"X-Frame-Options"</span>, xfo ?? <span class="str">""</span>));
+
+    <span class="kw">var</span> result = <span class="kw">await</span> _probe.<span class="fn">ProbeAsync</span>(<span class="str">$"{server.Urls[0]}/embed/test"</span>);
+    result.IsEmbeddable.<span class="fn">Should</span>().<span class="fn">Be</span>(expected);
+}</pre>
+
+      <div class="st-label">Tests de integración — pipeline completo (con DB real)</div>
+      <ul>
+        <li>Correr <code>ScrapeEpisodeMirrorsAsync</code> con una URL de episodio de staging (no prod)</li>
+        <li>Verificar que la tabla <code>mirrors</code> tiene al menos 1 fila para ese episodio</li>
+        <li>Verificar que todas las filas tienen <code>is_active = true</code></li>
+        <li>Correr el scraper dos veces — verificar que el count no se duplica</li>
+        <li>Verificar que el cache key <code>episode:{id}:mirrors</code> fue invalidado en Redis</li>
+      </ul>
+
+      <div class="st-label">Test del dead-letter</div>
+      <ul>
+        <li>Mockear la fuente para retornar siempre un error</li>
+        <li>Triggear el job 3 veces (Hangfire retry)</li>
+        <li>Verificar que <code>scrape_jobs.status = 'dead_letter'</code></li>
+        <li>Verificar que se envió el email de alerta (mockear Resend)</li>
+      </ul>
+    </div>
+  </div>
+
+</section>
+
+<!-- SERVERS -->
+<section class="section" id="servers">
+  <div class="section-eyebrow">Sección 04</div>
+  <h2 class="section-title">Comportamiento por servidor — guía de referencia</h2>
+  <table class="spec-table">
+    <thead><tr><th>Servidor</th><th>Iframe embebible</th><th>Cómo se carga la URL</th><th>Complicaciones conocidas</th><th>Acción</th></tr></thead>
+    <tbody>
+      <tr><td>Desu</td><td>SÍ</td><td>HTML inicial — primer iframe ya cargado</td><td>Ninguna. Es el server "home" de JKAnime.</td><td>Guardar siempre. Prioridad 0.</td></tr>
+      <tr><td>Magi</td><td>SÍ</td><td>AJAX al clickear el tab</td><td>A veces requiere que la sesión de JKAnime esté activa.</td><td>Guardar si pasa MirrorProbe.</td></tr>
+      <tr><td>Streamwish</td><td>SÍ</td><td>AJAX o data-embed</td><td>Dominio rota frecuentemente. Guardar el dominio actual — no normalizar.</td><td>Guardar siempre. Detectar por patron "swXXX.com" en host.</td></tr>
+      <tr><td>VOE</td><td>SÍ</td><td>data-embed en botón</td><td>Ninguna. URL estable formato <code>voe.sx/e/HASH</code>.</td><td>Guardar siempre.</td></tr>
+      <tr><td>Filemoon</td><td>Parcial</td><td>AJAX o data-embed</td><td>CSP varía por dominio. Algunos dominios de Filemoon bloquean frames.</td><td>Siempre pasar por MirrorProbe. Guardar solo si pasa.</td></tr>
+      <tr><td>Mixdrop</td><td>SÍ</td><td>AJAX al clickear</td><td>Puede requerir cookies de sesión del sitio fuente para cargar correctamente.</td><td>Playwright ya maneja las cookies. Guardar si pasa MirrorProbe.</td></tr>
+      <tr><td>Mp4upload</td><td>SÍ</td><td>data-embed o AJAX</td><td>Ninguna relevante.</td><td>Guardar si pasa MirrorProbe.</td></tr>
+      <tr><td>Streamtape</td><td>Parcial</td><td>AJAX al clickear</td><td>Algunos mirrors de Streamtape bloquean embedding. Dominio rotativo.</td><td>MirrorProbe obligatorio. Prioridad base alta.</td></tr>
+      <tr><td>Doodstream</td><td>MUY DIFÍCIL</td><td>AJAX al clickear</td><td>CSP muy restrictivo. La mayoría de mirrors de Doodstream fallan MirrorProbe. Si pasan, incluirlos con prioridad baja.</td><td>Intentar. Aceptar que casi siempre falla. No fallar el job por esto.</td></tr>
+      <tr><td>Mega</td><td>NO</td><td>data-embed o AJAX</td><td>mega.nz siempre bloquea iframes externos. CSP: frame-ancestors 'none'.</td><td>MirrorProbeService lo rechaza. No guardar. Nunca.</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- FILES -->
+<section class="section" id="files">
+  <div class="section-eyebrow">Sección 05</div>
+  <h2 class="section-title">Archivos a crear / modificar</h2>
+
+  <h3 style="font-size:15px;margin-bottom:12px">Archivos nuevos</h3>
+  <ul>
+    <li><span class="filepath">api/AnimeIndex.Api/Infrastructure/Scraping/PlaywrightScraperBase.cs</span> — ST-01, ST-02, ST-05</li>
+    <li><span class="filepath">api/AnimeIndex.Api/Infrastructure/Scraping/MirrorProbeService.cs</span> — ST-06</li>
+    <li><span class="filepath">api/AnimeIndex.Api/Infrastructure/Scraping/Strategies/JKAnimeStrategy.cs</span> — ST-03, ST-04, ST-07, ST-08, ST-09</li>
+    <li><span class="filepath">api/AnimeIndex.Api/Infrastructure/Scraping/Models/ScrapeResult.cs</span> — tipos compartidos</li>
+    <li><span class="filepath">api/AnimeIndex.Api.Tests/Unit/MirrorProbeServiceTests.cs</span> — ST-10</li>
+    <li><span class="filepath">api/AnimeIndex.Api.Tests/Integration/ScraperPipelineTests.cs</span> — ST-10</li>
+  </ul>
+
+  <h3 style="font-size:15px;margin-bottom:12px;margin-top:20px">Archivos a modificar</h3>
+  <ul>
+    <li><span class="filepath">api/AnimeIndex.Api/Infrastructure/Scheduling/ScrapeNewEpisodesJob.cs</span> — Reemplazar stub por llamada real a IScrapeStrategy</li>
+    <li><span class="filepath">api/AnimeIndex.Api/Program.cs</span> — Registrar JKAnimeStrategy en DI: <code>builder.Services.AddScoped&lt;IScrapeStrategy, JKAnimeStrategy&gt;()</code></li>
+  </ul>
+
+  <div class="dep-chain">
+    <span class="dep-chip">PlaywrightScraperBase</span>
+    <span class="dep-arrow">→</span>
+    <span class="dep-chip">JKAnimeStrategy</span>
+    <span class="dep-arrow">→</span>
+    <span class="dep-chip">MirrorProbeService</span>
+    <span class="dep-arrow">→</span>
+    <span class="dep-chip">AppDbContext (upsert)</span>
+    <span class="dep-arrow">→</span>
+    <span class="dep-chip">ICacheService (invalidar)</span>
+    <span class="dep-arrow">→</span>
+    <span class="dep-chip">ScrapeNewEpisodesJob</span>
+  </div>
+</section>
+
+<!-- DOD -->
+<section class="section" id="dod">
+  <div class="section-eyebrow">Sección 06</div>
+  <h2 class="section-title">Definition of Done — este task está completo cuando</h2>
+
+  <ul class="ac-list" style="margin-top:8px">
+    <li class="ac-item"><div class="ac-box"></div><span>Correr el job manualmente contra un episodio real de JKAnime produce al menos 3 mirrors en la tabla <code>mirrors</code></span></li>
+    <li class="ac-item"><div class="ac-box"></div><span>El endpoint <code>GET /episodes/{id}/mirrors</code> retorna esos mirrors ordenados por priority</span></li>
+    <li class="ac-item"><div class="ac-box"></div><span>La página de episodio en el frontend carga el primer mirror automáticamente</span></li>
+    <li class="ac-item"><div class="ac-box"></div><span>El hook <code>useMirrorFallback</code> puede cambiar al segundo mirror si el primero falla</span></li>
+    <li class="ac-item"><div class="ac-box"></div><span>Todos los tests unitarios de <code>MirrorProbeServiceTests</code> pasan en verde</span></li>
+    <li class="ac-item"><div class="ac-box"></div><span>Correr el scraper dos veces no duplica filas (ON CONFLICT verificado)</span></li>
+    <li class="ac-item"><div class="ac-box"></div><span>No hay ningún path de código que extraiga o guarde URLs de streams (m3u8/mp4 directo)</span></li>
+    <li class="ac-item"><div class="ac-box"></div><span>El Hangfire dashboard muestra el job completado exitosamente</span></li>
+    <li class="ac-item"><div class="ac-box"></div><span>El security-reviewer chatmode aprueba el PR sin bloquers</span></li>
+  </ul>
+</section>
+
+</body>
+</html>
