@@ -21,5 +21,5 @@ public class HealthTests(TestWebApplicationFactory factory) : IClassFixture<Test
         Assert.Equal("ok", body.Cache);
     }
 
-    private record HealthBody(string Status, string Db, string Cache, string Version);
+    private record HealthBody(string Status, string Db, string Cache, string Version, long? DbMs = null, long? CacheMs = null, long? TotalMs = null);
 }

@@ -57,6 +57,7 @@ try
         builder.Host.UseSerilog((context, services, configuration) => configuration
             .ReadFrom.Configuration(context.Configuration)
             .ReadFrom.Services(services)
+            .Enrich.FromLogContext()
             .WriteTo.Console(new Serilog.Formatting.Json.JsonFormatter()));
     }
 
@@ -195,7 +196,33 @@ try
     var app = builder.Build();
 
     // ─── Middleware pipeline ─────────────────────────────
-    if (!isTesting) app.UseSerilogRequestLogging();
+
+    // Correlation ID: propagate or generate X-Correlation-Id for request tracing
+    app.Use(async (context, next) =>
+    {
+        const string header = "X-Correlation-Id";
+        if (!context.Request.Headers.TryGetValue(header, out var correlationId)
+            || string.IsNullOrWhiteSpace(correlationId))
+        {
+            correlationId = Guid.NewGuid().ToString("N");
+        }
+        context.Items["CorrelationId"] = correlationId.ToString();
+        context.Response.Headers[header] = correlationId.ToString();
+
+        using (Serilog.Context.LogContext.PushProperty("CorrelationId", correlationId.ToString()))
+        {
+            await next();
+        }
+    });
+
+    if (!isTesting) app.UseSerilogRequestLogging(opts =>
+    {
+        opts.EnrichDiagnosticContext = (diagnosticContext, httpContext) =>
+        {
+            diagnosticContext.Set("ClientIp", httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown");
+            diagnosticContext.Set("CorrelationId", httpContext.Items["CorrelationId"]?.ToString() ?? "");
+        };
+    });
     if (sentryEnabled) app.UseSentryTracing();
 
     // Security headers

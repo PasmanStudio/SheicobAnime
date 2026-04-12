@@ -10,10 +10,15 @@ public static class HealthEndpoints
     {
         app.MapGet("/health", async (AppDbContext db, ICacheService cache) =>
         {
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+
             var dbStatus = "error";
+            long dbMs = 0;
             try
             {
+                var dbSw = System.Diagnostics.Stopwatch.StartNew();
                 await db.Database.CanConnectAsync();
+                dbMs = dbSw.ElapsedMilliseconds;
                 dbStatus = "ok";
             }
             catch
@@ -21,7 +26,10 @@ public static class HealthEndpoints
                 // DB unavailable
             }
 
-            var cacheStatus = await cache.PingAsync() ? "ok" : "error";
+            var cacheSw = System.Diagnostics.Stopwatch.StartNew();
+            var cacheOk = await cache.PingAsync();
+            var cacheMs = cacheSw.ElapsedMilliseconds;
+            var cacheStatus = cacheOk ? "ok" : "error";
 
             var overallStatus = dbStatus == "ok" && cacheStatus == "ok" ? "healthy" : "degraded";
 
@@ -29,7 +37,10 @@ public static class HealthEndpoints
             {
                 status = overallStatus,
                 db = dbStatus,
+                dbMs,
                 cache = cacheStatus,
+                cacheMs,
+                totalMs = sw.ElapsedMilliseconds,
                 version = typeof(HealthEndpoints).Assembly.GetName().Version?.ToString() ?? "0.1.0"
             };
 

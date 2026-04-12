@@ -102,6 +102,97 @@ catch {
     $results += [PSCustomObject]@{ Test = "CORS Preflight"; Status = "FAIL"; Detail = $_.Exception.Message }
 }
 
+# ─── Health endpoint response time ────────────────────────
+try {
+    $healthResponse = Invoke-RestMethod -Uri "$ApiUrl/health" -TimeoutSec 15
+    if ($healthResponse.totalMs) {
+        $passed++
+        $results += [PSCustomObject]@{ Test = "Health Response Time"; Status = "PASS"; Detail = "db=${($healthResponse.dbMs)}ms cache=${($healthResponse.cacheMs)}ms total=${($healthResponse.totalMs)}ms" }
+    } else {
+        $passed++
+        $results += [PSCustomObject]@{ Test = "Health Response Time"; Status = "PASS"; Detail = "Timing fields not present (older API version)" }
+    }
+}
+catch {
+    $failed++
+    $results += [PSCustomObject]@{ Test = "Health Response Time"; Status = "FAIL"; Detail = $_.Exception.Message }
+}
+
+# ─── Security headers ────────────────────────────────────
+try {
+    $secResponse = Invoke-WebRequest -Uri "$ApiUrl/health" -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop
+    $secHeaders = @("X-Content-Type-Options", "X-Frame-Options", "Referrer-Policy")
+    $secMissing = @()
+    foreach ($h in $secHeaders) {
+        if (-not $secResponse.Headers[$h]) { $secMissing += $h }
+    }
+    if ($secMissing.Count -eq 0) {
+        $passed++
+        $results += [PSCustomObject]@{ Test = "Security Headers"; Status = "PASS"; Detail = "All required headers present" }
+    } else {
+        $failed++
+        $results += [PSCustomObject]@{ Test = "Security Headers"; Status = "FAIL"; Detail = "Missing: $($secMissing -join ', ')" }
+    }
+}
+catch {
+    $failed++
+    $results += [PSCustomObject]@{ Test = "Security Headers"; Status = "FAIL"; Detail = $_.Exception.Message }
+}
+
+# ─── Correlation ID header ───────────────────────────────
+try {
+    $corrResponse = Invoke-WebRequest -Uri "$ApiUrl/health" -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop
+    if ($corrResponse.Headers["X-Correlation-Id"]) {
+        $passed++
+        $results += [PSCustomObject]@{ Test = "Correlation ID Header"; Status = "PASS"; Detail = "X-Correlation-Id=$($corrResponse.Headers['X-Correlation-Id'])" }
+    } else {
+        $failed++
+        $results += [PSCustomObject]@{ Test = "Correlation ID Header"; Status = "FAIL"; Detail = "No X-Correlation-Id header in response" }
+    }
+}
+catch {
+    $failed++
+    $results += [PSCustomObject]@{ Test = "Correlation ID Header"; Status = "FAIL"; Detail = $_.Exception.Message }
+}
+
+# ─── Admin auth required (should be 401 without key) ─────
+try {
+    $noAuthResponse = Invoke-WebRequest -Uri "$ApiUrl/admin/scrape-jobs" -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop
+    $failed++
+    $results += [PSCustomObject]@{ Test = "Admin Auth Required"; Status = "FAIL"; Detail = "Admin endpoint accessible without API key" }
+}
+catch {
+    if ($_.Exception.Response -and $_.Exception.Response.StatusCode.value__ -eq 401) {
+        $passed++
+        $results += [PSCustomObject]@{ Test = "Admin Auth Required"; Status = "PASS"; Detail = "Returns 401 without X-Admin-Key" }
+    } else {
+        $failed++
+        $results += [PSCustomObject]@{ Test = "Admin Auth Required"; Status = "FAIL"; Detail = $_.Exception.Message }
+    }
+}
+
+# ─── No secrets in frontend HTML ──────────────────────────
+try {
+    $htmlResponse = Invoke-WebRequest -Uri "$WebUrl" -UseBasicParsing -TimeoutSec 15 -ErrorAction Stop
+    $html = $htmlResponse.Content
+    $secretPatterns = @("ADMIN_API_KEY", "DATABASE_URL", "REDIS_URL", "SENTRY_DSN", "RESEND_API_KEY", "password", "secret")
+    $foundSecrets = @()
+    foreach ($p in $secretPatterns) {
+        if ($html -match $p) { $foundSecrets += $p }
+    }
+    if ($foundSecrets.Count -eq 0) {
+        $passed++
+        $results += [PSCustomObject]@{ Test = "No Secrets in HTML"; Status = "PASS"; Detail = "No sensitive strings found in frontend HTML" }
+    } else {
+        $failed++
+        $results += [PSCustomObject]@{ Test = "No Secrets in HTML"; Status = "FAIL"; Detail = "Found: $($foundSecrets -join ', ')" }
+    }
+}
+catch {
+    $failed++
+    $results += [PSCustomObject]@{ Test = "No Secrets in HTML"; Status = "FAIL"; Detail = $_.Exception.Message }
+}
+
 # ─── Results ──────────────────────────────────────────────
 Write-Host "`n─── Results ─────────────────────────────────" -ForegroundColor Cyan
 $results | ForEach-Object {

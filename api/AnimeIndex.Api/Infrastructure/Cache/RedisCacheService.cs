@@ -1,9 +1,10 @@
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
 using StackExchange.Redis;
 
 namespace AnimeIndex.Api.Infrastructure.Cache;
 
-public sealed class RedisCacheService(IConnectionMultiplexer redis) : ICacheService
+public sealed class RedisCacheService(IConnectionMultiplexer redis, ILogger<RedisCacheService> logger) : ICacheService
 {
     private readonly IDatabase _db = redis.GetDatabase();
 
@@ -16,7 +17,13 @@ public sealed class RedisCacheService(IConnectionMultiplexer redis) : ICacheServ
     public async Task<T?> GetAsync<T>(string key, CancellationToken ct = default)
     {
         var value = await _db.StringGetAsync(key);
-        return value.HasValue ? JsonSerializer.Deserialize<T>(value!, JsonOptions) : default;
+        if (value.HasValue)
+        {
+            logger.LogDebug("Cache HIT {CacheKey}", key);
+            return JsonSerializer.Deserialize<T>(value!, JsonOptions);
+        }
+        logger.LogDebug("Cache MISS {CacheKey}", key);
+        return default;
     }
 
     public async Task SetAsync<T>(string key, T value, TimeSpan? expiry = null, CancellationToken ct = default)

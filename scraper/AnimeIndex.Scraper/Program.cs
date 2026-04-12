@@ -29,6 +29,8 @@ try
     builder.Services.AddSerilog((services, lc) => lc
         .ReadFrom.Configuration(builder.Configuration)
         .ReadFrom.Services(services)
+        .Enrich.FromLogContext()
+        .Enrich.WithProperty("Service", "scraper")
         .WriteTo.Console(new JsonFormatter()));
 
     // ─── Database ─────────────────────────────────────────
