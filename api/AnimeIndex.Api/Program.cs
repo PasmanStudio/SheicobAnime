@@ -287,6 +287,11 @@ try
 
     app.Run();
 }
+catch (HostAbortedException)
+{
+    // Expected when EF Core design-time tools (dotnet ef) build the host then abort it.
+    // Not an error — suppress the misleading Fatal log.
+}
 catch (Exception ex) when (!isTesting)
 {
     Log.Fatal(ex, "Application terminated unexpectedly");

@@ -139,6 +139,10 @@ try
 
     await app.RunAsync();
 }
+catch (HostAbortedException)
+{
+    // Expected when EF Core design-time tools build the host then abort it.
+}
 catch (Exception ex)
 {
     Log.Fatal(ex, "Scraper worker terminated unexpectedly");
