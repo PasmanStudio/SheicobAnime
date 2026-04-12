@@ -17,6 +17,14 @@ try
 {
     var builder = Host.CreateApplicationBuilder(args);
 
+    // ─── Production env var validation (fail fast) ───────
+    if (builder.Environment.IsProduction())
+    {
+        if (string.IsNullOrEmpty(builder.Configuration["DATABASE_URL"])
+            && string.IsNullOrEmpty(builder.Configuration.GetConnectionString("DefaultConnection")))
+            throw new InvalidOperationException("Missing required environment variable: DATABASE_URL");
+    }
+
     // ─── Serilog ──────────────────────────────────────────
     builder.Services.AddSerilog((services, lc) => lc
         .ReadFrom.Configuration(builder.Configuration)
@@ -29,7 +37,14 @@ try
         ?? throw new InvalidOperationException("No database connection string configured.");
 
     builder.Services.AddDbContext<AppDbContext>(options =>
-        options.UseNpgsql(connectionString));
+        options.UseNpgsql(connectionString, npgsqlOptions =>
+        {
+            npgsqlOptions.EnableRetryOnFailure(
+                maxRetryCount: 3,
+                maxRetryDelay: TimeSpan.FromSeconds(5),
+                errorCodesToAdd: null);
+            npgsqlOptions.CommandTimeout(60); // scraper upserts can be slower
+        }));
 
     // ─── Hangfire (shared PostgreSQL with API) ────────────
     builder.Services.AddHangfire(config => config

@@ -31,6 +31,26 @@ try
 {
     var builder = WebApplication.CreateBuilder(args);
 
+    // ─── Production env var validation (fail fast) ───────
+    if (builder.Environment.IsProduction())
+    {
+        var missing = new List<string>();
+        if (string.IsNullOrEmpty(builder.Configuration["DATABASE_URL"])
+            && string.IsNullOrEmpty(builder.Configuration.GetConnectionString("DefaultConnection")))
+            missing.Add("DATABASE_URL");
+        if (string.IsNullOrEmpty(builder.Configuration["REDIS_URL"])
+            && string.IsNullOrEmpty(builder.Configuration.GetConnectionString("Redis")))
+            missing.Add("REDIS_URL");
+        if (string.IsNullOrEmpty(builder.Configuration["ADMIN_API_KEY"]))
+            missing.Add("ADMIN_API_KEY");
+        if (string.IsNullOrEmpty(builder.Configuration["CORS_ORIGINS"]))
+            missing.Add("CORS_ORIGINS");
+
+        if (missing.Count > 0)
+            throw new InvalidOperationException(
+                $"Missing required environment variables for production: {string.Join(", ", missing)}");
+    }
+
     // ─── Serilog (skip in tests to avoid "logger already frozen") ──
     if (!isTesting)
     {
@@ -66,7 +86,14 @@ try
             ?? throw new InvalidOperationException("No database connection string configured.");
 
         builder.Services.AddDbContext<AppDbContext>(options =>
-            options.UseNpgsql(connectionString));
+            options.UseNpgsql(connectionString, npgsqlOptions =>
+            {
+                npgsqlOptions.EnableRetryOnFailure(
+                    maxRetryCount: 3,
+                    maxRetryDelay: TimeSpan.FromSeconds(5),
+                    errorCodesToAdd: null);
+                npgsqlOptions.CommandTimeout(30);
+            }));
 
         // ─── Hangfire ────────────────────────────────────
         builder.Services.AddHangfire(config => config

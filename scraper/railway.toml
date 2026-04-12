@@ -1,6 +1,10 @@
+# NOTE: Railway root directory MUST be set to "/" (repo root) because
+# the scraper Dockerfile references both api/ and scraper/ directories.
+# In Railway UI: Service Settings → Root Directory → leave empty or set to "/"
 [build]
 builder = "DOCKERFILE"
-dockerfilePath = "Dockerfile"
+dockerfilePath = "scraper/Dockerfile"
+watchPatterns = ["api/AnimeIndex.Api/**", "scraper/**"]
 
 [deploy]
 startCommand = "dotnet AnimeIndex.Scraper.dll"

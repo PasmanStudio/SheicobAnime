@@ -1,6 +1,7 @@
 [build]
 builder = "DOCKERFILE"
 dockerfilePath = "Dockerfile"
+watchPatterns = ["api/**"]
 
 [deploy]
 startCommand = "dotnet AnimeIndex.Api.dll"
