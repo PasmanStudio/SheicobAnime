@@ -28,6 +28,7 @@ public static class AdminEndpoints
         group.MapPost("/backfill", CreateBackfill);
         group.MapGet("/backfill/{id:guid}/progress", GetBackfillProgress);
         group.MapDelete("/mirrors/purge-invalid", PurgeInvalidMirrors);
+        group.MapPost("/scrape-jobs/{id:guid}/cancel", CancelScrapeJob);
     }
 
     private static async Task<IResult> CreateScrapeJob(
@@ -263,5 +264,25 @@ public static class AdminEndpoints
         await db.SaveChangesAsync(ct);
 
         return Results.Ok(new { purged = invalidMirrors.Count, message = $"Purged {invalidMirrors.Count} invalid mirror(s)." });
+    }
+
+    private static async Task<IResult> CancelScrapeJob(
+        AppDbContext db,
+        Guid id,
+        CancellationToken ct = default)
+    {
+        var job = await db.ScrapeJobs.FirstOrDefaultAsync(j => j.Id == id, ct);
+        if (job is null)
+            return Results.Json(new ErrorResponse("Job not found", "NOT_FOUND"), statusCode: 404);
+
+        if (job.Status is not ("pending" or "running"))
+            return Results.Json(new ErrorResponse($"Job is already {job.Status}", "INVALID_STATE"), statusCode: 409);
+
+        job.Status = "failed";
+        job.ErrorMessage = "cancelled by admin";
+        job.CompletedAt = DateTime.UtcNow;
+        await db.SaveChangesAsync(ct);
+
+        return Results.Ok(new { job.Id, job.Status, message = "Job cancelled." });
     }
 }
