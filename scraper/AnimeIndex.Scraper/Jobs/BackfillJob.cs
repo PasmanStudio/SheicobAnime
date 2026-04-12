@@ -191,6 +191,8 @@ public class BackfillJob(
             logger.LogInformation("Pass 2 — {Count} series to enrich (skipping {Enriched} already done)",
                 seriesToEnrich.Count, alreadyEnrichedSlugs.Count);
 
+            var failedCount = 0;
+
             foreach (var series in seriesToEnrich)
             {
                 if (ct.IsCancellationRequested) break;
@@ -205,60 +207,71 @@ public class BackfillJob(
                 if (await CheckCircuitBreakerAsync(ct))
                     logger.LogWarning("Circuit breaker tripped during enrichment — paused 10 min");
 
-                // Scrape series detail page
-                var detail = await ScrapeSeriesDetailAsync(baseUrl, series.Slug, delayMs, ct);
-                if (detail is not null)
+                try
                 {
-                    await upsert.UpsertSeriesAsync(detail, ct);
-                }
-
-                // Discover episodes
-                var episodes = await ScrapeEpisodesFromDetailAsync(baseUrl, series.Slug, series.Id, delayMs, ct);
-
-                foreach (var ep in episodes)
-                {
-                    if (ct.IsCancellationRequested) break;
-
-                    var episodeId = await upsert.UpsertEpisodeAsync(ep, ct);
-                    episodeTotal++;
-
-                    // Extract mirrors from episode page
-                    var epUrl = $"{baseUrl.TrimEnd('/')}/{series.Slug}/{ep.EpisodeNumber}/";
-                    var mirrors = await ScrapeEpisodeMirrorsAsync(epUrl, episodeId, delayMs, ct);
-
-                    foreach (var mirror in mirrors)
+                    // Scrape series detail page
+                    var detail = await ScrapeSeriesDetailAsync(baseUrl, series.Slug, delayMs, ct);
+                    if (detail is not null)
                     {
-                        var embeddable = await probe.IsEmbeddableAsync(mirror.EmbedUrl, ct);
-                        if (!embeddable) continue;
-
-                        await upsert.UpsertMirrorAsync(mirror, ct);
-                        mirrorTotal++;
+                        await upsert.UpsertSeriesAsync(detail, ct);
                     }
 
-                    await JitterDelayAsync(delayMs, ct);
+                    // Discover episodes
+                    var episodes = await ScrapeEpisodesFromDetailAsync(baseUrl, series.Slug, series.Id, delayMs, ct);
+
+                    foreach (var ep in episodes)
+                    {
+                        if (ct.IsCancellationRequested) break;
+
+                        var episodeId = await upsert.UpsertEpisodeAsync(ep, ct);
+                        episodeTotal++;
+
+                        // Extract mirrors from episode page
+                        var epUrl = $"{baseUrl.TrimEnd('/')}/{series.Slug}/{ep.EpisodeNumber}/";
+                        var mirrors = await ScrapeEpisodeMirrorsAsync(epUrl, episodeId, delayMs, ct);
+
+                        foreach (var mirror in mirrors)
+                        {
+                            var embeddable = await probe.IsEmbeddableAsync(mirror.EmbedUrl, ct);
+                            if (!embeddable) continue;
+
+                            await upsert.UpsertMirrorAsync(mirror, ct);
+                            mirrorTotal++;
+                        }
+
+                        await JitterDelayAsync(delayMs, ct);
+                    }
+
+                    // Sync episode count from actual DB records
+                    await upsert.SyncEpisodeCountAsync(series.Id, ct);
+
+                    enrichedCount++;
+                    logger.LogDebug("Enriched {Slug}: {EpCount} episodes found so far, {MirrorCount} mirrors total",
+                        series.Slug, episodeTotal, mirrorTotal);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    failedCount++;
+                    logger.LogWarning(ex, "Failed to enrich {Slug} — skipping (failures={Failed})", series.Slug, failedCount);
+                    // Continue with next series instead of crashing the entire job
                 }
 
-                // Sync episode count from actual DB records
-                await upsert.SyncEpisodeCountAsync(series.Id, ct);
-
-                enrichedCount++;
-
-                // Update progress every 10 series
-                if (enrichedCount % 10 == 0)
+                // Update progress every 5 series (more frequent for monitoring)
+                if ((enrichedCount + failedCount) % 5 == 0)
                 {
                     await UpdateProgressAsync(job,
-                        $"pass2:enriched:{enrichedCount}/{seriesToEnrich.Count},episodes:{episodeTotal},mirrors:{mirrorTotal}",
+                        $"pass2:enriched:{enrichedCount}/{seriesToEnrich.Count},episodes:{episodeTotal},mirrors:{mirrorTotal},failed:{failedCount}",
                         ct);
                 }
             }
 
             await UpdateProgressAsync(job,
-                $"complete:new:{newSeriesCount},enriched:{enrichedCount},episodes:{episodeTotal},mirrors:{mirrorTotal}",
+                $"complete:new:{newSeriesCount},enriched:{enrichedCount},episodes:{episodeTotal},mirrors:{mirrorTotal},failed:{failedCount}",
                 ct);
 
             logger.LogInformation(
-                "Backfill complete — new={S}, enriched={E}, episodes={Ep}, mirrors={M}, skipped={Sk}",
-                newSeriesCount, enrichedCount, episodeTotal, mirrorTotal, skippedCount);
+                "Backfill complete — new={S}, enriched={E}, episodes={Ep}, mirrors={M}, skipped={Sk}, failed={F}",
+                newSeriesCount, enrichedCount, episodeTotal, mirrorTotal, skippedCount, failedCount);
 
             await alerter.HandleSuccessAsync(scrapeJobId, ct);
         }

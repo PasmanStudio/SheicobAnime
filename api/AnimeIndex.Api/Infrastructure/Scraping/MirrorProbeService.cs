@@ -13,7 +13,11 @@ public class MirrorProbeService(IHttpClientFactory httpClientFactory)
     {
         try
         {
-            using var request = new HttpRequestMessage(HttpMethod.Head, url);
+            // Use GET with ResponseHeadersRead — many embed providers block HEAD requests (403)
+            // but accept GET. We only read headers, not the full body.
+            using var request = new HttpRequestMessage(HttpMethod.Get, url);
+            request.Headers.Add("User-Agent",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36");
             using var response = await _http.SendAsync(
                 request, HttpCompletionOption.ResponseHeadersRead, ct);
 

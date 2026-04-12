@@ -70,7 +70,6 @@ try
     builder.Services.AddHttpClient("probe", c =>
     {
         c.Timeout = TimeSpan.FromSeconds(10);
-        c.DefaultRequestHeaders.UserAgent.ParseAdd("SheicobAnime-Probe/1.0");
     });
     builder.Services.AddHttpClient("resend", c =>
     {
