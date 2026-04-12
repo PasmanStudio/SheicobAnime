@@ -478,14 +478,12 @@ public class BackfillJob(
         return result;
     }
 
-    // ── Mirror extraction ───────────────────────────────────
+    // ── Mirror extraction (extract from JS variables) ──────
     //
-    // Resolves real embed URLs through JKAnime's jkplayer wrapper.
-    // The episode page iframe points to jkanime.net/jkplayer/um?e=TOKEN (wrapper).
-    // Inside that, JS decodes the token and creates an inner iframe with the real
-    // embed (streamwish.com/e/..., voe.sx/e/..., etc.).
-    // We use the Playwright Frame API to access the jkplayer frame and read
-    // the inner iframe's src — the actual embeddable URL.
+    // JKAnime defines `var servers = [...]` with base64-encoded embed URLs
+    // for external providers (Streamwish, VOE, Vidhide, Mixdrop, etc.).
+    // OK.ru is embedded via `jkokru.php?u=ID` in the `video[]` array.
+    // We extract URLs directly from JS evaluation — no tab clicking needed.
 
     private async Task<IReadOnlyList<MirrorScrapedData>> ScrapeEpisodeMirrorsAsync(
         string episodeUrl, Guid episodeId, int delayMs, CancellationToken ct)
@@ -493,127 +491,75 @@ public class BackfillJob(
         var mirrors = new List<MirrorScrapedData>();
         var capturedEmbeds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        // Network interception: capture real embed URLs from EXTERNAL domains only
-        Page.RequestFinished += (_, req) =>
-        {
-            var url = req.Url;
-            if (!url.StartsWith("http")) return;
-
-            // Skip JKAnime internal URLs — these are wrappers, not real embeds
-            if (url.Contains("jkanime.net", StringComparison.OrdinalIgnoreCase) ||
-                url.Contains("jkdesa.com", StringComparison.OrdinalIgnoreCase))
-                return;
-
-            // Skip static assets
-            try
-            {
-                var path = new Uri(url).AbsolutePath;
-                if (path.EndsWith(".js") || path.EndsWith(".css") || path.EndsWith(".png") ||
-                    path.EndsWith(".jpg") || path.EndsWith(".gif") || path.EndsWith(".svg") ||
-                    path.EndsWith(".ico") || path.EndsWith(".woff") || path.EndsWith(".woff2"))
-                    return;
-            }
-            catch { return; }
-
-            // Only capture URLs that look like embed pages
-            if (url.Contains("/embed/", StringComparison.OrdinalIgnoreCase) ||
-                url.Contains("/e/", StringComparison.OrdinalIgnoreCase))
-            {
-                capturedEmbeds.Add(url);
-            }
-        };
-
         if (!await GoToAsync(episodeUrl, ct))
         {
             logger.LogWarning("Cannot reach episode {Url}", episodeUrl);
             return mirrors;
         }
 
-        // Wait for the initial player iframe to appear
+        // ── 1. Extract external mirrors from the `servers` JS variable ──
         try
         {
-            await Page.WaitForSelectorAsync("iframe",
-                new PageWaitForSelectorOptions { Timeout = 12_000 });
+            await Page.WaitForFunctionAsync(
+                "typeof servers !== 'undefined' && Array.isArray(servers)",
+                new PageWaitForFunctionOptions { Timeout = 15_000 });
+
+            var externalUrls = await Page.EvaluateAsync<string[]>(@"
+                (() => {
+                    const results = [];
+                    if (typeof servers !== 'undefined' && Array.isArray(servers)) {
+                        for (const s of servers) {
+                            if (!s.remote || s.server === 'Mediafire') continue;
+                            try {
+                                const url = atob(s.remote).trim();
+                                if (url.startsWith('http')) results.push(url);
+                            } catch {}
+                        }
+                    }
+                    return results;
+                })()
+            ");
+
+            foreach (var url in externalUrls)
+                capturedEmbeds.Add(url);
+
+            logger.LogDebug("Extracted {Count} external mirrors from servers[] on {Url}",
+                externalUrls.Length, episodeUrl);
         }
         catch (TimeoutException)
         {
-            logger.LogDebug("No iframe found on {Url}", episodeUrl);
-            return mirrors;
+            logger.LogDebug("No servers JS variable found on {Url}", episodeUrl);
         }
 
-        // Resolve the initial iframe → real embed (through jkplayer frame)
-        var initialEmbed = await ResolveCurrentEmbedAsync(ct);
-        if (initialEmbed is not null)
+        // ── 2. Extract OK.ru mirror from video[] array ──
+        try
         {
-            capturedEmbeds.Add(initialEmbed);
-            logger.LogDebug("Initial embed resolved: {Src}", initialEmbed);
-        }
-
-        // Find all server/option tabs
-        var serverTabs = await Page.Locator(
-            "div.anime_muti_link ul li a, " +
-            "div.anime_muti_link li a, " +
-            "a.play-video, " +
-            "li.server-item a, " +
-            "div.custom_tab a, " +
-            "div.player_option a, " +
-            "div.video_options a").AllAsync();
-
-        // Click each tab, wait for iframe src change, then resolve through jkplayer frame
-        for (var i = 0; i < serverTabs.Count && i < 15; i++)
-        {
-            if (ct.IsCancellationRequested) break;
-
-            try
-            {
-                var beforeSrc = await Page.EvaluateAsync<string?>(
-                    "(() => { const f = document.querySelector('iframe'); return f ? f.src : ''; })()") ?? "";
-
-                await serverTabs[i].ClickAsync(new LocatorClickOptions { Timeout = 3000 });
-
-                try
-                {
-                    var escapedSrc = beforeSrc.Replace("\\", "\\\\").Replace("'", "\\'");
-                    await Page.WaitForFunctionAsync(
-                        $"() => {{ const f = document.querySelector('iframe'); return f && f.src && f.src !== '' && f.src !== '{escapedSrc}'; }}",
-                        new PageWaitForFunctionOptions { Timeout = 8_000 });
-
-                    // Resolve through jkplayer frame to get real embed
-                    var realEmbed = await ResolveCurrentEmbedAsync(ct);
-                    if (realEmbed is not null)
-                    {
-                        capturedEmbeds.Add(realEmbed);
-                        logger.LogDebug("Tab {Index}: resolved embed {Src}", i, realEmbed);
+            var okruId = await Page.EvaluateAsync<string?>(@"
+                (() => {
+                    if (typeof video === 'undefined' || !Array.isArray(video)) return null;
+                    for (const v of video) {
+                        const m = v.match(/jkokru\.php\?u=(\d+)/);
+                        if (m) return m[1];
                     }
-                    else
-                    {
-                        // Fallback: read raw iframe src (may be direct external embed for some servers)
-                        var rawSrc = await Page.EvaluateAsync<string?>(
-                            "(() => { const f = document.querySelector('iframe'); return f ? f.src : null; })()");
-                        if (!string.IsNullOrWhiteSpace(rawSrc) && rawSrc.StartsWith("http") &&
-                            !IsJkAnimeDomain(rawSrc))
-                        {
-                            capturedEmbeds.Add(rawSrc);
-                            logger.LogDebug("Tab {Index}: direct embed {Src}", i, rawSrc);
-                        }
-                    }
-                }
-                catch (TimeoutException)
-                {
-                    logger.LogDebug("Tab {Index}: iframe src didn't change within 8s on {Url}", i, episodeUrl);
-                }
-            }
-            catch (Exception ex)
+                    return null;
+                })()
+            ");
+
+            if (!string.IsNullOrWhiteSpace(okruId))
             {
-                logger.LogDebug(ex, "Failed clicking server tab {Index} on {Url}", i, episodeUrl);
+                capturedEmbeds.Add($"https://ok.ru/videoembed/{okruId}");
+                logger.LogDebug("Extracted OK.ru mirror: {Id}", okruId);
             }
         }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "Failed extracting OK.ru mirror on {Url}", episodeUrl);
+        }
 
-        // Build mirror records — only from validated external embeds
+        // ── 3. Build mirror records ──
         short priority = 0;
         foreach (var url in capturedEmbeds)
         {
-            // Final safety check: never store JKAnime wrapper URLs
             if (IsJkAnimeDomain(url)) continue;
 
             var providerName = ExtractProviderName(url);
@@ -625,60 +571,10 @@ public class BackfillJob(
                 Priority: priority++));
         }
 
-        logger.LogDebug("Episode {Url}: captured {Count} real mirrors from {Tabs} tabs",
-            episodeUrl, mirrors.Count, serverTabs.Count);
+        logger.LogDebug("Episode {Url}: captured {Count} real mirrors", episodeUrl, mirrors.Count);
 
         await JitterDelayAsync(delayMs, ct);
         return mirrors;
-    }
-
-    /// <summary>
-    /// Resolves the current player's real embed URL by looking inside the jkplayer frame.
-    /// JKAnime wraps all embeds in jkanime.net/jkplayer/um?e=TOKEN which decodes client-side
-    /// and loads the real embed (streamwish, voe, etc.) in a nested iframe.
-    /// </summary>
-    private async Task<string?> ResolveCurrentEmbedAsync(CancellationToken ct)
-    {
-        // Brief wait for the frame to attach after iframe src change
-        await Task.Delay(500, ct);
-
-        // Find the jkplayer frame among page's sub-frames
-        var jkFrame = Page.Frames.FirstOrDefault(f =>
-            f.Url.Contains("jkplayer", StringComparison.OrdinalIgnoreCase) ||
-            (f.Url.Contains("jkanime.net", StringComparison.OrdinalIgnoreCase) && f != Page.MainFrame));
-
-        if (jkFrame is null)
-        {
-            // No jkplayer frame — maybe it's already a direct external embed
-            var directSrc = await Page.EvaluateAsync<string?>(
-                "(() => { const f = document.querySelector('iframe'); return f?.src || null; })()");
-            if (!string.IsNullOrWhiteSpace(directSrc) && directSrc.StartsWith("http") &&
-                !IsJkAnimeDomain(directSrc))
-                return directSrc;
-
-            return null;
-        }
-
-        try
-        {
-            // Wait for the real embed iframe to appear inside jkplayer
-            await jkFrame.WaitForFunctionAsync(@"
-                () => {
-                    const f = document.querySelector('iframe');
-                    return f && f.src && f.src.startsWith('http') &&
-                           !f.src.includes('jkanime.net') && !f.src.includes('jkdesa.com') &&
-                           !f.src.includes('jkplayer');
-                }
-            ", new FrameWaitForFunctionOptions { Timeout = 12_000 });
-
-            return await jkFrame.EvaluateAsync<string?>(
-                "(() => { const f = document.querySelector('iframe'); return f?.src || null; })()");
-        }
-        catch (TimeoutException)
-        {
-            logger.LogDebug("jkplayer frame did not resolve to a real embed within 12s");
-            return null;
-        }
     }
 
     private static bool IsJkAnimeDomain(string url) =>
@@ -724,9 +620,9 @@ public class BackfillJob(
                 var h when h.Contains("vidlox") => "vidlox",
                 var h when h.Contains("mixdrop") => "mixdrop",
                 var h when h.Contains("filemoon") => "filemoon",
-                var h when h.Contains("streamwish") => "streamwish",
+                var h when h.Contains("streamwish") || h.Contains("fastwish") || h.Contains("swish") => "streamwish",
                 var h when h.Contains("voe") => "voe",
-                var h when h.Contains("desu") => "desu",
+                var h when h.Contains("desu") || h.Contains("playmudos") => "desu",
                 var h when h.Contains("nozomi") => "nozomi",
                 var h when h.Contains("mega") => "mega",
                 var h when h.Contains("vidhide") => "vidhide",
