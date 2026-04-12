@@ -164,8 +164,9 @@ jobs:
               exit 0
             fi
             if [ "$attempt" -lt 3 ]; then
-              echo "Migration failed, retrying in 15s..."
-              sleep 15
+              WAIT=$((attempt * 30))
+              echo "Migration failed, retrying in ${WAIT}s..."
+              sleep $WAIT
             fi
           done
           echo "::error::Migration failed after 3 attempts"
@@ -240,7 +241,8 @@ jobs:
 
   deploy-web:
     name: Deploy frontend to Vercel
-    needs: deploy-api
+    needs: [ci-web, check-secrets]
+    if: needs.check-secrets.outputs.ready == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
@@ -255,7 +257,7 @@ jobs:
   # ─── Post-deploy notification ───
   notify:
     name: Deployment status
-    needs: [deploy-api, deploy-scraper, deploy-web]
+    needs: [migrate, deploy-api, deploy-scraper, deploy-web]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -265,6 +267,7 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Service | Status |" >> $GITHUB_STEP_SUMMARY
           echo "|---------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Migration | ${{ needs.migrate.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| API | ${{ needs.deploy-api.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Scraper | ${{ needs.deploy-scraper.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Frontend | ${{ needs.deploy-web.result }} |" >> $GITHUB_STEP_SUMMARY
