@@ -58,10 +58,19 @@ public class BackfillJob(
             await InitializeAsync();
 
             // ═══════════════════════════════════════════════
-            // PASS 1: Discover all series from directory pages
+            // PASS 1: Discover all series slugs from directory pages
+            // Only upsert series that don't exist yet (skip existing ones).
             // ═══════════════════════════════════════════════
             var discoveredSlugs = new List<string>();
-            var seriesCount = 0;
+            var newSeriesCount = 0;
+            var skippedExisting = 0;
+
+            // Pre-load existing slugs to avoid unnecessary upserts
+            var existingSlugs = await db.Series
+                .AsNoTracking()
+                .Select(s => s.Slug)
+                .ToListAsync(ct);
+            var existingSlugSet = new HashSet<string>(existingSlugs, StringComparer.OrdinalIgnoreCase);
 
             for (var page = startPage; page <= maxPages; page++)
             {
@@ -108,15 +117,27 @@ public class BackfillJob(
                     if (string.IsNullOrWhiteSpace(item.Slug) || string.IsNullOrWhiteSpace(item.Title))
                         continue;
 
+                    var slug = item.Slug.Trim();
+
                     // Check blocked slugs
-                    var blocked = await db.BlockedSlugs.AnyAsync(b => b.Slug == item.Slug, ct);
+                    var blocked = await db.BlockedSlugs.AnyAsync(b => b.Slug == slug, ct);
                     if (blocked) continue;
+
+                    // Track the slug for Pass 2 consideration
+                    discoveredSlugs.Add(slug);
+
+                    // Only upsert if series doesn't exist yet — skip existing ones
+                    if (existingSlugSet.Contains(slug))
+                    {
+                        skippedExisting++;
+                        continue;
+                    }
 
                     var status = MapStatus(item.Status);
                     var type = MapType(item.Type);
 
                     var data = new SeriesScrapedData(
-                        Slug: item.Slug.Trim(),
+                        Slug: slug,
                         Title: item.Title.Trim(),
                         CoverUrl: item.Image,
                         Status: status,
@@ -124,21 +145,22 @@ public class BackfillJob(
                         Synopsis: string.IsNullOrWhiteSpace(item.Synopsis) ? null : item.Synopsis.Trim());
 
                     await upsert.UpsertSeriesAsync(data, ct);
-                    discoveredSlugs.Add(item.Slug.Trim());
-                    seriesCount++;
+                    existingSlugSet.Add(slug);
+                    newSeriesCount++;
                 }
 
-                logger.LogDebug("Pass 1 — page {Page}/{MaxPages}: {Count} series", page, maxPages, animesPage.Data.Count);
+                logger.LogDebug("Pass 1 — page {Page}/{MaxPages}: {New} new, {Skipped} existing",
+                    page, maxPages, newSeriesCount, skippedExisting);
 
                 // Update progress every 5 pages
                 if (page % 5 == 0)
-                    await UpdateProgressAsync(job, $"pass1:page:{page}/{maxPages},discovered:{seriesCount}", ct);
+                    await UpdateProgressAsync(job, $"pass1:page:{page}/{maxPages},new:{newSeriesCount},skipped:{skippedExisting}", ct);
 
                 await JitterDelayAsync(delayMs, ct);
             }
 
-            await UpdateProgressAsync(job, $"pass1:complete,discovered:{seriesCount},starting:pass2", ct);
-            logger.LogInformation("Pass 1 complete — discovered {Count} series across directory pages", seriesCount);
+            await UpdateProgressAsync(job, $"pass1:complete,new:{newSeriesCount},skipped:{skippedExisting},starting:pass2", ct);
+            logger.LogInformation("Pass 1 complete — {New} new series, {Skipped} existing skipped", newSeriesCount, skippedExisting);
 
             // ═══════════════════════════════════════════════
             // PASS 2: Enrich each series (detail + episodes + mirrors)
@@ -148,11 +170,17 @@ public class BackfillJob(
             var mirrorTotal = 0;
             var skippedCount = 0;
 
-            // Get all series that need enrichment (no synopsis = not yet enriched, OR not scraped in last 24h)
-            // Include ALL series in DB, not just newly discovered ones — a re-run should enrich existing series too
+            // Get all series that need enrichment:
+            //  - Never enriched (no synopsis, never scraped)
+            //  - Not scraped in the last 24h
+            //  - Has no mirrors at all (needs mirror extraction regardless of last_scraped_at)
             var seriesToEnrich = await db.Series
                 .AsNoTracking()
-                .Where(s => s.Synopsis == null || s.LastScrapedAt == null || s.LastScrapedAt < DateTime.UtcNow.AddHours(-24))
+                .Where(s => s.Synopsis == null
+                    || s.LastScrapedAt == null
+                    || s.LastScrapedAt < DateTime.UtcNow.AddHours(-24)
+                    || !db.Episodes.Any(e => e.SeriesId == s.Id
+                        && db.Mirrors.Any(m => m.EpisodeId == e.Id)))
                 .OrderBy(s => s.LastScrapedAt ?? DateTime.MinValue)
                 .Select(s => new { s.Id, s.Slug })
                 .ToListAsync(ct);
@@ -225,12 +253,12 @@ public class BackfillJob(
             }
 
             await UpdateProgressAsync(job,
-                $"complete:series:{seriesCount},enriched:{enrichedCount},episodes:{episodeTotal},mirrors:{mirrorTotal}",
+                $"complete:new:{newSeriesCount},enriched:{enrichedCount},episodes:{episodeTotal},mirrors:{mirrorTotal}",
                 ct);
 
             logger.LogInformation(
-                "Backfill complete — series={S}, enriched={E}, episodes={Ep}, mirrors={M}, skipped={Sk}",
-                seriesCount, enrichedCount, episodeTotal, mirrorTotal, skippedCount);
+                "Backfill complete — new={S}, enriched={E}, episodes={Ep}, mirrors={M}, skipped={Sk}",
+                newSeriesCount, enrichedCount, episodeTotal, mirrorTotal, skippedCount);
 
             await alerter.HandleSuccessAsync(scrapeJobId, ct);
         }
