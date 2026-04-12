@@ -39,6 +39,7 @@ async function request<T>(
 
   const res = await fetch(url, {
     ...options,
+    cache: "no-store",
     headers: {
       "Content-Type": "application/json",
       ...options.headers,

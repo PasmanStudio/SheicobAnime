@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { getSeries } from "@/lib/api";
+import type { Series, PaginatedResponse } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 import SeriesCard from "@/components/ui/SeriesCard";
@@ -11,10 +12,17 @@ export const metadata: Metadata = {
 };
 
 export default async function HomePage() {
-  const [recent, topRated] = await Promise.all([
-    getSeries({ sort: "updated", pageSize: 12 }),
-    getSeries({ sort: "score", pageSize: 12 }),
-  ]);
+  let recent: PaginatedResponse<Series> = { data: [], total: 0, page: 1, pageSize: 12 };
+  let topRated: PaginatedResponse<Series> = { data: [], total: 0, page: 1, pageSize: 12 };
+
+  try {
+    [recent, topRated] = await Promise.all([
+      getSeries({ sort: "updated", pageSize: 12 }),
+      getSeries({ sort: "score", pageSize: 12 }),
+    ]);
+  } catch (error) {
+    console.error("Failed to fetch series for homepage:", error);
+  }
 
   return (
     <div className="container mx-auto px-4 py-8 space-y-10">
