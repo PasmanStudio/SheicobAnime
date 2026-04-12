@@ -166,26 +166,66 @@ jobs:
     needs: migrate
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
-      - name: Install Railway CLI
-        run: npm install -g @railway/cli
-      - name: Deploy to Railway
-        run: railway up --service ${{ secrets.RAILWAY_SERVICE_ID }} --detach
+      - name: Trigger Railway redeploy
+        run: |
+          # Get latest deployment for the API service
+          DEPLOY_ID=$(curl -sf https://backboard.railway.app/graphql/v2 \
+            -H "Authorization: Bearer $RAILWAY_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{"query": "{ deployments(input: {serviceId: \"'"$SERVICE_ID"'\"}, first: 1) { edges { node { id } } } }"}' \
+            | jq -r '.data.deployments.edges[0].node.id')
+
+          if [ -z "$DEPLOY_ID" ] || [ "$DEPLOY_ID" = "null" ]; then
+            echo "::error::No existing deployment found for API service"
+            exit 1
+          fi
+          echo "Latest deployment: $DEPLOY_ID"
+
+          # Trigger redeploy from latest commit
+          RESULT=$(curl -sf https://backboard.railway.app/graphql/v2 \
+            -H "Authorization: Bearer $RAILWAY_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{"query": "mutation { deploymentRedeploy(id: \"'"$DEPLOY_ID"'\") { id status } }"}')
+
+          NEW_ID=$(echo "$RESULT" | jq -r '.data.deploymentRedeploy.id')
+          STATUS=$(echo "$RESULT" | jq -r '.data.deploymentRedeploy.status')
+          echo "Redeploy triggered: $NEW_ID ($STATUS)"
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          SERVICE_ID: ${{ secrets.RAILWAY_SERVICE_ID }}
 
   deploy-scraper:
     name: Deploy Scraper to Railway
     needs: migrate
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
-      - name: Install Railway CLI
-        run: npm install -g @railway/cli
-      - name: Deploy to Railway
-        run: railway up --service ${{ secrets.RAILWAY_SCRAPER_SERVICE_ID }} --detach
+      - name: Trigger Railway redeploy
+        run: |
+          # Get latest deployment for the scraper service
+          DEPLOY_ID=$(curl -sf https://backboard.railway.app/graphql/v2 \
+            -H "Authorization: Bearer $RAILWAY_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{"query": "{ deployments(input: {serviceId: \"'"$SERVICE_ID"'\"}, first: 1) { edges { node { id } } } }"}' \
+            | jq -r '.data.deployments.edges[0].node.id')
+
+          if [ -z "$DEPLOY_ID" ] || [ "$DEPLOY_ID" = "null" ]; then
+            echo "::error::No existing deployment found for scraper service"
+            exit 1
+          fi
+          echo "Latest deployment: $DEPLOY_ID"
+
+          # Trigger redeploy from latest commit
+          RESULT=$(curl -sf https://backboard.railway.app/graphql/v2 \
+            -H "Authorization: Bearer $RAILWAY_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{"query": "mutation { deploymentRedeploy(id: \"'"$DEPLOY_ID"'\") { id status } }"}')
+
+          NEW_ID=$(echo "$RESULT" | jq -r '.data.deploymentRedeploy.id')
+          STATUS=$(echo "$RESULT" | jq -r '.data.deploymentRedeploy.status')
+          echo "Redeploy triggered: $NEW_ID ($STATUS)"
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          SERVICE_ID: ${{ secrets.RAILWAY_SCRAPER_SERVICE_ID }}
 
   deploy-web:
     name: Deploy frontend to Vercel
