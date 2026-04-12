@@ -90,6 +90,7 @@ try
     // ─── Hangfire job classes ─────────────────────────────
     builder.Services.AddScoped<ScrapeOrchestratorJob>();
     builder.Services.AddScoped<ScrapeSchedulerJob>();
+    builder.Services.AddScoped<BackfillJob>();
 
     var app = builder.Build();
 

@@ -131,6 +131,7 @@ try
     // ─── FluentValidation ────────────────────────────────
     builder.Services.AddScoped<IValidator<CreateScrapeJobRequest>, CreateScrapeJobValidator>();
     builder.Services.AddScoped<IValidator<CreateBlockedSlugRequest>, CreateBlockedSlugValidator>();
+    builder.Services.AddScoped<IValidator<CreateBackfillRequest>, CreateBackfillValidator>();
 
     // ─── Rate Limiting ───────────────────────────────────
     builder.Services.AddRateLimiter(options =>

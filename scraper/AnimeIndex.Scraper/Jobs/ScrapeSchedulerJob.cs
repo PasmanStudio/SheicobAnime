@@ -2,12 +2,14 @@ using AnimeIndex.Api.Data;
 using Hangfire;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using System.Text.Json;
 
 namespace AnimeIndex.Scraper.Jobs;
 
 /// <summary>
 /// Hangfire recurring job: scans the scrape_jobs table for pending records
 /// and enqueues individual ScrapeOrchestratorJob instances for each one.
+/// Backfill jobs (JobType "backfill:*") are routed to BackfillJob.
 /// Registered in the scraper worker's Program.cs with a configurable cron.
 /// </summary>
 public class ScrapeSchedulerJob(
@@ -33,18 +35,39 @@ public class ScrapeSchedulerJob(
 
         foreach (var job in pending)
         {
-            // Default to source1 if no explicit source is encoded in JobType
-            var sourceKey = job.JobType.StartsWith("scrape:")
-                ? job.JobType["scrape:".Length..]
-                : "source1";
+            if (job.JobType.StartsWith("backfill:"))
+            {
+                // Route backfill jobs to BackfillJob with maxPages from metadata
+                var maxPages = ParseMaxPages(job.ErrorMessage);
+                jobClient.Enqueue<BackfillJob>(
+                    j => j.ExecuteAsync(job.Id, maxPages, CancellationToken.None));
+            }
+            else
+            {
+                // Default to source1 if no explicit source is encoded in JobType
+                var sourceKey = job.JobType.StartsWith("scrape:")
+                    ? job.JobType["scrape:".Length..]
+                    : "source1";
 
-            jobClient.Enqueue<ScrapeOrchestratorJob>(
-                j => j.ExecuteAsync(job.Id, sourceKey, CancellationToken.None));
+                jobClient.Enqueue<ScrapeOrchestratorJob>(
+                    j => j.ExecuteAsync(job.Id, sourceKey, CancellationToken.None));
+            }
 
             // Mark as queued so scheduler doesn't re-pick it up on next tick
             job.Status = "running";
         }
 
         await db.SaveChangesAsync(ct);
+    }
+
+    private static int ParseMaxPages(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return 200;
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            return doc.RootElement.TryGetProperty("maxPages", out var mp) ? mp.GetInt32() : 200;
+        }
+        catch { return 200; }
     }
 }

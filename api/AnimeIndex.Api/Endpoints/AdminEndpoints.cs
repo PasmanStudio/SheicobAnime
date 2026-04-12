@@ -25,6 +25,8 @@ public static class AdminEndpoints
         group.MapPost("/blocked-slugs", CreateBlockedSlug);
         group.MapGet("/blocked-slugs", ListBlockedSlugs);
         group.MapDelete("/blocked-slugs/{slug}", DeleteBlockedSlug);
+        group.MapPost("/backfill", CreateBackfill);
+        group.MapGet("/backfill/{id:guid}/progress", GetBackfillProgress);
     }
 
     private static async Task<IResult> CreateScrapeJob(
@@ -171,5 +173,67 @@ public static class AdminEndpoints
         await db.SaveChangesAsync(ct);
 
         return Results.NoContent();
+    }
+
+    private static async Task<IResult> CreateBackfill(
+        AppDbContext db,
+        IValidator<CreateBackfillRequest> validator,
+        CreateBackfillRequest request,
+        CancellationToken ct = default)
+    {
+        var validation = await validator.ValidateAsync(request, ct);
+        if (!validation.IsValid)
+            return Results.Json(
+                new ErrorResponse("Validation failed", "VALIDATION_ERROR",
+                    validation.Errors.ToDictionary(e => e.PropertyName, e => e.ErrorMessage)),
+                statusCode: 422);
+
+        // Prevent duplicate running backfills for the same source
+        var existing = await db.ScrapeJobs
+            .AnyAsync(j => j.JobType == $"backfill:{request.Source}"
+                        && (j.Status == "pending" || j.Status == "running"), ct);
+        if (existing)
+            return Results.Json(
+                new ErrorResponse("A backfill job for this source is already running", "DUPLICATE_BACKFILL"),
+                statusCode: 409);
+
+        var job = new ScrapeJob
+        {
+            JobType = $"backfill:{request.Source}",
+            Status = "pending",
+            ScheduledAt = DateTime.UtcNow,
+            ErrorMessage = $"{{\"maxPages\":{request.MaxPages},\"progress\":\"queued\"}}"
+        };
+
+        db.ScrapeJobs.Add(job);
+        await db.SaveChangesAsync(ct);
+
+        return Results.Created($"/admin/backfill/{job.Id}/progress", new { jobId = job.Id, status = "queued", maxPages = request.MaxPages });
+    }
+
+    private static async Task<IResult> GetBackfillProgress(
+        AppDbContext db,
+        Guid id,
+        CancellationToken ct = default)
+    {
+        var job = await db.ScrapeJobs
+            .AsNoTracking()
+            .FirstOrDefaultAsync(j => j.Id == id, ct);
+
+        if (job is null)
+            return Results.Json(
+                new ErrorResponse("Backfill job not found", "NOT_FOUND"),
+                statusCode: 404);
+
+        return Results.Ok(new
+        {
+            job.Id,
+            job.JobType,
+            job.Status,
+            job.AttemptCount,
+            Progress = job.ErrorMessage,
+            job.ScheduledAt,
+            job.CompletedAt
+        });
     }
 }
