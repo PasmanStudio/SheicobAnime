@@ -22,6 +22,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\AnimeIndex.Api\AnimeIndex.Api.csproj" />
+    <ProjectReference Include="..\..\scraper\AnimeIndex.Scraper\AnimeIndex.Scraper.csproj" />
   </ItemGroup>
 
 </Project>

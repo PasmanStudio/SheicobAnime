@@ -8,24 +8,24 @@ using Microsoft.Playwright;
 namespace AnimeIndex.Scraper.Strategies;
 
 /// <summary>
-/// AnimeFlv scraper (www4.animeflv.net).
-/// Browse /browse with pagination → series detail → episode pages → iframe extraction.
+/// JKAnime scraper (jkanime.net).
+/// Browse /directorio with pagination → series detail → episode pages → Desu player iframe.
 /// </summary>
-public sealed class Source1Strategy(
+public sealed class Source2Strategy(
     AppDbContext db,
     MirrorProbeService probe,
     UpsertPipelineService upsert,
     IConfiguration config,
-    ILogger<Source1Strategy> logger) : PlaywrightBase, IScrapeStrategy
+    ILogger<Source2Strategy> logger) : PlaywrightBase, IScrapeStrategy
 {
-    public string SourceKey => "source1";
+    public string SourceKey => "source2";
 
     public async Task<ScrapeResult> ScrapeAsync(Guid scrapeJobId, CancellationToken ct = default)
     {
-        var baseUrl = config["Source1:BaseUrl"]
-            ?? throw new InvalidOperationException("Source1:BaseUrl is not configured.");
-        var delayMs = config.GetValue("Source1:DelayMs", 2000);
-        var maxPages = config.GetValue("Source1:MaxPages", 5);
+        var baseUrl = config["Source2:BaseUrl"]
+            ?? throw new InvalidOperationException("Source2:BaseUrl is not configured.");
+        var delayMs = config.GetValue("Source2:DelayMs", 1500);
+        var maxPages = config.GetValue("Source2:MaxPages", 3);
 
         var seriesCount = 0;
         var episodeCount = 0;
@@ -54,9 +54,9 @@ public sealed class Source1Strategy(
         await using var _ = this;
         await InitializeAsync();
 
-        logger.LogInformation("AnimeFlvStrategy starting — baseUrl={BaseUrl}, maxPages={MaxPages}", baseUrl, maxPages);
+        logger.LogInformation("JKAnimeStrategy starting — baseUrl={BaseUrl}, maxPages={MaxPages}", baseUrl, maxPages);
 
-        // ── Discover series from /browse pages ────────────────
+        // ── Discover series from /directorio ──────────────────
         var discovered = await DiscoverSeriesAsync(baseUrl, maxPages, delayMs, ct);
 
         foreach (var series in discovered)
@@ -66,7 +66,6 @@ public sealed class Source1Strategy(
             if (await CheckCircuitBreakerAsync(ct))
                 logger.LogWarning("Circuit breaker tripped — paused 10 min");
 
-            // Re-check blocked slug for each discovered series
             var blocked = await db.BlockedSlugs.AnyAsync(b => b.Slug == series.Slug, ct);
             if (blocked)
             {
@@ -74,15 +73,15 @@ public sealed class Source1Strategy(
                 continue;
             }
 
-            // Get full series detail (synopsis, genres, score, etc.)
+            // Navigate to series detail page for enrichment
             var detail = await ScrapeSeriesDetailAsync(baseUrl, series.Slug, delayMs, ct);
             var enriched = detail ?? series;
 
             var seriesId = await upsert.UpsertSeriesAsync(enriched, ct);
             seriesCount++;
 
-            // ── Discover episodes ─────────────────────────────
-            var episodes = await ScrapeEpisodesFromDetailAsync(seriesId, ct);
+            // ── Discover episodes from detail page ────────────
+            var episodes = await ScrapeEpisodesFromDetailAsync(baseUrl, series.Slug, seriesId, delayMs, ct);
 
             foreach (var ep in episodes)
             {
@@ -91,8 +90,8 @@ public sealed class Source1Strategy(
                 var episodeId = await upsert.UpsertEpisodeAsync(ep, ct);
                 episodeCount++;
 
-                // Navigate to episode page to extract mirror iframes
-                var epUrl = $"{baseUrl.TrimEnd('/')}/ver/{series.Slug}-{ep.EpisodeNumber}";
+                // Navigate to episode page to extract Desu player mirrors
+                var epUrl = $"{baseUrl.TrimEnd('/')}/{series.Slug}/{ep.EpisodeNumber}/";
                 var mirrors = await ScrapeEpisodeMirrorsAsync(epUrl, episodeId, delayMs, ct);
 
                 foreach (var mirror in mirrors)
@@ -113,7 +112,7 @@ public sealed class Source1Strategy(
         }
 
         logger.LogInformation(
-            "AnimeFlvStrategy complete — series={S} episodes={E} mirrors={M}",
+            "JKAnimeStrategy complete — series={S} episodes={E} mirrors={M}",
             seriesCount, episodeCount, mirrorCount);
 
         return new ScrapeResult(true,
@@ -122,7 +121,7 @@ public sealed class Source1Strategy(
             MirrorsIndexed: mirrorCount);
     }
 
-    // ── Directory browsing ──────────────────────────────────
+    // ── Directory browsing (/directorio) ────────────────────
 
     private async Task<IReadOnlyList<SeriesScrapedData>> DiscoverSeriesAsync(
         string baseUrl, int maxPages, int delayMs, CancellationToken ct)
@@ -134,16 +133,16 @@ public sealed class Source1Strategy(
             if (ct.IsCancellationRequested) break;
             if (await CheckCircuitBreakerAsync(ct)) break;
 
-            var url = $"{baseUrl.TrimEnd('/')}/browse?page={page}";
+            var url = $"{baseUrl.TrimEnd('/')}/directorio/{page}/";
             if (!await GoToAsync(url, ct))
             {
                 logger.LogWarning("Cannot reach {Url}", url);
                 break;
             }
 
-            // AnimeFlv /browse: each card is <article class="Anime"> or <li>
-            // containing <a href="/anime/{slug}"> and <h3>{title}</h3>
-            var cards = await Page.Locator("ul.ListAnimes li article.Anime").AllAsync();
+            // JKAnime /directorio: cards with <div class="anime__item">
+            // or <div class="card"> containing <a href="/{slug}/">
+            var cards = await Page.Locator("div.anime__item, div.card, div.custom_item").AllAsync();
             if (cards.Count == 0)
             {
                 logger.LogDebug("No cards found on page {Page} — end of directory", page);
@@ -158,46 +157,35 @@ public sealed class Source1Strategy(
                     var href = await linkEl.GetAttributeAsync("href");
                     if (string.IsNullOrWhiteSpace(href)) continue;
 
-                    // Extract slug from /anime/{slug}
-                    var slug = href.Split('/', StringSplitOptions.RemoveEmptyEntries).LastOrDefault();
+                    // Extract slug from /{slug}/
+                    var segments = href.Split('/', StringSplitOptions.RemoveEmptyEntries);
+                    var slug = segments.LastOrDefault();
                     if (string.IsNullOrWhiteSpace(slug)) continue;
 
-                    var title = await card.Locator("h3.Title").InnerTextAsync();
+                    // Title from heading or link text
+                    string? title = null;
+                    var titleEl = card.Locator("h5, h4, h3, .title").First;
+                    if (await titleEl.CountAsync() > 0)
+                        title = (await titleEl.InnerTextAsync()).Trim();
+                    title ??= (await linkEl.InnerTextAsync()).Trim();
+
                     if (string.IsNullOrWhiteSpace(title)) continue;
 
-                    // Cover image from <figure><img>
+                    // Cover image
                     string? coverUrl = null;
-                    var imgEl = card.Locator("figure img").First;
+                    var imgEl = card.Locator("img").First;
                     if (await imgEl.CountAsync() > 0)
                     {
-                        coverUrl = await imgEl.GetAttributeAsync("src");
-                        if (coverUrl is not null && !coverUrl.StartsWith("http"))
-                            coverUrl = $"{baseUrl.TrimEnd('/')}{coverUrl}";
-                    }
-
-                    // Type badge (TV, OVA, etc.)
-                    string? type = null;
-                    var typeBadge = card.Locator("span.Type");
-                    if (await typeBadge.CountAsync() > 0)
-                    {
-                        var raw = (await typeBadge.InnerTextAsync()).Trim().ToLowerInvariant();
-                        type = raw switch
-                        {
-                            "anime" or "tv" => "tv",
-                            "película" or "pelicula" or "movie" => "movie",
-                            "ova" => "ova",
-                            "ona" => "ona",
-                            "especial" or "special" => "special",
-                            _ => "tv"
-                        };
+                        coverUrl = await imgEl.GetAttributeAsync("src")
+                            ?? await imgEl.GetAttributeAsync("data-src");
                     }
 
                     result.Add(new SeriesScrapedData(
                         Slug: slug.Trim(),
-                        Title: title.Trim(),
+                        Title: title,
                         CoverUrl: coverUrl,
                         Status: "ongoing",
-                        Type: type ?? "tv"));
+                        Type: "tv"));
                 }
                 catch (Exception ex)
                 {
@@ -212,12 +200,12 @@ public sealed class Source1Strategy(
         return result;
     }
 
-    // ── Series detail page ──────────────────────────────────
+    // ── Series detail page (/{slug}/) ───────────────────────
 
     private async Task<SeriesScrapedData?> ScrapeSeriesDetailAsync(
         string baseUrl, string slug, int delayMs, CancellationToken ct)
     {
-        var url = $"{baseUrl.TrimEnd('/')}/anime/{slug}";
+        var url = $"{baseUrl.TrimEnd('/')}/{slug}/";
         if (!await GoToAsync(url, ct))
         {
             logger.LogWarning("Cannot reach series detail {Url}", url);
@@ -226,27 +214,21 @@ public sealed class Source1Strategy(
 
         try
         {
-            var title = await Page.Locator("h1.Title").InnerTextAsync();
+            // Title
+            var title = await Page.Locator("h1, h2.title_anime, .anime__details__title h3").First.InnerTextAsync();
 
             // Synopsis
             string? synopsis = null;
-            var synopsisEl = Page.Locator("div.Description p");
+            var synopsisEl = Page.Locator("p.sinopsis, .anime__details__text p, div.sinopsis");
             if (await synopsisEl.CountAsync() > 0)
                 synopsis = (await synopsisEl.First.InnerTextAsync()).Trim();
 
-            // Cover
-            string? coverUrl = null;
-            var coverImg = Page.Locator("div.AnimeCover img, div.Image img").First;
-            if (await coverImg.CountAsync() > 0)
-            {
-                coverUrl = await coverImg.GetAttributeAsync("src");
-                if (coverUrl is not null && !coverUrl.StartsWith("http"))
-                    coverUrl = $"{baseUrl.TrimEnd('/')}{coverUrl}";
-            }
+            // Cover from CDN pattern: cdn.jkdesa.com/assets/images/animes/image/{slug}.jpg
+            var coverUrl = $"https://cdn.jkdesa.com/assets/images/animes/image/{slug}.jpg";
 
-            // Genres from <nav class="Nvgnrs"><a>
+            // Genres from genre links
             var genres = new List<string>();
-            var genreLinks = await Page.Locator("nav.Nvgnrs a").AllAsync();
+            var genreLinks = await Page.Locator("span.anime__details__genre a, .generos a, a.btn-genero").AllAsync();
             foreach (var g in genreLinks)
             {
                 var genreName = (await g.InnerTextAsync()).Trim();
@@ -254,46 +236,32 @@ public sealed class Source1Strategy(
                     genres.Add(genreName);
             }
 
-            // Status from <span class="fa-tv"> text or info section
+            // Status from info list
             string? status = null;
-            var infoSpans = await Page.Locator("p.AnmStts span").AllAsync();
-            foreach (var span in infoSpans)
-            {
-                var text = (await span.InnerTextAsync()).Trim().ToLowerInvariant();
-                status = text switch
-                {
-                    "en emision" or "en emisión" => "ongoing",
-                    "finalizado" => "completed",
-                    "próximamente" or "proximamente" => "upcoming",
-                    _ => status
-                };
-            }
-
-            // Type
             string? type = null;
-            var typeEl = Page.Locator("span.Type");
-            if (await typeEl.CountAsync() > 0)
+            var infoItems = await Page.Locator("ul.anime__details__widget li, .anime-type-peli li, span.info-value").AllAsync();
+            foreach (var item in infoItems)
             {
-                var raw = (await typeEl.First.InnerTextAsync()).Trim().ToLowerInvariant();
-                type = raw switch
-                {
-                    "anime" or "tv" => "tv",
-                    "película" or "pelicula" or "movie" => "movie",
-                    "ova" => "ova",
-                    "ona" => "ona",
-                    "especial" or "special" => "special",
-                    _ => "tv"
-                };
-            }
+                var text = (await item.InnerTextAsync()).Trim().ToLowerInvariant();
 
-            // Score
-            decimal? score = null;
-            var scoreEl = Page.Locator("#votes_pr498, span.vtprmd");
-            if (await scoreEl.CountAsync() > 0)
-            {
-                var scoreText = (await scoreEl.First.InnerTextAsync()).Trim();
-                if (decimal.TryParse(scoreText, System.Globalization.CultureInfo.InvariantCulture, out var parsed))
-                    score = parsed;
+                if (text.Contains("estado"))
+                {
+                    if (text.Contains("emision") || text.Contains("emisión"))
+                        status = "ongoing";
+                    else if (text.Contains("finalizado"))
+                        status = "completed";
+                    else if (text.Contains("proximamente") || text.Contains("próximamente"))
+                        status = "upcoming";
+                }
+
+                if (text.Contains("tipo"))
+                {
+                    if (text.Contains("tv")) type = "tv";
+                    else if (text.Contains("película") || text.Contains("pelicula") || text.Contains("movie")) type = "movie";
+                    else if (text.Contains("ova")) type = "ova";
+                    else if (text.Contains("ona")) type = "ona";
+                    else if (text.Contains("especial") || text.Contains("special")) type = "special";
+                }
             }
 
             await JitterDelayAsync(delayMs, ct);
@@ -305,7 +273,6 @@ public sealed class Source1Strategy(
                 Status: status ?? "ongoing",
                 Type: type ?? "tv",
                 Synopsis: synopsis,
-                Score: score,
                 Genres: genres.Count > 0 ? genres : null);
         }
         catch (Exception ex)
@@ -315,44 +282,34 @@ public sealed class Source1Strategy(
         }
     }
 
-    // ── Episode list from series page (already navigated) ───
+    // ── Episode list from series page ───────────────────────
 
     private async Task<IReadOnlyList<EpisodeScrapedData>> ScrapeEpisodesFromDetailAsync(
-        Guid seriesId, CancellationToken ct)
+        string baseUrl, string slug, Guid seriesId, int delayMs, CancellationToken ct)
     {
         var result = new List<EpisodeScrapedData>();
 
         try
         {
-            // AnimeFlv episode list: <ul id="episodeList"> with <li>
-            // Each <li> has <a href="/ver/{slug}-{ep}"> and episode number
-            var rows = await Page.Locator("ul.ListCaps li, ul#episodeList li").AllAsync();
+            // JKAnime episode list: numbered links in episode navigation
+            var rows = await Page.Locator("div.anime__pagination a, a.emark, div.ep-list a").AllAsync();
 
             foreach (var row in rows)
             {
                 try
                 {
-                    var linkEl = row.Locator("a").First;
-                    var href = await linkEl.GetAttributeAsync("href");
-                    if (string.IsNullOrWhiteSpace(href)) continue;
+                    var href = await row.GetAttributeAsync("href");
+                    var text = (await row.InnerTextAsync()).Trim();
 
-                    // Try to get episode number from <p> inside the row
-                    var epNumEl = row.Locator("p");
-                    string? epNumText = null;
-                    if (await epNumEl.CountAsync() > 0)
-                        epNumText = (await epNumEl.First.InnerTextAsync()).Trim();
-
-                    // Or extract from href: /ver/{slug}-{N}
+                    // Extract episode number from text or href (/{slug}/{N}/)
                     short epNum = 0;
-                    if (epNumText is not null && short.TryParse(
-                        System.Text.RegularExpressions.Regex.Match(epNumText, @"\d+").Value,
-                        out var parsed))
+                    if (short.TryParse(text, out var fromText))
                     {
-                        epNum = parsed;
+                        epNum = fromText;
                     }
-                    else
+                    else if (href is not null)
                     {
-                        var match = System.Text.RegularExpressions.Regex.Match(href, @"-(\d+)$");
+                        var match = System.Text.RegularExpressions.Regex.Match(href, @"/(\d+)/?$");
                         if (match.Success && short.TryParse(match.Groups[1].Value, out var fromHref))
                             epNum = fromHref;
                     }
@@ -367,19 +324,19 @@ public sealed class Source1Strategy(
                 }
                 catch (Exception ex)
                 {
-                    logger.LogDebug(ex, "Failed to parse episode row");
+                    logger.LogDebug(ex, "Failed to parse episode link");
                 }
             }
         }
         catch (Exception ex)
         {
-            logger.LogWarning(ex, "Failed to extract episode list");
+            logger.LogWarning(ex, "Failed to extract episode list for {Slug}", slug);
         }
 
         return result;
     }
 
-    // ── Episode mirrors (iframe extraction) ─────────────────
+    // ── Episode mirrors (Desu player iframe extraction) ─────
 
     private async Task<IReadOnlyList<MirrorScrapedData>> ScrapeEpisodeMirrorsAsync(
         string episodeUrl, Guid episodeId, int delayMs, CancellationToken ct)
@@ -387,12 +344,13 @@ public sealed class Source1Strategy(
         var mirrors = new List<MirrorScrapedData>();
         var capturedEmbeds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        // Request interception to capture dynamically injected iframe sources
+        // Capture dynamically injected iframe URLs
         Page.RequestFinished += (_, req) =>
         {
             if (req.Url.Contains("embed", StringComparison.OrdinalIgnoreCase) ||
                 req.Url.Contains("player", StringComparison.OrdinalIgnoreCase) ||
-                req.Url.Contains("stream", StringComparison.OrdinalIgnoreCase))
+                req.Url.Contains("stream", StringComparison.OrdinalIgnoreCase) ||
+                req.Url.Contains("desu", StringComparison.OrdinalIgnoreCase))
                 capturedEmbeds.Add(req.Url);
         };
 
@@ -402,7 +360,7 @@ public sealed class Source1Strategy(
             return mirrors;
         }
 
-        // Wait for NetworkIdle to let JS inject iframes
+        // Wait for Desu player JS injection
         try
         {
             await Page.WaitForLoadStateAsync(LoadState.NetworkIdle,
@@ -410,10 +368,10 @@ public sealed class Source1Strategy(
         }
         catch (TimeoutException)
         {
-            logger.LogDebug("NetworkIdle timeout for {Url} — proceeding with partial capture", episodeUrl);
+            logger.LogDebug("NetworkIdle timeout for {Url} — proceeding", episodeUrl);
         }
 
-        // Extract from visible iframes
+        // Extract visible iframes
         var iframes = await Page.Locator("iframe").AllAsync();
         foreach (var iframe in iframes)
         {
@@ -423,11 +381,11 @@ public sealed class Source1Strategy(
                 if (!string.IsNullOrWhiteSpace(src) && src.StartsWith("http"))
                     capturedEmbeds.Add(src);
             }
-            catch { /* iframe may have been removed from DOM */ }
+            catch { }
         }
 
-        // Also try clicking server tabs to reveal more mirrors
-        var serverTabs = await Page.Locator("li.Tab, li.server-option, .CapiTnv li").AllAsync();
+        // Click server/quality tabs to reveal more mirrors
+        var serverTabs = await Page.Locator("div.anime_muti_link a, a.play-video, li.server-item").AllAsync();
         for (var i = 0; i < serverTabs.Count && i < 6; i++)
         {
             try
@@ -452,7 +410,6 @@ public sealed class Source1Strategy(
         short priority = 0;
         foreach (var url in capturedEmbeds)
         {
-            // Extract provider name from domain
             var providerName = ExtractProviderName(url);
 
             mirrors.Add(new MirrorScrapedData(
@@ -472,10 +429,8 @@ public sealed class Source1Strategy(
         try
         {
             var host = new Uri(url).Host.ToLowerInvariant();
-            // Strip www. prefix and known CDN subdomains
             if (host.StartsWith("www.")) host = host[4..];
 
-            // Map known embed domains to clean names
             return host switch
             {
                 var h when h.Contains("fembed") || h.Contains("fplayer") => "fembed",
@@ -490,7 +445,9 @@ public sealed class Source1Strategy(
                 var h when h.Contains("filemoon") => "filemoon",
                 var h when h.Contains("streamwish") => "streamwish",
                 var h when h.Contains("voe") => "voe",
-                var h when h.Contains("youtube") => "youtube",
+                var h when h.Contains("desu") => "desu",
+                var h when h.Contains("nozomi") => "nozomi",
+                var h when h.Contains("jkanime") => "jkanime",
                 _ => host.Split('.')[0]
             };
         }

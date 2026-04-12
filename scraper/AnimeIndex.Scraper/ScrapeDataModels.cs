@@ -6,13 +6,21 @@ public record SeriesScrapedData(
     string Title,
     string? CoverUrl,
     string? Status,
-    string? Type);
+    string? Type,
+    string? Synopsis = null,
+    string? TitleRomaji = null,
+    string? TitleNative = null,
+    decimal? Score = null,
+    short? Year = null,
+    short? EpisodeCount = null,
+    IReadOnlyList<string>? Genres = null);
 
 public record EpisodeScrapedData(
     Guid SeriesId,
     short EpisodeNumber,
     string? Title,
-    IReadOnlyList<MirrorScrapedData> PendingMirrors);
+    IReadOnlyList<MirrorScrapedData> PendingMirrors,
+    DateTime? AiredAt = null);
 
 public record MirrorScrapedData(
     Guid EpisodeId,

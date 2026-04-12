@@ -63,6 +63,7 @@ try
 
     // ─── Scrape strategies (all IScrapeStrategy impls) ────
     builder.Services.AddScoped<IScrapeStrategy, Source1Strategy>();
+    builder.Services.AddScoped<IScrapeStrategy, Source2Strategy>();
 
     // ─── Hangfire job classes ─────────────────────────────
     builder.Services.AddScoped<ScrapeOrchestratorJob>();
@@ -81,6 +82,15 @@ try
             "scraper",
             job => job.RunAsync(CancellationToken.None),
             cron,
+            new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc });
+
+        // Source2 (JKAnime) runs on a separate schedule — every 2 hours by default
+        var source2Cron = builder.Configuration["Hangfire:Source2Cron"] ?? "0 */2 * * *";
+        recurring.AddOrUpdate<ScrapeSchedulerJob>(
+            "scrape-scheduler-source2",
+            "scraper",
+            job => job.RunAsync(CancellationToken.None),
+            source2Cron,
             new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc });
     }
 

@@ -16,21 +16,47 @@ public class UpsertPipelineService(AppDbContext db)
     public async Task<Guid> UpsertSeriesAsync(SeriesScrapedData data, CancellationToken ct = default)
     {
         await db.Database.ExecuteSqlAsync($"""
-            INSERT INTO series (id, slug, title, cover_url, status, type, created_at, updated_at)
-            VALUES (gen_random_uuid(), {data.Slug}, {data.Title}, {data.CoverUrl}, {data.Status}, {data.Type}, now(), now())
+            INSERT INTO series (id, slug, title, title_romaji, title_native, synopsis, cover_url, status, type, score, year, episode_count, created_at, updated_at)
+            VALUES (gen_random_uuid(), {data.Slug}, {data.Title}, {data.TitleRomaji}, {data.TitleNative}, {data.Synopsis}, {data.CoverUrl}, {data.Status}, {data.Type}, {data.Score}, {data.Year}, {data.EpisodeCount}, now(), now())
             ON CONFLICT (slug) DO UPDATE SET
-                title        = EXCLUDED.title,
-                cover_url    = COALESCE(EXCLUDED.cover_url, series.cover_url),
-                status       = COALESCE(EXCLUDED.status, series.status),
-                type         = COALESCE(EXCLUDED.type, series.type),
-                updated_at   = now(),
+                title           = EXCLUDED.title,
+                title_romaji    = COALESCE(EXCLUDED.title_romaji, series.title_romaji),
+                title_native    = COALESCE(EXCLUDED.title_native, series.title_native),
+                synopsis        = COALESCE(EXCLUDED.synopsis, series.synopsis),
+                cover_url       = COALESCE(EXCLUDED.cover_url, series.cover_url),
+                status          = COALESCE(EXCLUDED.status, series.status),
+                type            = COALESCE(EXCLUDED.type, series.type),
+                score           = COALESCE(EXCLUDED.score, series.score),
+                year            = COALESCE(EXCLUDED.year, series.year),
+                episode_count   = COALESCE(EXCLUDED.episode_count, series.episode_count),
+                updated_at      = now(),
                 last_scraped_at = now()
             """, ct);
 
-        return await db.Series
+        var seriesId = await db.Series
             .Where(s => s.Slug == data.Slug)
             .Select(s => s.Id)
             .SingleAsync(ct);
+
+        // Link genres if provided
+        if (data.Genres is { Count: > 0 })
+        {
+            foreach (var genreName in data.Genres)
+            {
+                await db.Database.ExecuteSqlAsync($"""
+                    INSERT INTO genres (name) VALUES ({genreName})
+                    ON CONFLICT (name) DO NOTHING
+                    """, ct);
+
+                await db.Database.ExecuteSqlAsync($"""
+                    INSERT INTO series_genres (series_id, genre_id)
+                    SELECT {seriesId}, g.id FROM genres g WHERE g.name = {genreName}
+                    ON CONFLICT (series_id, genre_id) DO NOTHING
+                    """, ct);
+            }
+        }
+
+        return seriesId;
     }
 
     /// <summary>
@@ -40,10 +66,11 @@ public class UpsertPipelineService(AppDbContext db)
     public async Task<Guid> UpsertEpisodeAsync(EpisodeScrapedData data, CancellationToken ct = default)
     {
         await db.Database.ExecuteSqlAsync($"""
-            INSERT INTO episodes (id, series_id, episode_number, title, is_published, created_at)
-            VALUES (gen_random_uuid(), {data.SeriesId}, {data.EpisodeNumber}, {data.Title}, true, now())
+            INSERT INTO episodes (id, series_id, episode_number, title, aired_at, is_published, created_at)
+            VALUES (gen_random_uuid(), {data.SeriesId}, {data.EpisodeNumber}, {data.Title}, {data.AiredAt}, true, now())
             ON CONFLICT (series_id, episode_number) DO UPDATE SET
                 title        = COALESCE(EXCLUDED.title, episodes.title),
+                aired_at     = COALESCE(EXCLUDED.aired_at, episodes.aired_at),
                 is_published = true
             """, ct);
 
