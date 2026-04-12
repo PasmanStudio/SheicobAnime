@@ -16,7 +16,8 @@ public static class AdminEndpoints
     {
         var group = app.MapGroup("/admin")
             .WithTags("Admin")
-            .AddEndpointFilter<AdminKeyEndpointFilter>();
+            .AddEndpointFilter<AdminKeyEndpointFilter>()
+            .RequireRateLimiting("admin");
 
         group.MapPost("/scrape-jobs", CreateScrapeJob);
         group.MapGet("/scrape-jobs", ListScrapeJobs);

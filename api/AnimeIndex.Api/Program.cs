@@ -145,11 +145,25 @@ try
                     QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
                     QueueLimit = 0
                 }));
+
+        // Stricter limit for admin endpoints
+        options.AddPolicy("admin", context =>
+            RateLimitPartition.GetSlidingWindowLimiter(
+                context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+                _ => new SlidingWindowRateLimiterOptions
+                {
+                    PermitLimit = 10,
+                    Window = TimeSpan.FromMinutes(1),
+                    SegmentsPerWindow = 2,
+                    QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+                    QueueLimit = 0
+                }));
+
         options.OnRejected = async (context, ct) =>
         {
             context.HttpContext.Response.StatusCode = 429;
             await context.HttpContext.Response.WriteAsJsonAsync(
-                new ErrorResponse("Rate limit exceeded. Max 60 requests per minute.", "RATE_LIMITED"), ct);
+                new ErrorResponse("Rate limit exceeded.", "RATE_LIMITED"), ct);
         };
     });
 
@@ -183,6 +197,19 @@ try
     // ─── Middleware pipeline ─────────────────────────────
     if (!isTesting) app.UseSerilogRequestLogging();
     if (sentryEnabled) app.UseSentryTracing();
+
+    // Security headers
+    app.Use(async (context, next) =>
+    {
+        context.Response.Headers["X-Content-Type-Options"] = "nosniff";
+        context.Response.Headers["X-Frame-Options"] = "SAMEORIGIN";
+        context.Response.Headers["Referrer-Policy"] = "strict-origin-when-cross-origin";
+        context.Response.Headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()";
+        if (!context.RequestServices.GetRequiredService<IWebHostEnvironment>().IsDevelopment())
+            context.Response.Headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains";
+        await next();
+    });
+
     app.UseRateLimiter();
     app.UseCors();
 
