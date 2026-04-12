@@ -154,11 +154,22 @@ jobs:
             DB_HOST="${HOST_PORT%%:*}"
             DB_PORT="${HOST_PORT#*:}"
             [ "$DB_PORT" = "$DB_HOST" ] && DB_PORT=5432
-            CONN="Host=${DB_HOST};Port=${DB_PORT};Database=${DB_NAME};Username=${DB_USER};Password=${DB_PASS};SSL Mode=Require;Trust Server Certificate=true"
+            CONN="Host=${DB_HOST};Port=${DB_PORT};Database=${DB_NAME};Username=${DB_USER};Password=${DB_PASS};SSL Mode=Require;Trust Server Certificate=true;Pooling=false;Timeout=60"
           fi
-          dotnet ef database update \
-            --project api/AnimeIndex.Api \
-            --connection "$CONN"
+          # Retry up to 3 times — PgBouncer session pooler may reject during peak connections
+          for attempt in 1 2 3; do
+            echo "Migration attempt $attempt/3..."
+            if dotnet ef database update --project api/AnimeIndex.Api --connection "$CONN"; then
+              echo "Migration succeeded on attempt $attempt"
+              exit 0
+            fi
+            if [ "$attempt" -lt 3 ]; then
+              echo "Migration failed, retrying in 15s..."
+              sleep 15
+            fi
+          done
+          echo "::error::Migration failed after 3 attempts"
+          exit 1
 
   # ─── Deploy services (after migration succeeds) ───
   deploy-api:
