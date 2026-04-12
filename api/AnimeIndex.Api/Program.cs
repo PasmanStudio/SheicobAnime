@@ -81,9 +81,11 @@ try
     // ─── Database ────────────────────────────────────────
     if (!isTesting)
     {
-        var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
-            ?? builder.Configuration["DATABASE_URL"]
-            ?? throw new InvalidOperationException("No database connection string configured.");
+        var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(connectionString))
+            connectionString = builder.Configuration["DATABASE_URL"];
+        if (string.IsNullOrEmpty(connectionString))
+            throw new InvalidOperationException("No database connection string configured.");
 
         // Convert postgresql:// URI to ADO.NET format (Railway/Supabase use URI format)
         connectionString = NormalizePostgresConnectionString(connectionString);
