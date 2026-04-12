@@ -283,6 +283,9 @@ try
         using var scope = app.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         await SeedData.SeedGenresAsync(db);
+        // Invalidate genres cache so stale empty results don't persist
+        var cache = scope.ServiceProvider.GetRequiredService<ICacheService>();
+        await cache.RemoveAsync("genres:all");
     }
 
     app.Run();
