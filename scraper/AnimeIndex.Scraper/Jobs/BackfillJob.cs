@@ -149,9 +149,9 @@ public class BackfillJob(
             var skippedCount = 0;
 
             // Get all series that need enrichment (no synopsis = not yet enriched, OR not scraped in last 24h)
+            // Include ALL series in DB, not just newly discovered ones — a re-run should enrich existing series too
             var seriesToEnrich = await db.Series
                 .AsNoTracking()
-                .Where(s => discoveredSlugs.Contains(s.Slug))
                 .Where(s => s.Synopsis == null || s.LastScrapedAt == null || s.LastScrapedAt < DateTime.UtcNow.AddHours(-24))
                 .OrderBy(s => s.LastScrapedAt ?? DateTime.MinValue)
                 .Select(s => new { s.Id, s.Slug })
