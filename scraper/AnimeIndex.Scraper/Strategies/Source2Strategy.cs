@@ -384,6 +384,15 @@ public sealed class Source2Strategy(
     }
 
     // ── Episode mirrors (Desu player iframe extraction) ─────
+    //
+    // JKAnime mechanism:
+    //  - The first server (Desu) has its URL already in the iframe on page load.
+    //  - Other servers are loaded via AJAX: clicking a tab sends a request with a server
+    //    identifier, the backend returns the embed URL, and JS updates the iframe src.
+    //  - We use WaitForFunctionAsync to detect when the iframe src changes after each
+    //    click, completing exactly when the AJAX finishes (no fixed delays).
+    //  - Network interception for /embed/ and /e/ URLs acts as a safety net for servers
+    //    that inject iframes via postMessage, new iframe creation, or secondary AJAX.
 
     private async Task<IReadOnlyList<MirrorScrapedData>> ScrapeEpisodeMirrorsAsync(
         string episodeUrl, Guid episodeId, int delayMs, CancellationToken ct)
@@ -391,14 +400,19 @@ public sealed class Source2Strategy(
         var mirrors = new List<MirrorScrapedData>();
         var capturedEmbeds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        // Capture dynamically injected iframe URLs
+        // Network interception: capture embed/player URLs as fallback
         Page.RequestFinished += (_, req) =>
         {
-            if (req.Url.Contains("embed", StringComparison.OrdinalIgnoreCase) ||
-                req.Url.Contains("player", StringComparison.OrdinalIgnoreCase) ||
-                req.Url.Contains("stream", StringComparison.OrdinalIgnoreCase) ||
-                req.Url.Contains("desu", StringComparison.OrdinalIgnoreCase))
-                capturedEmbeds.Add(req.Url);
+            var url = req.Url;
+            if (url.Contains("/embed/", StringComparison.OrdinalIgnoreCase) ||
+                url.Contains("/e/", StringComparison.OrdinalIgnoreCase) ||
+                url.Contains("player", StringComparison.OrdinalIgnoreCase) ||
+                url.Contains("stream", StringComparison.OrdinalIgnoreCase) ||
+                url.Contains("desu", StringComparison.OrdinalIgnoreCase))
+            {
+                if (url.StartsWith("http"))
+                    capturedEmbeds.Add(url);
+            }
         };
 
         if (!await GoToAsync(episodeUrl, ct))
@@ -407,53 +421,84 @@ public sealed class Source2Strategy(
             return mirrors;
         }
 
-        // Wait for Desu player JS injection
+        // Wait for the initial Desu player iframe to appear
         try
         {
-            await Page.WaitForLoadStateAsync(LoadState.NetworkIdle,
-                new PageWaitForLoadStateOptions { Timeout = 15_000 });
+            await Page.WaitForSelectorAsync("iframe",
+                new PageWaitForSelectorOptions { Timeout = 12_000 });
         }
         catch (TimeoutException)
         {
-            logger.LogDebug("NetworkIdle timeout for {Url} — proceeding", episodeUrl);
+            logger.LogDebug("No iframe found on {Url}", episodeUrl);
+            return mirrors;
         }
 
-        // Extract visible iframes
-        var iframes = await Page.Locator("iframe").AllAsync();
-        foreach (var iframe in iframes)
+        // Capture the initial iframe src (Desu player — always loaded first)
+        var initialSrc = await Page.EvaluateAsync<string?>(
+            "(() => { const f = document.querySelector('iframe'); return f ? f.src : null; })()");
+        if (!string.IsNullOrWhiteSpace(initialSrc) && initialSrc.StartsWith("http"))
         {
-            try
-            {
-                var src = await iframe.GetAttributeAsync("src");
-                if (!string.IsNullOrWhiteSpace(src) && src.StartsWith("http"))
-                    capturedEmbeds.Add(src);
-            }
-            catch { }
+            capturedEmbeds.Add(initialSrc);
+            logger.LogDebug("Initial iframe src (Desu): {Src}", initialSrc);
         }
 
-        // Click server/quality tabs to reveal more mirrors
-        var serverTabs = await Page.Locator("div.anime_muti_link a, a.play-video, li.server-item").AllAsync();
-        for (var i = 0; i < serverTabs.Count && i < 6; i++)
+        // Find all server/option tabs — JKAnime uses various selectors depending on version
+        var serverTabs = await Page.Locator(
+            "div.anime_muti_link ul li a, " +
+            "div.anime_muti_link li a, " +
+            "a.play-video, " +
+            "li.server-item a, " +
+            "div.custom_tab a, " +
+            "div.player_option a, " +
+            "div.video_options a").AllAsync();
+
+        logger.LogDebug("Found {Count} server tabs on {Url}", serverTabs.Count, episodeUrl);
+
+        // Click each tab and wait for iframe src to change via AJAX
+        for (var i = 0; i < serverTabs.Count && i < 15; i++)
         {
+            if (ct.IsCancellationRequested) break;
+
             try
             {
+                // Record current iframe src before clicking
+                var beforeSrc = await Page.EvaluateAsync<string?>(
+                    "(() => { const f = document.querySelector('iframe'); return f ? f.src : ''; })()") ?? "";
+
+                // Click the server tab
                 await serverTabs[i].ClickAsync(new LocatorClickOptions { Timeout = 3000 });
-                await Task.Delay(1500, ct);
 
-                var newIframes = await Page.Locator("iframe").AllAsync();
-                foreach (var iframe in newIframes)
+                // Wait for iframe src to change (AJAX response updates it)
+                try
                 {
-                    var src = await iframe.GetAttributeAsync("src");
-                    if (!string.IsNullOrWhiteSpace(src) && src.StartsWith("http"))
-                        capturedEmbeds.Add(src);
+                    // Escape the src for safe JS string interpolation
+                    var escapedSrc = beforeSrc.Replace("\\", "\\\\").Replace("'", "\\'");
+                    await Page.WaitForFunctionAsync(
+                        $"() => {{ const f = document.querySelector('iframe'); return f && f.src && f.src !== '' && f.src !== '{escapedSrc}'; }}",
+                        new PageWaitForFunctionOptions { Timeout = 8_000 });
+
+                    // Read the new iframe src
+                    var newSrc = await Page.EvaluateAsync<string?>(
+                        "(() => { const f = document.querySelector('iframe'); return f ? f.src : null; })()");
+                    if (!string.IsNullOrWhiteSpace(newSrc) && newSrc.StartsWith("http"))
+                    {
+                        capturedEmbeds.Add(newSrc);
+                        logger.LogDebug("Tab {Index}: captured {Src}", i, newSrc);
+                    }
+                }
+                catch (TimeoutException)
+                {
+                    // iframe src didn't change within 8s — slow/broken server, continue
+                    logger.LogDebug("Tab {Index}: iframe src didn't change within 8s on {Url}", i, episodeUrl);
                 }
             }
             catch (Exception ex)
             {
-                logger.LogDebug(ex, "Failed clicking server tab {Index}", i);
+                logger.LogDebug(ex, "Failed clicking server tab {Index} on {Url}", i, episodeUrl);
             }
         }
 
+        // Deduplicate and create mirror records
         short priority = 0;
         foreach (var url in capturedEmbeds)
         {
@@ -466,6 +511,9 @@ public sealed class Source2Strategy(
                 QualityLabel: 720,
                 Priority: priority++));
         }
+
+        logger.LogDebug("Episode {Url}: captured {Count} mirrors from {Tabs} tabs",
+            episodeUrl, mirrors.Count, serverTabs.Count);
 
         await JitterDelayAsync(delayMs, ct);
         return mirrors;

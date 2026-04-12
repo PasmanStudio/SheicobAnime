@@ -451,6 +451,10 @@ public class BackfillJob(
     }
 
     // ── Mirror extraction ───────────────────────────────────
+    //
+    // Uses WaitForFunctionAsync to detect iframe src changes after each server
+    // tab click (AJAX-driven), instead of fixed delays.
+    // Network interception for /embed/ and /e/ as fallback.
 
     private async Task<IReadOnlyList<MirrorScrapedData>> ScrapeEpisodeMirrorsAsync(
         string episodeUrl, Guid episodeId, int delayMs, CancellationToken ct)
@@ -458,13 +462,19 @@ public class BackfillJob(
         var mirrors = new List<MirrorScrapedData>();
         var capturedEmbeds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
+        // Network interception: capture embed/player URLs as fallback
         Page.RequestFinished += (_, req) =>
         {
-            if (req.Url.Contains("embed", StringComparison.OrdinalIgnoreCase) ||
-                req.Url.Contains("player", StringComparison.OrdinalIgnoreCase) ||
-                req.Url.Contains("stream", StringComparison.OrdinalIgnoreCase) ||
-                req.Url.Contains("desu", StringComparison.OrdinalIgnoreCase))
-                capturedEmbeds.Add(req.Url);
+            var url = req.Url;
+            if (url.Contains("/embed/", StringComparison.OrdinalIgnoreCase) ||
+                url.Contains("/e/", StringComparison.OrdinalIgnoreCase) ||
+                url.Contains("player", StringComparison.OrdinalIgnoreCase) ||
+                url.Contains("stream", StringComparison.OrdinalIgnoreCase) ||
+                url.Contains("desu", StringComparison.OrdinalIgnoreCase))
+            {
+                if (url.StartsWith("http"))
+                    capturedEmbeds.Add(url);
+            }
         };
 
         if (!await GoToAsync(episodeUrl, ct))
@@ -473,47 +483,66 @@ public class BackfillJob(
             return mirrors;
         }
 
+        // Wait for the initial player iframe to appear
         try
         {
-            await Page.WaitForLoadStateAsync(LoadState.NetworkIdle,
-                new PageWaitForLoadStateOptions { Timeout = 15_000 });
+            await Page.WaitForSelectorAsync("iframe",
+                new PageWaitForSelectorOptions { Timeout = 12_000 });
         }
         catch (TimeoutException)
         {
-            logger.LogDebug("NetworkIdle timeout for {Url} — proceeding", episodeUrl);
+            logger.LogDebug("No iframe found on {Url}", episodeUrl);
+            return mirrors;
         }
 
-        var iframes = await Page.Locator("iframe").AllAsync();
-        foreach (var iframe in iframes)
-        {
-            try
-            {
-                var src = await iframe.GetAttributeAsync("src");
-                if (!string.IsNullOrWhiteSpace(src) && src.StartsWith("http"))
-                    capturedEmbeds.Add(src);
-            }
-            catch { }
-        }
+        // Capture the initial iframe src (Desu player — always loaded first)
+        var initialSrc = await Page.EvaluateAsync<string?>(
+            "(() => { const f = document.querySelector('iframe'); return f ? f.src : null; })()");
+        if (!string.IsNullOrWhiteSpace(initialSrc) && initialSrc.StartsWith("http"))
+            capturedEmbeds.Add(initialSrc);
 
-        var serverTabs = await Page.Locator("div.anime_muti_link a, a.play-video, li.server-item").AllAsync();
-        for (var i = 0; i < serverTabs.Count && i < 6; i++)
+        // Find all server/option tabs
+        var serverTabs = await Page.Locator(
+            "div.anime_muti_link ul li a, " +
+            "div.anime_muti_link li a, " +
+            "a.play-video, " +
+            "li.server-item a, " +
+            "div.custom_tab a, " +
+            "div.player_option a, " +
+            "div.video_options a").AllAsync();
+
+        // Click each tab and wait for iframe src to change via AJAX
+        for (var i = 0; i < serverTabs.Count && i < 15; i++)
         {
+            if (ct.IsCancellationRequested) break;
+
             try
             {
+                var beforeSrc = await Page.EvaluateAsync<string?>(
+                    "(() => { const f = document.querySelector('iframe'); return f ? f.src : ''; })()") ?? "";
+
                 await serverTabs[i].ClickAsync(new LocatorClickOptions { Timeout = 3000 });
-                await Task.Delay(1500, ct);
 
-                var newIframes = await Page.Locator("iframe").AllAsync();
-                foreach (var iframe in newIframes)
+                try
                 {
-                    var src = await iframe.GetAttributeAsync("src");
-                    if (!string.IsNullOrWhiteSpace(src) && src.StartsWith("http"))
-                        capturedEmbeds.Add(src);
+                    var escapedSrc = beforeSrc.Replace("\\", "\\\\").Replace("'", "\\'");
+                    await Page.WaitForFunctionAsync(
+                        $"() => {{ const f = document.querySelector('iframe'); return f && f.src && f.src !== '' && f.src !== '{escapedSrc}'; }}",
+                        new PageWaitForFunctionOptions { Timeout = 8_000 });
+
+                    var newSrc = await Page.EvaluateAsync<string?>(
+                        "(() => { const f = document.querySelector('iframe'); return f ? f.src : null; })()");
+                    if (!string.IsNullOrWhiteSpace(newSrc) && newSrc.StartsWith("http"))
+                        capturedEmbeds.Add(newSrc);
+                }
+                catch (TimeoutException)
+                {
+                    logger.LogDebug("Tab {Index}: iframe src didn't change within 8s on {Url}", i, episodeUrl);
                 }
             }
             catch (Exception ex)
             {
-                logger.LogDebug(ex, "Failed clicking server tab {Index}", i);
+                logger.LogDebug(ex, "Failed clicking server tab {Index} on {Url}", i, episodeUrl);
             }
         }
 
