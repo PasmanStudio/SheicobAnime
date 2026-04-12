@@ -78,3 +78,5 @@ release/
 
 # ─── MemPalace (local AI memory — never commit) ──────
 .mempalace/
+supabase/.temp/
+infra/supabase.exe

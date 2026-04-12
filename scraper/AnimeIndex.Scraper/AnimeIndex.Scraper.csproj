@@ -5,6 +5,9 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>AnimeIndex.Scraper</RootNamespace>
+    <!-- Scraper references API project which also has appsettings*.json.
+         The scraper's own appsettings take precedence (copied last). -->
+    <ErrorOnDuplicatePublishOutputFiles>false</ErrorOnDuplicatePublishOutputFiles>
   </PropertyGroup>
 
   <!-- Shared types: AppDbContext, entities, IScrapeStrategy, ScrapeResult, MirrorProbeService -->
