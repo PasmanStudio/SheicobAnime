@@ -383,16 +383,18 @@ public sealed class Source2Strategy(
         return result;
     }
 
-    // ── Episode mirrors (Desu player iframe extraction) ─────
+    // ── Episode mirrors (real embed extraction through jkplayer) ─────
     //
     // JKAnime mechanism:
-    //  - The first server (Desu) has its URL already in the iframe on page load.
-    //  - Other servers are loaded via AJAX: clicking a tab sends a request with a server
-    //    identifier, the backend returns the embed URL, and JS updates the iframe src.
-    //  - We use WaitForFunctionAsync to detect when the iframe src changes after each
-    //    click, completing exactly when the AJAX finishes (no fixed delays).
-    //  - Network interception for /embed/ and /e/ URLs acts as a safety net for servers
-    //    that inject iframes via postMessage, new iframe creation, or secondary AJAX.
+    //  - The episode page loads an iframe pointing to jkanime.net/jkplayer/um?e=TOKEN
+    //    (JKAnime's own wrapper player). This is NOT the real embed.
+    //  - Inside the jkplayer page, JS decodes the token and creates an inner iframe
+    //    with the real video embed (streamwish.com/e/..., voe.sx/e/..., etc.).
+    //  - Clicking a server tab triggers AJAX that updates the outer iframe to a new
+    //    jkplayer URL (with a different token per server).
+    //  - We must resolve through the jkplayer frame to capture the real embed URL.
+    //  - Network interception for /embed/ and /e/ URLs from EXTERNAL domains acts
+    //    as a safety net for servers that bypass the jkplayer wrapper.
 
     private async Task<IReadOnlyList<MirrorScrapedData>> ScrapeEpisodeMirrorsAsync(
         string episodeUrl, Guid episodeId, int delayMs, CancellationToken ct)
@@ -400,18 +402,33 @@ public sealed class Source2Strategy(
         var mirrors = new List<MirrorScrapedData>();
         var capturedEmbeds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        // Network interception: capture embed/player URLs as fallback
+        // Network interception: capture real embed URLs from EXTERNAL domains only
         Page.RequestFinished += (_, req) =>
         {
             var url = req.Url;
-            if (url.Contains("/embed/", StringComparison.OrdinalIgnoreCase) ||
-                url.Contains("/e/", StringComparison.OrdinalIgnoreCase) ||
-                url.Contains("player", StringComparison.OrdinalIgnoreCase) ||
-                url.Contains("stream", StringComparison.OrdinalIgnoreCase) ||
-                url.Contains("desu", StringComparison.OrdinalIgnoreCase))
+            if (!url.StartsWith("http")) return;
+
+            // Skip JKAnime internal URLs — these are wrappers, not real embeds
+            if (url.Contains("jkanime.net", StringComparison.OrdinalIgnoreCase) ||
+                url.Contains("jkdesa.com", StringComparison.OrdinalIgnoreCase))
+                return;
+
+            // Skip static assets
+            try
             {
-                if (url.StartsWith("http"))
-                    capturedEmbeds.Add(url);
+                var path = new Uri(url).AbsolutePath;
+                if (path.EndsWith(".js") || path.EndsWith(".css") || path.EndsWith(".png") ||
+                    path.EndsWith(".jpg") || path.EndsWith(".gif") || path.EndsWith(".svg") ||
+                    path.EndsWith(".ico") || path.EndsWith(".woff") || path.EndsWith(".woff2"))
+                    return;
+            }
+            catch { return; }
+
+            // Only capture URLs that look like embed pages
+            if (url.Contains("/embed/", StringComparison.OrdinalIgnoreCase) ||
+                url.Contains("/e/", StringComparison.OrdinalIgnoreCase))
+            {
+                capturedEmbeds.Add(url);
             }
         };
 
@@ -421,7 +438,7 @@ public sealed class Source2Strategy(
             return mirrors;
         }
 
-        // Wait for the initial Desu player iframe to appear
+        // Wait for the initial player iframe to appear
         try
         {
             await Page.WaitForSelectorAsync("iframe",
@@ -433,13 +450,12 @@ public sealed class Source2Strategy(
             return mirrors;
         }
 
-        // Capture the initial iframe src (Desu player — always loaded first)
-        var initialSrc = await Page.EvaluateAsync<string?>(
-            "(() => { const f = document.querySelector('iframe'); return f ? f.src : null; })()");
-        if (!string.IsNullOrWhiteSpace(initialSrc) && initialSrc.StartsWith("http"))
+        // Resolve the initial iframe → real embed (through jkplayer frame)
+        var initialEmbed = await ResolveCurrentEmbedAsync(ct);
+        if (initialEmbed is not null)
         {
-            capturedEmbeds.Add(initialSrc);
-            logger.LogDebug("Initial iframe src (Desu): {Src}", initialSrc);
+            capturedEmbeds.Add(initialEmbed);
+            logger.LogDebug("Initial embed resolved: {Src}", initialEmbed);
         }
 
         // Find all server/option tabs — JKAnime uses various selectors depending on version
@@ -454,7 +470,7 @@ public sealed class Source2Strategy(
 
         logger.LogDebug("Found {Count} server tabs on {Url}", serverTabs.Count, episodeUrl);
 
-        // Click each tab and wait for iframe src to change via AJAX
+        // Click each tab, wait for iframe src change, then resolve through jkplayer frame
         for (var i = 0; i < serverTabs.Count && i < 15; i++)
         {
             if (ct.IsCancellationRequested) break;
@@ -471,24 +487,33 @@ public sealed class Source2Strategy(
                 // Wait for iframe src to change (AJAX response updates it)
                 try
                 {
-                    // Escape the src for safe JS string interpolation
                     var escapedSrc = beforeSrc.Replace("\\", "\\\\").Replace("'", "\\'");
                     await Page.WaitForFunctionAsync(
                         $"() => {{ const f = document.querySelector('iframe'); return f && f.src && f.src !== '' && f.src !== '{escapedSrc}'; }}",
                         new PageWaitForFunctionOptions { Timeout = 8_000 });
 
-                    // Read the new iframe src
-                    var newSrc = await Page.EvaluateAsync<string?>(
-                        "(() => { const f = document.querySelector('iframe'); return f ? f.src : null; })()");
-                    if (!string.IsNullOrWhiteSpace(newSrc) && newSrc.StartsWith("http"))
+                    // Resolve through jkplayer frame to get real embed
+                    var realEmbed = await ResolveCurrentEmbedAsync(ct);
+                    if (realEmbed is not null)
                     {
-                        capturedEmbeds.Add(newSrc);
-                        logger.LogDebug("Tab {Index}: captured {Src}", i, newSrc);
+                        capturedEmbeds.Add(realEmbed);
+                        logger.LogDebug("Tab {Index}: resolved embed {Src}", i, realEmbed);
+                    }
+                    else
+                    {
+                        // Fallback: read raw iframe src (may be direct external embed for some servers)
+                        var rawSrc = await Page.EvaluateAsync<string?>(
+                            "(() => { const f = document.querySelector('iframe'); return f ? f.src : null; })()");
+                        if (!string.IsNullOrWhiteSpace(rawSrc) && rawSrc.StartsWith("http") &&
+                            !IsJkAnimeDomain(rawSrc))
+                        {
+                            capturedEmbeds.Add(rawSrc);
+                            logger.LogDebug("Tab {Index}: direct embed {Src}", i, rawSrc);
+                        }
                     }
                 }
                 catch (TimeoutException)
                 {
-                    // iframe src didn't change within 8s — slow/broken server, continue
                     logger.LogDebug("Tab {Index}: iframe src didn't change within 8s on {Url}", i, episodeUrl);
                 }
             }
@@ -498,10 +523,13 @@ public sealed class Source2Strategy(
             }
         }
 
-        // Deduplicate and create mirror records
+        // Build mirror records — only from validated external embeds
         short priority = 0;
         foreach (var url in capturedEmbeds)
         {
+            // Final safety check: never store JKAnime wrapper URLs
+            if (IsJkAnimeDomain(url)) continue;
+
             var providerName = ExtractProviderName(url);
 
             mirrors.Add(new MirrorScrapedData(
@@ -512,12 +540,66 @@ public sealed class Source2Strategy(
                 Priority: priority++));
         }
 
-        logger.LogDebug("Episode {Url}: captured {Count} mirrors from {Tabs} tabs",
+        logger.LogDebug("Episode {Url}: captured {Count} real mirrors from {Tabs} tabs",
             episodeUrl, mirrors.Count, serverTabs.Count);
 
         await JitterDelayAsync(delayMs, ct);
         return mirrors;
     }
+
+    /// <summary>
+    /// Resolves the current player's real embed URL by looking inside the jkplayer frame.
+    /// JKAnime wraps all embeds in jkanime.net/jkplayer/um?e=TOKEN which decodes client-side
+    /// and loads the real embed (streamwish, voe, etc.) in a nested iframe.
+    /// Returns null if no jkplayer frame found or resolution times out.
+    /// </summary>
+    private async Task<string?> ResolveCurrentEmbedAsync(CancellationToken ct)
+    {
+        // Brief wait for the frame to attach after iframe src change
+        await Task.Delay(500, ct);
+
+        // Find the jkplayer frame among page's sub-frames
+        var jkFrame = Page.Frames.FirstOrDefault(f =>
+            f.Url.Contains("jkplayer", StringComparison.OrdinalIgnoreCase) ||
+            (f.Url.Contains("jkanime.net", StringComparison.OrdinalIgnoreCase) && f != Page.MainFrame));
+
+        if (jkFrame is null)
+        {
+            // No jkplayer frame — maybe it's already a direct external embed
+            var directSrc = await Page.EvaluateAsync<string?>(
+                "(() => { const f = document.querySelector('iframe'); return f?.src || null; })()");
+            if (!string.IsNullOrWhiteSpace(directSrc) && directSrc.StartsWith("http") &&
+                !IsJkAnimeDomain(directSrc))
+                return directSrc;
+
+            return null;
+        }
+
+        try
+        {
+            // Wait for the real embed iframe to appear inside jkplayer
+            await jkFrame.WaitForFunctionAsync(@"
+                () => {
+                    const f = document.querySelector('iframe');
+                    return f && f.src && f.src.startsWith('http') &&
+                           !f.src.includes('jkanime.net') && !f.src.includes('jkdesa.com') &&
+                           !f.src.includes('jkplayer');
+                }
+            ", new FrameWaitForFunctionOptions { Timeout = 12_000 });
+
+            return await jkFrame.EvaluateAsync<string?>(
+                "(() => { const f = document.querySelector('iframe'); return f?.src || null; })()");
+        }
+        catch (TimeoutException)
+        {
+            logger.LogDebug("jkplayer frame did not resolve to a real embed within 12s");
+            return null;
+        }
+    }
+
+    private static bool IsJkAnimeDomain(string url) =>
+        url.Contains("jkanime.net", StringComparison.OrdinalIgnoreCase) ||
+        url.Contains("jkdesa.com", StringComparison.OrdinalIgnoreCase);
 
     private static string ExtractProviderName(string url)
     {
@@ -542,7 +624,8 @@ public sealed class Source2Strategy(
                 var h when h.Contains("voe") => "voe",
                 var h when h.Contains("desu") => "desu",
                 var h when h.Contains("nozomi") => "nozomi",
-                var h when h.Contains("jkanime") => "jkanime",
+                var h when h.Contains("mega") => "mega",
+                var h when h.Contains("vidhide") => "vidhide",
                 _ => host.Split('.')[0]
             };
         }

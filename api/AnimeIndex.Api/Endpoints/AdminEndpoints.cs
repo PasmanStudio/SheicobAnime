@@ -27,6 +27,7 @@ public static class AdminEndpoints
         group.MapDelete("/blocked-slugs/{slug}", DeleteBlockedSlug);
         group.MapPost("/backfill", CreateBackfill);
         group.MapGet("/backfill/{id:guid}/progress", GetBackfillProgress);
+        group.MapDelete("/mirrors/purge-invalid", PurgeInvalidMirrors);
     }
 
     private static async Task<IResult> CreateScrapeJob(
@@ -235,5 +236,32 @@ public static class AdminEndpoints
             job.ScheduledAt,
             job.CompletedAt
         });
+    }
+
+    /// <summary>
+    /// Purges mirrors with invalid embed URLs (JKAnime wrapper URLs, static assets, etc.)
+    /// that should never have been stored. Returns count of deleted records.
+    /// </summary>
+    private static async Task<IResult> PurgeInvalidMirrors(
+        AppDbContext db,
+        CancellationToken ct = default)
+    {
+        // Find mirrors that are JKAnime wrapper URLs or static assets — not real embeds
+        var invalidMirrors = await db.Mirrors
+            .Where(m =>
+                m.EmbedUrl.Contains("jkanime.net") ||
+                m.EmbedUrl.Contains("jkdesa.com") ||
+                m.EmbedUrl.Contains("jkplayer") ||
+                m.EmbedUrl.EndsWith(".js") ||
+                m.EmbedUrl.EndsWith(".css"))
+            .ToListAsync(ct);
+
+        if (invalidMirrors.Count == 0)
+            return Results.Ok(new { purged = 0, message = "No invalid mirrors found." });
+
+        db.Mirrors.RemoveRange(invalidMirrors);
+        await db.SaveChangesAsync(ct);
+
+        return Results.Ok(new { purged = invalidMirrors.Count, message = $"Purged {invalidMirrors.Count} invalid mirror(s)." });
     }
 }
