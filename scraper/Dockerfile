@@ -15,9 +15,17 @@ RUN dotnet publish scraper/AnimeIndex.Scraper/AnimeIndex.Scraper.csproj \
     -c Release -o /app/publish --no-restore
 
 # ─── Runtime stage ────────────────────────────────────────────────────────────
-# Official Playwright image ships .NET runtime + Chromium + all system deps.
-# Tag aligns with the Microsoft.Playwright NuGet version in the csproj.
+# Official Playwright image ships Chromium + all system deps, but only .NET 8.
+# Install .NET 9 runtime on top since our scraper targets net9.0.
 FROM mcr.microsoft.com/playwright/dotnet:v1.51.0-noble AS runtime
+
+# Install .NET 9 runtime (Playwright image only has .NET 8)
+RUN apt-get update && apt-get install -y --no-install-recommends wget \
+    && wget https://dot.net/v1/dotnet-install.sh -O /tmp/dotnet-install.sh \
+    && chmod +x /tmp/dotnet-install.sh \
+    && /tmp/dotnet-install.sh --runtime dotnet --channel 9.0 --install-dir /usr/share/dotnet \
+    && rm /tmp/dotnet-install.sh \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 ENV ASPNETCORE_ENVIRONMENT=Production
 ENV DOTNET_RUNNING_IN_CONTAINER=true
