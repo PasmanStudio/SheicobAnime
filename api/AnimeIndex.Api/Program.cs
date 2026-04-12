@@ -263,7 +263,7 @@ try
     app.MapMirrorEndpoints();
     app.MapAdminEndpoints();
 
-    // ─── DB migration & seeding (dev only) ───────────────
+    // ─── DB seeding ────────────────────────────────────────
     if (app.Environment.IsDevelopment())
     {
         using var scope = app.Services.CreateScope();
@@ -276,6 +276,13 @@ try
         using var scope = app.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         await db.Database.EnsureCreatedAsync();
+    }
+    else if (app.Environment.IsProduction())
+    {
+        // Seed reference data (genres) — idempotent, safe to run every startup
+        using var scope = app.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        await SeedData.SeedGenresAsync(db);
     }
 
     app.Run();

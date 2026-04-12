@@ -20,7 +20,7 @@ public static class SeedData
         await SeedTestSeriesAsync(db);
     }
 
-    private static async Task SeedGenresAsync(AppDbContext db)
+    public static async Task SeedGenresAsync(AppDbContext db)
     {
         var existing = await db.Genres.Select(g => g.Name).ToListAsync();
         var toAdd = DefaultGenres.Where(g => !existing.Contains(g)).ToList();

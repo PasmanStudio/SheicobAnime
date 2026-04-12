@@ -114,6 +114,27 @@ try
             job => job.RunAsync(CancellationToken.None),
             source2Cron,
             new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc });
+
+        // Auto-create initial scrape jobs if none exist (first deployment bootstrap)
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var hasJobs = await db.ScrapeJobs.AnyAsync(j => j.Status == "pending" || j.Status == "running");
+        if (!hasJobs)
+        {
+            Log.Information("No pending/running scrape jobs found — creating initial jobs for source1 + source2");
+            db.ScrapeJobs.Add(new AnimeIndex.Api.Data.Entities.ScrapeJob
+            {
+                JobType = "scrape:source1",
+                Status = "pending",
+                ScheduledAt = DateTime.UtcNow
+            });
+            db.ScrapeJobs.Add(new AnimeIndex.Api.Data.Entities.ScrapeJob
+            {
+                JobType = "scrape:source2",
+                Status = "pending",
+                ScheduledAt = DateTime.UtcNow
+            });
+            await db.SaveChangesAsync();
+        }
     }
 
     await app.RunAsync();

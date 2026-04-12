@@ -133,6 +133,21 @@ jobs:
         run: dotnet restore api/AnimeIndex.sln --locked-mode
       - name: Install EF CLI tool
         run: dotnet tool install --global dotnet-ef
+      - name: Force IPv4 for Supabase (GH Actions lacks IPv6)
+        run: |
+          # Extract hostname from ADO.NET connection string
+          DB_HOST=$(echo "${{ secrets.SUPABASE_DB_URL_DIRECT }}" | grep -oP '(?<=Host=)[^;]+')
+          if [ -z "$DB_HOST" ]; then
+            echo "::error::Could not extract Host from connection string"
+            exit 1
+          fi
+          IPV4=$(dig +short A "$DB_HOST" | head -1)
+          if [ -z "$IPV4" ]; then
+            echo "::error::Could not resolve IPv4 for $DB_HOST"
+            exit 1
+          fi
+          echo "Resolved $DB_HOST → $IPV4"
+          echo "$IPV4 $DB_HOST" | sudo tee -a /etc/hosts
       - name: Run migrations
         run: |
           dotnet ef database update \

@@ -3,8 +3,11 @@
 -- Run: psql -h localhost -U animeindex -d animeindex -f db/seed-real-data.sql
 -- Or via Adminer at http://localhost:8080
 --
--- This inserts real anime series with YouTube trailer embeds as mirrors
--- so you can verify the full end-to-end flow: browse → episode → player.
+-- This inserts real anime series metadata, episodes, and genre associations
+-- for local development. Mirrors are NOT included here — they come
+-- exclusively from the scraper pipeline (AnimeFlv / JKAnime sources).
+-- To populate mirrors locally, run the scraper or create scrape jobs via
+-- the admin API: POST /admin/scrape-jobs
 -- ============================================================================
 
 BEGIN;
@@ -239,64 +242,6 @@ INSERT INTO episodes (id, series_id, episode_number, title, is_published, durati
   ('e0000008-0002-0000-0000-000000000002', 'a0000008-0000-0000-0000-000000000008', 2, 'Sword', true, 1440, '2019-07-15'),
   ('e0000008-0003-0000-0000-000000000003', 'a0000008-0000-0000-0000-000000000008', 3, 'Troll', true, 1440, '2019-07-22');
 
--- ─── Mirrors (YouTube embeds — official trailers/clips) ────────────────────
--- These are real embeddable YouTube URLs that work in iframes
-
--- Attack on Titan mirrors
-INSERT INTO mirrors (episode_id, provider_name, embed_url, quality_label, priority, is_active) VALUES
-  ('e0000001-0001-0000-0000-000000000001', 'YouTube', 'https://www.youtube.com/embed/MGRm4IzK1SQ', 1080, 0, true),
-  ('e0000001-0001-0000-0000-000000000001', 'YouTube-2', 'https://www.youtube.com/embed/LHtdKWJdif4', 720, 1, true),
-  ('e0000001-0002-0000-0000-000000000002', 'YouTube', 'https://www.youtube.com/embed/LHtdKWJdif4', 1080, 0, true),
-  ('e0000001-0003-0000-0000-000000000003', 'YouTube', 'https://www.youtube.com/embed/MGRm4IzK1SQ', 1080, 0, true),
-  ('e0000001-0004-0000-0000-000000000004', 'YouTube', 'https://www.youtube.com/embed/LHtdKWJdif4', 720, 0, true),
-  ('e0000001-0005-0000-0000-000000000005', 'YouTube', 'https://www.youtube.com/embed/MGRm4IzK1SQ', 1080, 0, true);
-
--- Demon Slayer mirrors
-INSERT INTO mirrors (episode_id, provider_name, embed_url, quality_label, priority, is_active) VALUES
-  ('e0000002-0001-0000-0000-000000000001', 'YouTube', 'https://www.youtube.com/embed/VQGCKyvzIM4', 1080, 0, true),
-  ('e0000002-0001-0000-0000-000000000001', 'YouTube-2', 'https://www.youtube.com/embed/6vMuaZirITM', 720, 1, true),
-  ('e0000002-0002-0000-0000-000000000002', 'YouTube', 'https://www.youtube.com/embed/VQGCKyvzIM4', 1080, 0, true),
-  ('e0000002-0003-0000-0000-000000000003', 'YouTube', 'https://www.youtube.com/embed/6vMuaZirITM', 720, 0, true),
-  ('e0000002-0004-0000-0000-000000000004', 'YouTube', 'https://www.youtube.com/embed/VQGCKyvzIM4', 1080, 0, true);
-
--- Jujutsu Kaisen mirrors
-INSERT INTO mirrors (episode_id, provider_name, embed_url, quality_label, priority, is_active) VALUES
-  ('e0000003-0001-0000-0000-000000000001', 'YouTube', 'https://www.youtube.com/embed/4A_X-Dvl0ws', 1080, 0, true),
-  ('e0000003-0001-0000-0000-000000000001', 'YouTube-2', 'https://www.youtube.com/embed/pkKu9hLT-t8', 720, 1, true),
-  ('e0000003-0002-0000-0000-000000000002', 'YouTube', 'https://www.youtube.com/embed/4A_X-Dvl0ws', 1080, 0, true),
-  ('e0000003-0003-0000-0000-000000000003', 'YouTube', 'https://www.youtube.com/embed/pkKu9hLT-t8', 720, 0, true),
-  ('e0000003-0004-0000-0000-000000000004', 'YouTube', 'https://www.youtube.com/embed/4A_X-Dvl0ws', 1080, 0, true);
-
--- One Punch Man mirrors
-INSERT INTO mirrors (episode_id, provider_name, embed_url, quality_label, priority, is_active) VALUES
-  ('e0000004-0001-0000-0000-000000000001', 'YouTube', 'https://www.youtube.com/embed/ExUMoVIpKnE', 1080, 0, true),
-  ('e0000004-0002-0000-0000-000000000002', 'YouTube', 'https://www.youtube.com/embed/ExUMoVIpKnE', 720, 0, true),
-  ('e0000004-0003-0000-0000-000000000003', 'YouTube', 'https://www.youtube.com/embed/ExUMoVIpKnE', 1080, 0, true);
-
--- SPY×FAMILY mirrors
-INSERT INTO mirrors (episode_id, provider_name, embed_url, quality_label, priority, is_active) VALUES
-  ('e0000005-0001-0000-0000-000000000001', 'YouTube', 'https://www.youtube.com/embed/_VRxEEBa1XU', 1080, 0, true),
-  ('e0000005-0002-0000-0000-000000000002', 'YouTube', 'https://www.youtube.com/embed/_VRxEEBa1XU', 720, 0, true),
-  ('e0000005-0003-0000-0000-000000000003', 'YouTube', 'https://www.youtube.com/embed/_VRxEEBa1XU', 1080, 0, true);
-
--- Chainsaw Man mirrors
-INSERT INTO mirrors (episode_id, provider_name, embed_url, quality_label, priority, is_active) VALUES
-  ('e0000006-0001-0000-0000-000000000001', 'YouTube', 'https://www.youtube.com/embed/q15CRdE5Bv0', 1080, 0, true),
-  ('e0000006-0002-0000-0000-000000000002', 'YouTube', 'https://www.youtube.com/embed/q15CRdE5Bv0', 720, 0, true),
-  ('e0000006-0003-0000-0000-000000000003', 'YouTube', 'https://www.youtube.com/embed/q15CRdE5Bv0', 1080, 0, true);
-
--- Mob Psycho 100 mirrors
-INSERT INTO mirrors (episode_id, provider_name, embed_url, quality_label, priority, is_active) VALUES
-  ('e0000007-0001-0000-0000-000000000001', 'YouTube', 'https://www.youtube.com/embed/Bw-5Lka-7Lk', 1080, 0, true),
-  ('e0000007-0002-0000-0000-000000000002', 'YouTube', 'https://www.youtube.com/embed/Bw-5Lka-7Lk', 720, 0, true),
-  ('e0000007-0003-0000-0000-000000000003', 'YouTube', 'https://www.youtube.com/embed/Bw-5Lka-7Lk', 1080, 0, true);
-
--- Vinland Saga mirrors
-INSERT INTO mirrors (episode_id, provider_name, embed_url, quality_label, priority, is_active) VALUES
-  ('e0000008-0001-0000-0000-000000000001', 'YouTube', 'https://www.youtube.com/embed/BRubJuMCUkI', 1080, 0, true),
-  ('e0000008-0002-0000-0000-000000000002', 'YouTube', 'https://www.youtube.com/embed/BRubJuMCUkI', 720, 0, true),
-  ('e0000008-0003-0000-0000-000000000003', 'YouTube', 'https://www.youtube.com/embed/BRubJuMCUkI', 1080, 0, true);
-
 COMMIT;
 
 -- ─── Verification queries ──────────────────────────────────────────────────
@@ -310,10 +255,10 @@ LEFT JOIN episodes e ON e.series_id = s.id
 GROUP BY s.slug
 ORDER BY s.slug;
 
-SELECT '=== Mirrors per episode (first 10) ===' AS info;
-SELECT s.slug, e.episode_number, e.title AS ep_title, m.provider_name, m.quality_label, m.is_active
-FROM mirrors m
-JOIN episodes e ON m.episode_id = e.id
-JOIN series s ON e.series_id = s.id
-ORDER BY s.slug, e.episode_number
-LIMIT 10;
+SELECT '=== Genres per series ===' AS info;
+SELECT s.slug, STRING_AGG(g.name, ', ' ORDER BY g.name) AS genres
+FROM series s
+LEFT JOIN series_genres sg ON sg.series_id = s.id
+LEFT JOIN genres g ON g.id = sg.genre_id
+GROUP BY s.slug
+ORDER BY s.slug;
