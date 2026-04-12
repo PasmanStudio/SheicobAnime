@@ -36,6 +36,9 @@ try
         ?? builder.Configuration["DATABASE_URL"]
         ?? throw new InvalidOperationException("No database connection string configured.");
 
+    // Convert postgresql:// URI to ADO.NET format (Railway/Supabase use URI format)
+    connectionString = NormalizePostgresConnectionString(connectionString);
+
     builder.Services.AddDbContext<AppDbContext>(options =>
         options.UseNpgsql(connectionString, npgsqlOptions =>
         {
@@ -119,4 +122,25 @@ catch (Exception ex)
 finally
 {
     await Log.CloseAndFlushAsync();
+}
+
+/// <summary>
+/// Converts a postgresql:// URI to ADO.NET connection string format.
+/// Hangfire.PostgreSql does not support URI format natively.
+/// </summary>
+static string NormalizePostgresConnectionString(string input)
+{
+    if (!input.StartsWith("postgresql://", StringComparison.OrdinalIgnoreCase)
+        && !input.StartsWith("postgres://", StringComparison.OrdinalIgnoreCase))
+        return input;
+
+    var uri = new Uri(input);
+    var userInfo = uri.UserInfo.Split(':', 2);
+    var user = Uri.UnescapeDataString(userInfo[0]);
+    var pass = userInfo.Length > 1 ? Uri.UnescapeDataString(userInfo[1]) : "";
+    var host = uri.Host;
+    var port = uri.Port > 0 ? uri.Port : 5432;
+    var database = uri.AbsolutePath.TrimStart('/');
+
+    return $"Host={host};Port={port};Database={database};Username={user};Password={pass};SSL Mode=Require;Trust Server Certificate=true";
 }
