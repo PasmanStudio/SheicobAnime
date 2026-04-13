@@ -48,8 +48,12 @@ export interface AdPlacementConfig {
  * Script src and container hash come from Adsterra's embed code.
  */
 export const ADSTERRA_NATIVE = {
-  scriptSrc: process.env.NEXT_PUBLIC_ADSTERRA_NATIVE_SCRIPT ?? "",
-  containerHash: process.env.NEXT_PUBLIC_ADSTERRA_NATIVE_HASH ?? "",
+  scriptSrc:
+    process.env.NEXT_PUBLIC_ADSTERRA_NATIVE_SCRIPT ||
+    "https://pl29138492.profitablecpmratenetwork.com/7ee40e5de8cc821cc6ce096252393fd4/invoke.js",
+  containerHash:
+    process.env.NEXT_PUBLIC_ADSTERRA_NATIVE_HASH ||
+    "7ee40e5de8cc821cc6ce096252393fd4",
 } as const;
 
 /**
@@ -198,7 +202,7 @@ export const AD_CONFIG: Record<AdPlacement, AdPlacementConfig> = {
  * Defaults to 'stub' for development safety.
  */
 export function getAdProvider(): AdProvider {
-  const provider = process.env.NEXT_PUBLIC_AD_PROVIDER;
+  const provider = process.env.NEXT_PUBLIC_AD_PROVIDER || "adsterra";
   if (provider === "adsterra" || provider === "propellerads") {
     return provider;
   }

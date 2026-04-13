@@ -19,8 +19,12 @@ export default function AdsterraGlobalAds() {
     if (provider !== "adsterra") return;
     if (!hasAdConsent()) return;
 
-    const popunderSrc = process.env.NEXT_PUBLIC_ADSTERRA_POPUNDER_SCRIPT;
-    const socialBarSrc = process.env.NEXT_PUBLIC_ADSTERRA_SOCIALBAR_SCRIPT;
+    const popunderSrc =
+      process.env.NEXT_PUBLIC_ADSTERRA_POPUNDER_SCRIPT ||
+      "https://pl29138490.profitablecpmratenetwork.com/3d/1b/5b/3d1b5b04f03946a5ecb8410c8025f660.js";
+    const socialBarSrc =
+      process.env.NEXT_PUBLIC_ADSTERRA_SOCIALBAR_SCRIPT ||
+      "https://pl29138491.profitablecpmratenetwork.com/81/0e/8b/810e8b5ee34d29a8061284101b4768c6.js";
 
     // Load Popunder script (fires once per session)
     if (popunderSrc) {
