@@ -252,7 +252,7 @@ jobs:
         run: |
           # Add NEXT_PUBLIC_API_URL if not already set (idempotent via add --force)
           echo "https://api-production-1f24.up.railway.app" | vercel env add NEXT_PUBLIC_API_URL production --force --token=${{ secrets.VERCEL_TOKEN }}
-          echo "stub" | vercel env add NEXT_PUBLIC_AD_PROVIDER production --force --token=${{ secrets.VERCEL_TOKEN }}
+          echo "adsterra" | vercel env add NEXT_PUBLIC_AD_PROVIDER production --force --token=${{ secrets.VERCEL_TOKEN }}
           echo "disqus" | vercel env add NEXT_PUBLIC_COMMENT_PROVIDER production --force --token=${{ secrets.VERCEL_TOKEN }}
         env:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
