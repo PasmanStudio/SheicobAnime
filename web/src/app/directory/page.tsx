@@ -1,4 +1,5 @@
 import AdSlot from "@/components/ads/AdSlot";
+import InactivityAdTrigger from "@/components/ads/InactivityAdTrigger";
 import DirectoryFilters from "@/components/ui/DirectoryFilters";
 import Pagination from "@/components/ui/Pagination";
 import SeriesCard from "@/components/ui/SeriesCard";
@@ -61,6 +62,7 @@ export default async function DirectoryPage({ searchParams }: Props) {
 
   return (
     <div className="container mx-auto px-4 py-8 space-y-6">
+      <InactivityAdTrigger />
       <div>
         <h1 className="text-2xl font-bold text-white">Directorio de Anime</h1>
         <p className="text-sm text-neutral-400 mt-1">

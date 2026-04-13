@@ -1,4 +1,5 @@
 import AdSlot from "@/components/ads/AdSlot";
+import InactivityAdTrigger from "@/components/ads/InactivityAdTrigger";
 import HeroCarousel from "@/components/ui/HeroCarousel";
 import SeriesCard from "@/components/ui/SeriesCard";
 import { getSeries } from "@/lib/api";
@@ -28,6 +29,7 @@ export default async function HomePage() {
 
   return (
     <div className="container mx-auto px-4 py-6 space-y-10">
+      <InactivityAdTrigger />
       {/* Hero Carousel */}
       {recent.data.length > 0 && (
         <HeroCarousel series={recent.data} />

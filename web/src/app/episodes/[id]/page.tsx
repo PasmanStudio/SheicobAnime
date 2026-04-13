@@ -6,6 +6,7 @@ import { getEpisode, getEpisodeMirrors, ApiError } from "@/lib/api";
 export const dynamic = "force-dynamic";
 import EpisodePlayer from "@/components/player/EpisodePlayer";
 import AdSlot from "@/components/ads/AdSlot";
+import NavigationAdTrigger from "@/components/ads/NavigationAdTrigger";
 import CommentSection from "@/components/comments/CommentSection";
 
 interface Props {
@@ -54,6 +55,7 @@ export default async function EpisodePage({ params }: Props) {
 
   return (
     <div className="container mx-auto px-4 py-6 space-y-6 max-w-4xl">
+      <NavigationAdTrigger />
       {/* Breadcrumb */}
       {episode.series && (
         <nav className="text-sm text-neutral-500 flex items-center gap-2">
