@@ -37,3 +37,5 @@ next-env.d.ts
 
 # Override global gitignore — lock file must be committed for CI cache
 !package-lock.json
+
+.vercel

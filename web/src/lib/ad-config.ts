@@ -32,7 +32,7 @@ export type AdPlacement =
   | "genre_bottom";
 
 export interface AdPlacementConfig {
-  /** Adsterra native banner zone ID */
+  /** Adsterra native banner zone ID (legacy — not used with real Adsterra) */
   adsterraZone?: string;
   /** PropellerAds zone ID */
   propellerZone?: string;
@@ -42,6 +42,15 @@ export interface AdPlacementConfig {
   /** Description for debugging */
   description: string;
 }
+
+/**
+ * Adsterra native banner config — shared across all placements.
+ * Script src and container hash come from Adsterra's embed code.
+ */
+export const ADSTERRA_NATIVE = {
+  scriptSrc: process.env.NEXT_PUBLIC_ADSTERRA_NATIVE_SCRIPT ?? "",
+  containerHash: process.env.NEXT_PUBLIC_ADSTERRA_NATIVE_HASH ?? "",
+} as const;
 
 /**
  * AD_CONFIG — placement-to-zone mapping.
@@ -204,7 +213,10 @@ export function hasValidZone(placement: AdPlacement): boolean {
   const provider = getAdProvider();
 
   if (provider === "stub") return false;
-  if (provider === "adsterra") return Boolean(config.adsterraZone);
+  if (provider === "adsterra") {
+    // Check per-placement zone OR shared native banner config
+    return Boolean(config.adsterraZone) || Boolean(ADSTERRA_NATIVE.scriptSrc);
+  }
   if (provider === "propellerads") return Boolean(config.propellerZone);
 
   return false;

@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import dynamic from "next/dynamic";
 import {
   AD_CONFIG,
+  ADSTERRA_NATIVE,
   getAdProvider,
   hasValidZone,
   type AdPlacement,
@@ -99,9 +100,10 @@ export default function AdSlot({ placement, className }: AdSlotProps) {
   // Render provider-specific banner
   return (
     <div className={`flex justify-center ${className ?? ""}`}>
-      {provider === "adsterra" && config.adsterraZone && (
+      {provider === "adsterra" && (
         <AdsterraBanner
-          zoneId={config.adsterraZone}
+          scriptSrc={config.adsterraZone || ADSTERRA_NATIVE.scriptSrc}
+          containerHash={config.adsterraZone ? config.adsterraZone : ADSTERRA_NATIVE.containerHash}
           width={config.width}
           height={config.height}
         />

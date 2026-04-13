@@ -3,18 +3,22 @@
 import { useEffect, useRef } from "react";
 
 interface AdsterraBannerProps {
-  zoneId: string;
+  /** Full script src URL from Adsterra (e.g. https://plXXX.../HASH/invoke.js) */
+  scriptSrc: string;
+  /** Container hash from Adsterra (the HASH part used in container-HASH div) */
+  containerHash: string;
   width: number;
   height: number;
 }
 
 /**
  * Adsterra Native Banner component.
- * Loads Adsterra's ad script and renders in the specified zone.
+ * Loads Adsterra's native banner script and renders in the expected container.
  * Must be used as 'use client' — never in SSR.
  */
 export default function AdsterraBanner({
-  zoneId,
+  scriptSrc,
+  containerHash,
   width,
   height,
 }: AdsterraBannerProps) {
@@ -22,20 +26,20 @@ export default function AdsterraBanner({
   const scriptLoaded = useRef(false);
 
   useEffect(() => {
-    if (!zoneId || scriptLoaded.current) return;
+    if (!scriptSrc || !containerHash || scriptLoaded.current) return;
 
     const container = containerRef.current;
     if (!container) return;
 
-    // Adsterra native banner script
+    // Create the container div that Adsterra expects (id="container-HASH")
+    const adDiv = document.createElement("div");
+    adDiv.id = `container-${containerHash}`;
+
+    // Adsterra native banner invoke script
     const script = document.createElement("script");
     script.async = true;
-    script.src = `//www.highperformanceformat.com/${zoneId}/invoke.js`;
     script.dataset.cfasync = "false";
-
-    // Create the ad container div that Adsterra expects
-    const adDiv = document.createElement("div");
-    adDiv.id = `adsterra-${zoneId}`;
+    script.src = scriptSrc;
 
     container.appendChild(adDiv);
     container.appendChild(script);
@@ -43,15 +47,14 @@ export default function AdsterraBanner({
     scriptLoaded.current = true;
 
     return () => {
-      // Cleanup on unmount
       if (container) {
         container.innerHTML = "";
       }
       scriptLoaded.current = false;
     };
-  }, [zoneId]);
+  }, [scriptSrc, containerHash]);
 
-  if (!zoneId) {
+  if (!scriptSrc || !containerHash) {
     return null;
   }
 
