@@ -80,3 +80,5 @@ release/
 .mempalace/
 supabase/.temp/
 infra/supabase.exe
+.vercel
+.env*.local

@@ -123,6 +123,14 @@ export async function getEpisode(id: string): Promise<Episode> {
   return request<Episode>(`/episodes/${encodeURIComponent(id)}`);
 }
 
+export async function getRecentEpisodes(
+  params: { days?: number; pageSize?: number } = {}
+): Promise<Episode[]> {
+  return request<Episode[]>(
+    `/episodes/recent${toQueryString({ ...params })}`
+  );
+}
+
 export async function getEpisodeMirrors(id: string): Promise<Mirror[]> {
   return request<Mirror[]>(
     `/episodes/${encodeURIComponent(id)}/mirrors`

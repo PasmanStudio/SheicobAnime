@@ -14,8 +14,37 @@ public static class EpisodeEndpoints
     {
         var group = app.MapGroup("/episodes").WithTags("Episodes");
 
+        group.MapGet("/recent", GetRecentEpisodes);
         group.MapGet("/{id:guid}", GetEpisode);
         group.MapGet("/{id:guid}/mirrors", GetEpisodeMirrors);
+    }
+
+    private static async Task<IResult> GetRecentEpisodes(
+        AppDbContext db,
+        ICacheService cache,
+        int? days,
+        int? pageSize,
+        CancellationToken ct = default)
+    {
+        var actualDays = Math.Clamp(days ?? 3, 1, 7);
+        var actualPageSize = Math.Clamp(pageSize ?? 50, 1, 100);
+        var since = DateTime.UtcNow.AddDays(-actualDays);
+
+        var cacheKey = $"episodes:recent:{actualDays}:{actualPageSize}";
+        var cached = await cache.GetAsync<EpisodeDto[]>(cacheKey, ct);
+        if (cached is not null) return Results.Ok(cached);
+
+        var episodes = await db.Episodes
+            .Include(e => e.Series)
+            .AsNoTracking()
+            .Where(e => e.IsPublished && e.CreatedAt >= since)
+            .OrderByDescending(e => e.CreatedAt)
+            .Take(actualPageSize)
+            .ToListAsync(ct);
+
+        var dtos = episodes.Select(e => e.Adapt<EpisodeDto>()).ToArray();
+        await cache.SetAsync(cacheKey, dtos, CacheDuration, ct);
+        return Results.Ok(dtos);
     }
 
     private static async Task<IResult> GetEpisode(
