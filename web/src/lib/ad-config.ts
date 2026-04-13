@@ -202,7 +202,7 @@ export const AD_CONFIG: Record<AdPlacement, AdPlacementConfig> = {
  * Defaults to 'stub' for development safety.
  */
 export function getAdProvider(): AdProvider {
-  const provider = process.env.NEXT_PUBLIC_AD_PROVIDER || "adsterra";
+  const provider = (process.env.NEXT_PUBLIC_AD_PROVIDER ?? "").trim() || "adsterra";
   if (provider === "adsterra" || provider === "propellerads") {
     return provider;
   }
