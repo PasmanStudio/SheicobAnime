@@ -101,6 +101,7 @@ export default async function EpisodePage({ params }: Props) {
         currentEpisodeNumber={episodeNumber}
         seriesSlug={params.slug}
         seriesTitle={episode.series?.title ?? "Serie"}
+        seriesCoverUrl={episode.series?.coverUrl}
       />
 
       {/* Episode metadata */}

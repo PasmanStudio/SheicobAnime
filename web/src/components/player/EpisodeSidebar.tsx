@@ -10,6 +10,7 @@ interface EpisodeSidebarProps {
   currentEpisodeNumber: number;
   seriesSlug: string;
   seriesTitle: string;
+  seriesCoverUrl?: string | null;
 }
 
 export default function EpisodeSidebar({
@@ -17,6 +18,7 @@ export default function EpisodeSidebar({
   currentEpisodeNumber,
   seriesSlug,
   seriesTitle,
+  seriesCoverUrl,
 }: EpisodeSidebarProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [filter, setFilter] = useState("");
@@ -77,7 +79,7 @@ export default function EpisodeSidebar({
               <ul className="divide-y divide-neutral-800">
                 {filtered.map((ep) => {
                   const isCurrent = ep.episodeNumber === currentEpisodeNumber;
-                  const thumb = ep.thumbnailUrl ?? ep.series?.coverUrl ?? null;
+                  const thumb = ep.thumbnailUrl ?? ep.series?.coverUrl ?? seriesCoverUrl ?? null;
 
                   return (
                     <li key={ep.id}>
