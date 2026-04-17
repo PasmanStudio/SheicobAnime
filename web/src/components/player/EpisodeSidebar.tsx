@@ -12,8 +12,6 @@ interface EpisodeSidebarProps {
   seriesTitle: string;
 }
 
-const PAGE_SIZE = 50;
-
 export default function EpisodeSidebar({
   episodes,
   currentEpisodeNumber,
