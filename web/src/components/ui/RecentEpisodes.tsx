@@ -37,7 +37,7 @@ export default function RecentEpisodes({ episodes }: RecentEpisodesProps) {
 function EpisodeCard({ episode }: { episode: Episode }) {
   const series = episode.series;
   const href = series
-    ? `/episodes/${episode.id}`
+    ? `/series/${series.slug}/${episode.episodeNumber}`
     : `/episodes/${episode.id}`;
   const coverUrl = episode.thumbnailUrl ?? series?.coverUrl ?? null;
 

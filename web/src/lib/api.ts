@@ -123,6 +123,12 @@ export async function getEpisode(id: string): Promise<Episode> {
   return request<Episode>(`/episodes/${encodeURIComponent(id)}`);
 }
 
+export async function getEpisodeBySlug(slug: string, episodeNumber: number): Promise<Episode> {
+  return request<Episode>(
+    `/series/${encodeURIComponent(slug)}/episodes/${episodeNumber}`
+  );
+}
+
 export async function getRecentEpisodes(
   params: { days?: number; pageSize?: number } = {}
 ): Promise<Episode[]> {
@@ -134,6 +140,12 @@ export async function getRecentEpisodes(
 export async function getEpisodeMirrors(id: string): Promise<Mirror[]> {
   return request<Mirror[]>(
     `/episodes/${encodeURIComponent(id)}/mirrors`
+  );
+}
+
+export async function getEpisodeMirrorsBySlug(slug: string, episodeNumber: number): Promise<Mirror[]> {
+  return request<Mirror[]>(
+    `/series/${encodeURIComponent(slug)}/episodes/${episodeNumber}/mirrors`
   );
 }
 

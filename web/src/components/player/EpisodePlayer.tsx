@@ -109,34 +109,41 @@ export default function EpisodePlayer({
         )}
       </div>
 
-      {/* Mirror selector */}
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="text-xs text-neutral-500 mr-1">Source:</span>
-        {active.map((m, i) => (
-          <button
-            key={m.id}
-            onClick={() => handleMirrorSelect(i)}
-            className={`px-3 py-1 text-xs rounded border transition-colors ${
-              i === selectedIdx
-                ? "border-indigo-500 bg-indigo-500/20 text-white"
-                : "border-neutral-700 text-neutral-400 hover:border-neutral-500 hover:text-white"
-            }`}
-          >
-            {m.providerName}
-            {m.qualityLabel > 0 && (
-              <span className="ml-1 text-neutral-500">{m.qualityLabel}p</span>
-            )}
-          </button>
-        ))}
+      {/* Mirror selector — JKAnime-style grid */}
+      <div className="space-y-2">
+        <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-1.5">
+          {active.map((m, i) => (
+            <button
+              key={m.id}
+              onClick={() => handleMirrorSelect(i)}
+              className={`px-3 py-2.5 text-sm font-medium rounded transition-colors text-center ${
+                i === selectedIdx
+                  ? "bg-orange-500 text-white shadow-md"
+                  : "bg-neutral-800 text-neutral-300 hover:bg-neutral-700 hover:text-white"
+              }`}
+            >
+              {m.providerName}
+              {m.qualityLabel > 0 && (
+                <span className={`block text-[10px] mt-0.5 ${
+                  i === selectedIdx ? "text-orange-200" : "text-neutral-500"
+                }`}>
+                  {m.qualityLabel}p
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
 
         {/* Report button */}
-        <button
-          onClick={handleReport}
-          disabled={reported}
-          className="ml-auto text-xs text-neutral-600 hover:text-red-400 disabled:text-neutral-700 transition-colors"
-        >
-          {reported ? "Reported ✓" : "Report broken"}
-        </button>
+        <div className="flex justify-end">
+          <button
+            onClick={handleReport}
+            disabled={reported}
+            className="text-xs text-neutral-600 hover:text-red-400 disabled:text-neutral-700 transition-colors"
+          >
+            {reported ? "Reportado ✓" : "Reportar enlace roto"}
+          </button>
+        </div>
       </div>
     </div>
   );

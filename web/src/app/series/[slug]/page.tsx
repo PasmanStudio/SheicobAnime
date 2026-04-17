@@ -148,7 +148,7 @@ export default async function SeriesPage({ params, searchParams }: Props) {
             {episodesPage.data.map((ep) => (
               <Link
                 key={ep.id}
-                href={`/episodes/${ep.id}`}
+                href={`/series/${params.slug}/${ep.episodeNumber}`}
                 className="flex items-center justify-center px-3 py-2.5 rounded-md bg-neutral-800 hover:bg-indigo-700 hover:text-white text-neutral-300 text-sm font-medium transition-colors"
               >
                 Ep {ep.episodeNumber}

@@ -1,0 +1,128 @@
+import type { Metadata } from "next";
+import { notFound } from "next/navigation";
+import Link from "next/link";
+import { getEpisodeBySlug, getEpisodeMirrorsBySlug, getSeriesEpisodes, ApiError } from "@/lib/api";
+
+export const dynamic = "force-dynamic";
+import EpisodePlayer from "@/components/player/EpisodePlayer";
+import EpisodeSidebar from "@/components/player/EpisodeSidebar";
+import AdSlot from "@/components/ads/AdSlot";
+import NavigationAdTrigger from "@/components/ads/NavigationAdTrigger";
+import CommentSection from "@/components/comments/CommentSection";
+
+interface Props {
+  params: { slug: string; episode: string };
+}
+
+export async function generateMetadata({ params }: Props): Promise<Metadata> {
+  const episodeNumber = Number(params.episode);
+  if (!Number.isInteger(episodeNumber) || episodeNumber < 1) {
+    return { title: "Episode Not Found" };
+  }
+
+  try {
+    const episode = await getEpisodeBySlug(params.slug, episodeNumber);
+    const baseTitle = episode.series
+      ? `${episode.series.title} — Episodio ${episode.episodeNumber}`
+      : `Episodio ${episode.episodeNumber}`;
+    const title = episode.title ? `${baseTitle}: ${episode.title}` : baseTitle;
+    return {
+      title,
+      description: `Watch ${title} online.`,
+      openGraph: {
+        title,
+        images: episode.thumbnailUrl ? [{ url: episode.thumbnailUrl }] : [],
+      },
+    };
+  } catch {
+    return { title: "Episode Not Found" };
+  }
+}
+
+export default async function EpisodePage({ params }: Props) {
+  const episodeNumber = Number(params.episode);
+  if (!Number.isInteger(episodeNumber) || episodeNumber < 1) notFound();
+
+  let episode, mirrors, allEpisodes;
+  try {
+    [episode, mirrors, { data: allEpisodes }] = await Promise.all([
+      getEpisodeBySlug(params.slug, episodeNumber),
+      getEpisodeMirrorsBySlug(params.slug, episodeNumber),
+      getSeriesEpisodes(params.slug, { pageSize: 500 }),
+    ]);
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) notFound();
+    throw err;
+  }
+
+  const episodeTitle = episode.title
+    ? `Episodio ${episode.episodeNumber}: ${episode.title}`
+    : `Episodio ${episode.episodeNumber}`;
+
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://sheicobanime.vercel.app";
+  const pageUrl = `${siteUrl}/series/${params.slug}/${episode.episodeNumber}`;
+
+  return (
+    <div className="container mx-auto px-4 py-6 space-y-6 max-w-4xl">
+      <NavigationAdTrigger />
+      {/* Breadcrumb */}
+      {episode.series && (
+        <nav className="text-sm text-neutral-500 flex items-center gap-2">
+          <Link href="/" className="hover:text-white transition-colors">
+            Inicio
+          </Link>
+          <span>/</span>
+          <Link
+            href={`/series/${episode.series.slug}`}
+            className="hover:text-white transition-colors"
+          >
+            {episode.series.title}
+          </Link>
+          <span>/</span>
+          <span className="text-neutral-300">{episodeTitle}</span>
+        </nav>
+      )}
+
+      {/* Title */}
+      <h1 className="text-xl md:text-2xl font-bold text-white">
+        {episodeTitle}
+      </h1>
+
+      <AdSlot placement="episode_top" />
+
+      {/* Player — client component, never SSR */}
+      <EpisodePlayer mirrors={mirrors} episodeTitle={episodeTitle} />
+
+      <AdSlot placement="episode_mid" />
+
+      {/* Episode sidebar navigator */}
+      <EpisodeSidebar
+        episodes={allEpisodes}
+        currentEpisodeNumber={episodeNumber}
+        seriesSlug={params.slug}
+        seriesTitle={episode.series?.title ?? "Serie"}
+      />
+
+      {/* Episode metadata */}
+      <div className="flex flex-wrap gap-4 text-sm text-neutral-400">
+        {episode.durationSecs !== null && (
+          <span>
+            Duración: {Math.floor(episode.durationSecs / 60)}m{" "}
+            {episode.durationSecs % 60}s
+          </span>
+        )}
+        {episode.airedAt && (
+          <span>Emitido: {new Date(episode.airedAt).toLocaleDateString()}</span>
+        )}
+      </div>
+
+      {/* Comments */}
+      <section>
+        <h2 className="text-lg font-semibold text-white mb-3">Comentarios</h2>
+        <CommentSection pageId={`${params.slug}-ep${episode.episodeNumber}`} pageUrl={pageUrl} />
+      </section>
+
+      <AdSlot placement="episode_bottom" />
+    </div>
+  );
+}

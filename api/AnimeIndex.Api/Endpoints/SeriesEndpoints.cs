@@ -21,6 +21,8 @@ public static class SeriesEndpoints
         group.MapGet("/suggest", SuggestSeries);
         group.MapGet("/{slug}", GetSeriesBySlug);
         group.MapGet("/{slug}/episodes", GetSeriesEpisodes);
+        group.MapGet("/{slug}/episodes/{number:int}", GetEpisodeBySlugAndNumber);
+        group.MapGet("/{slug}/episodes/{number:int}/mirrors", GetEpisodeMirrorsBySlugAndNumber);
     }
 
     private static async Task<IResult> GetSeriesList(
@@ -221,5 +223,63 @@ public static class SeriesEndpoints
 
         await cache.SetAsync(cacheKey, response, CacheDuration, ct);
         return Results.Ok(response);
+    }
+
+    private static async Task<IResult> GetEpisodeBySlugAndNumber(
+        AppDbContext db,
+        ICacheService cache,
+        string slug,
+        int number,
+        CancellationToken ct = default)
+    {
+        var cacheKey = $"series:{slug}:episode:{number}";
+        var cached = await cache.GetAsync<EpisodeDto>(cacheKey, ct);
+        if (cached is not null) return Results.Ok(cached);
+
+        var episode = await db.Episodes
+            .Include(e => e.Series)
+            .Include(e => e.Mirrors.Where(m => m.IsActive))
+            .AsNoTracking()
+            .FirstOrDefaultAsync(e => e.Series.Slug == slug && e.EpisodeNumber == number, ct);
+
+        if (episode is null)
+            return Results.Json(
+                new ErrorResponse("Episode not found", "NOT_FOUND"),
+                statusCode: 404);
+
+        var dto = episode.Adapt<EpisodeDto>();
+        await cache.SetAsync(cacheKey, dto, CacheDuration, ct);
+        return Results.Ok(dto);
+    }
+
+    private static async Task<IResult> GetEpisodeMirrorsBySlugAndNumber(
+        AppDbContext db,
+        ICacheService cache,
+        string slug,
+        int number,
+        CancellationToken ct = default)
+    {
+        var cacheKey = $"series:{slug}:episode:{number}:mirrors";
+        var cached = await cache.GetAsync<MirrorDto[]>(cacheKey, ct);
+        if (cached is not null) return Results.Ok(cached);
+
+        var episode = await db.Episodes
+            .AsNoTracking()
+            .FirstOrDefaultAsync(e => e.Series.Slug == slug && e.EpisodeNumber == number, ct);
+
+        if (episode is null)
+            return Results.Json(
+                new ErrorResponse("Episode not found", "NOT_FOUND"),
+                statusCode: 404);
+
+        var mirrors = await db.Mirrors
+            .AsNoTracking()
+            .Where(m => m.EpisodeId == episode.Id && m.IsActive)
+            .OrderBy(m => m.Priority)
+            .ToListAsync(ct);
+
+        var dtos = mirrors.Select(m => m.Adapt<MirrorDto>()).ToArray();
+        await cache.SetAsync(cacheKey, dtos, CacheDuration, ct);
+        return Results.Ok(dtos);
     }
 }

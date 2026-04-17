@@ -58,6 +58,11 @@ export default function DisqusEmbed({ pageId, pageUrl }: DisqusEmbedProps) {
   return (
     <div ref={containerRef}>
       <div id="disqus_thread" />
+      <noscript>
+        <p className="text-neutral-500 text-sm">
+          Habilita JavaScript para ver los comentarios de Disqus.
+        </p>
+      </noscript>
     </div>
   );
 }
