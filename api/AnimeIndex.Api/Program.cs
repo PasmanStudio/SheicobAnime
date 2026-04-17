@@ -101,16 +101,16 @@ try
                 npgsqlOptions.CommandTimeout(30);
             }));
 
-        // ─── Hangfire ────────────────────────────────────
+        // ─── Hangfire (client + dashboard only — NO server/workers) ───
+        // The scraper service owns all Hangfire workers and recurring jobs.
+        // Running AddHangfireServer here causes the API's RecurringJobScheduler
+        // to pick up scraper jobs it can't deserialize (missing AnimeIndex.Scraper
+        // assembly), which permanently kills the recurring schedule after 5 retries.
         builder.Services.AddHangfire(config => config
             .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
             .UseSimpleAssemblyNameTypeSerializer()
             .UseRecommendedSerializerSettings()
             .UsePostgreSqlStorage(opts => opts.UseNpgsqlConnection(connectionString)));
-        builder.Services.AddHangfireServer(options =>
-        {
-            options.WorkerCount = 2; // MVP: keep low
-        });
     }
 
     // ─── Redis / Cache ───────────────────────────────────
