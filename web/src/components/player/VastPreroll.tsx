@@ -3,248 +3,346 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 /**
- * VAST preroll powered by Google IMA SDK.
+ * VAST preroll using direct XML parsing + native <video>.
  *
- * - Loads ima3.js lazily (no cost when VAST URL is not configured).
- * - Fails open: on any error / timeout / missing URL, calls onComplete() so the
- *   main video plays anyway. A broken ad must never block content.
- * - Shows branded "Publicidad" overlay while the ad is active, with a hard
- *   "Saltar" escape hatch after 5 s.
+ * Replaces the Google IMA SDK approach which required a user gesture to call
+ * adContainer.initialize(). This implementation fetches the VAST XML, parses
+ * out the MediaFile URL, and plays the ad video directly — no third-party SDK,
+ * no gesture requirement.
+ *
+ * Inspired by how JKAnime handles AdAngle VAST 3.0 tags.
+ *
+ * Fails open: on any error / timeout / empty VAST the viewer sees the main
+ * video — a broken ad must never block content.
  */
 
-const IMA_SDK_URL = "https://imasdk.googleapis.com/js/sdkloader/ima3.js";
-const HARD_TIMEOUT_MS = 10_000;       // max wait for IMA to start an ad
-const MIN_SKIP_DELAY_MS = 5_000;      // show "Saltar" button after this
+const HARD_TIMEOUT_MS = 12_000;
+const DEFAULT_SKIP_SECONDS = 5;
 
-// Minimal ambient shim so we don't pull the full google/ima @types package.
-interface ImaGlobal {
-  AdDisplayContainer: new (container: HTMLElement, video: HTMLVideoElement) => {
-    initialize(): void;
-    destroy(): void;
-  };
-  AdsLoader: new (container: unknown) => {
-    addEventListener(type: string, handler: (evt: unknown) => void): void;
-    requestAds(req: unknown): void;
-    destroy(): void;
-    contentComplete(): void;
-  };
-  AdsRequest: new () => Record<string, unknown>;
-  AdsManagerLoadedEvent: { Type: { ADS_MANAGER_LOADED: string } };
-  AdErrorEvent: { Type: { AD_ERROR: string } };
-  AdEvent: {
-    Type: {
-      STARTED: string;
-      COMPLETE: string;
-      ALL_ADS_COMPLETED: string;
-      SKIPPED: string;
-      USER_CLOSE: string;
-    };
-  };
-  ViewMode: { NORMAL: string };
+/* ------------------------------------------------------------------ */
+/*  VAST XML types                                                     */
+/* ------------------------------------------------------------------ */
+
+interface VastAd {
+  mediaUrl: string;
+  clickThrough: string | null;
+  skipOffsetSeconds: number;
+  impressionUrls: string[];
+  trackingEvents: Map<string, string[]>;
 }
 
-declare global {
-  interface Window {
-    google?: { ima?: ImaGlobal };
+/* ------------------------------------------------------------------ */
+/*  Parsing helpers                                                    */
+/* ------------------------------------------------------------------ */
+
+function parseSkipOffset(attr: string | null): number | null {
+  if (!attr) return null;
+  const parts = attr.split(":");
+  if (parts.length === 3) {
+    return (
+      Number.parseInt(parts[0], 10) * 3600 +
+      Number.parseInt(parts[1], 10) * 60 +
+      Number.parseInt(parts[2], 10)
+    );
+  }
+  const n = Number.parseInt(attr, 10);
+  return Number.isFinite(n) ? n : null;
+}
+
+function parseVastXml(xml: string): VastAd | null {
+  try {
+    const doc = new DOMParser().parseFromString(xml, "text/xml");
+    if (doc.querySelector("parsererror")) return null;
+
+    const ad = doc.querySelector("Ad");
+    if (!ad) return null;
+
+    const linear = ad.querySelector("Linear");
+    if (!linear) return null;
+
+    // Media file — prefer progressive MP4
+    const mediaFiles = Array.from(linear.querySelectorAll("MediaFile"));
+    let mediaUrl = "";
+    for (const mf of mediaFiles) {
+      const url = mf.textContent?.trim();
+      const type = mf.getAttribute("type") ?? "";
+      if (url && type.includes("mp4")) {
+        mediaUrl = url;
+        break;
+      }
+    }
+    if (!mediaUrl) mediaUrl = mediaFiles[0]?.textContent?.trim() ?? "";
+    if (!mediaUrl) return null;
+
+    const clickThrough =
+      ad.querySelector("ClickThrough")?.textContent?.trim() ?? null;
+
+    const skipOffsetSeconds =
+      parseSkipOffset(linear.getAttribute("skipoffset")) ?? DEFAULT_SKIP_SECONDS;
+
+    const impressionUrls: string[] = [];
+    for (const el of Array.from(ad.querySelectorAll("Impression"))) {
+      const url = el.textContent?.trim();
+      if (url) impressionUrls.push(url);
+    }
+
+    const trackingEvents = new Map<string, string[]>();
+    for (const tr of Array.from(linear.querySelectorAll("TrackingEvents > Tracking"))) {
+      const event = tr.getAttribute("event");
+      const url = tr.textContent?.trim();
+      if (event && url) {
+        const list = trackingEvents.get(event) ?? [];
+        list.push(url);
+        trackingEvents.set(event, list);
+      }
+    }
+
+    return {
+      mediaUrl,
+      clickThrough,
+      skipOffsetSeconds,
+      impressionUrls,
+      trackingEvents,
+    };
+  } catch {
+    return null;
   }
 }
 
-let imaLoadPromise: Promise<ImaGlobal | null> | null = null;
-
-function loadImaSdk(): Promise<ImaGlobal | null> {
-  if (typeof window === "undefined") return Promise.resolve(null);
-  if (window.google?.ima) return Promise.resolve(window.google.ima);
-  if (imaLoadPromise) return imaLoadPromise;
-
-  imaLoadPromise = new Promise((resolve) => {
-    const existing = document.querySelector<HTMLScriptElement>(
-      `script[src="${IMA_SDK_URL}"]`
-    );
-    if (existing) {
-      existing.addEventListener("load", () => resolve(window.google?.ima ?? null));
-      existing.addEventListener("error", () => resolve(null));
-      return;
-    }
-
-    const script = document.createElement("script");
-    script.src = IMA_SDK_URL;
-    script.async = true;
-    script.onload = () => resolve(window.google?.ima ?? null);
-    script.onerror = () => {
-      imaLoadPromise = null; // allow retry later
-      resolve(null);
-    };
-    document.head.appendChild(script);
-  });
-
-  return imaLoadPromise;
+function firePixels(urls: string[]) {
+  for (const url of urls) {
+    const img = new Image();
+    img.src = url;
+  }
 }
+
+/* ------------------------------------------------------------------ */
+/*  Component                                                          */
+/* ------------------------------------------------------------------ */
 
 interface VastPrerollProps {
   vastUrl: string;
   onComplete: () => void;
 }
 
-export default function VastPreroll({ vastUrl, onComplete }: Readonly<VastPrerollProps>) {
-  const containerRef = useRef<HTMLDivElement | null>(null);
+export default function VastPreroll({
+  vastUrl,
+  onComplete,
+}: Readonly<VastPrerollProps>) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  const cleanupRef = useRef<(() => void) | null>(null);
   const completedRef = useRef(false);
+  const firedRef = useRef(new Set<string>());
 
+  const [ad, setAd] = useState<VastAd | null>(null);
   const [adStarted, setAdStarted] = useState(false);
   const [canSkip, setCanSkip] = useState(false);
+  const [countdown, setCountdown] = useState<number | null>(null);
+  const [isMuted, setIsMuted] = useState(true);
 
   const complete = useCallback(() => {
     if (completedRef.current) return;
     completedRef.current = true;
-    cleanupRef.current?.();
-    cleanupRef.current = null;
+    try {
+      videoRef.current?.pause();
+    } catch {
+      /* ignore */
+    }
     onComplete();
   }, [onComplete]);
 
+  /* ---------- Fetch & parse VAST ---------- */
   useEffect(() => {
-    let cancelled = false;
-
     if (!vastUrl) {
       complete();
       return;
     }
 
-    // Hard timeout — if IMA never says anything, play the video anyway.
+    let cancelled = false;
     const hardTimeout = setTimeout(complete, HARD_TIMEOUT_MS);
-    const skipTimer = setTimeout(() => setCanSkip(true), MIN_SKIP_DELAY_MS);
 
     (async () => {
-      const ima = await loadImaSdk();
-      if (cancelled || !ima) {
-        complete();
-        return;
-      }
-
-      const container = containerRef.current;
-      const video = videoRef.current;
-      if (!container || !video) {
-        complete();
-        return;
-      }
-
-      let adsManager: {
-        addEventListener: (type: string, handler: (evt: unknown) => void) => void;
-        init: (w: number, h: number, mode: string) => void;
-        start: () => void;
-        destroy: () => void;
-        resize: (w: number, h: number, mode: string) => void;
-      } | null = null;
-
-      const adContainer = new ima.AdDisplayContainer(container, video);
-      // initialize() MUST run before playback events — we call it right after
-      // user landed on the player page (implicit gesture: click-to-play flow).
-      try { adContainer.initialize(); } catch { /* some browsers require a gesture */ }
-
-      const loader = new ima.AdsLoader(adContainer);
-
-      const onResize = () => {
-        if (!adsManager || !container) return;
-        try {
-          adsManager.resize(
-            container.clientWidth,
-            container.clientHeight,
-            ima.ViewMode.NORMAL
-          );
-        } catch { /* ignore */ }
-      };
-      window.addEventListener("resize", onResize);
-
-      cleanupRef.current = () => {
-        clearTimeout(hardTimeout);
-        clearTimeout(skipTimer);
-        window.removeEventListener("resize", onResize);
-        try { adsManager?.destroy(); } catch { /* ignore */ }
-        try { loader.destroy(); } catch { /* ignore */ }
-        try { adContainer.destroy(); } catch { /* ignore */ }
-      };
-
-      loader.addEventListener(
-        ima.AdsManagerLoadedEvent.Type.ADS_MANAGER_LOADED,
-        (evt: unknown) => {
-          if (cancelled || completedRef.current) return;
-          try {
-            const ev = evt as { getAdsManager: (v: HTMLVideoElement) => typeof adsManager };
-            adsManager = ev.getAdsManager(video);
-            if (!adsManager) { complete(); return; }
-
-            const onDone = () => complete();
-            adsManager.addEventListener(ima.AdEvent.Type.STARTED, () => setAdStarted(true));
-            adsManager.addEventListener(ima.AdEvent.Type.COMPLETE, onDone);
-            adsManager.addEventListener(ima.AdEvent.Type.ALL_ADS_COMPLETED, onDone);
-            adsManager.addEventListener(ima.AdEvent.Type.SKIPPED, onDone);
-            adsManager.addEventListener(ima.AdEvent.Type.USER_CLOSE, onDone);
-            adsManager.addEventListener(ima.AdErrorEvent.Type.AD_ERROR, onDone);
-
-            adsManager.init(
-              container.clientWidth,
-              container.clientHeight,
-              ima.ViewMode.NORMAL
-            );
-            adsManager.start();
-          } catch {
-            complete();
-          }
-        }
-      );
-
-      loader.addEventListener(ima.AdErrorEvent.Type.AD_ERROR, () => complete());
-
       try {
-        const req = new ima.AdsRequest();
-        req.adTagUrl = vastUrl;
-        req.linearAdSlotWidth = container.clientWidth;
-        req.linearAdSlotHeight = container.clientHeight;
-        req.nonLinearAdSlotWidth = container.clientWidth;
-        req.nonLinearAdSlotHeight = 150;
-        loader.requestAds(req);
+        const res = await fetch(vastUrl);
+        if (cancelled) return;
+        if (!res.ok) {
+          complete();
+          return;
+        }
+        const xml = await res.text();
+        if (cancelled) return;
+
+        const parsed = parseVastXml(xml);
+        if (!parsed) {
+          complete();
+          return;
+        }
+
+        setAd(parsed);
+        firePixels(parsed.impressionUrls);
       } catch {
-        complete();
+        if (!cancelled) complete();
       }
     })();
 
     return () => {
       cancelled = true;
-      cleanupRef.current?.();
-      cleanupRef.current = null;
+      clearTimeout(hardTimeout);
     };
-    // complete / vastUrl are the only real deps; complete is stable
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [vastUrl]);
 
+  /* ---------- Play the ad video once parsed ---------- */
+  useEffect(() => {
+    if (!ad) return;
+    const video = videoRef.current;
+    if (!video) return;
+
+    video.src = ad.mediaUrl;
+    video.load();
+    video.muted = true;
+    video.play().catch(() => {
+      // Autoplay truly blocked → skip to content
+      complete();
+    });
+  }, [ad, complete]);
+
+  /* ---------- Track progress / fire pixels ---------- */
+  useEffect(() => {
+    if (!ad) return;
+    const video = videoRef.current;
+    if (!video) return;
+
+    const onPlaying = () => {
+      setAdStarted(true);
+      if (!firedRef.current.has("start")) {
+        firedRef.current.add("start");
+        firePixels(ad.trackingEvents.get("start") ?? []);
+        firePixels(ad.trackingEvents.get("creativeView") ?? []);
+      }
+    };
+
+    const onTimeUpdate = () => {
+      const t = video.currentTime;
+      const d = video.duration;
+      if (!d || !Number.isFinite(d)) return;
+
+      const remaining = Math.ceil(ad.skipOffsetSeconds - t);
+      if (remaining > 0) {
+        setCountdown(remaining);
+        setCanSkip(false);
+      } else {
+        setCountdown(null);
+        setCanSkip(true);
+      }
+
+      const pct = t / d;
+      const fire = (key: string, threshold: number) => {
+        if (pct >= threshold && !firedRef.current.has(key)) {
+          firedRef.current.add(key);
+          firePixels(ad.trackingEvents.get(key) ?? []);
+        }
+      };
+      fire("firstQuartile", 0.25);
+      fire("midpoint", 0.5);
+      fire("thirdQuartile", 0.75);
+    };
+
+    const onEnded = () => {
+      if (!firedRef.current.has("complete")) {
+        firedRef.current.add("complete");
+        firePixels(ad.trackingEvents.get("complete") ?? []);
+      }
+      complete();
+    };
+
+    const onError = () => complete();
+
+    video.addEventListener("playing", onPlaying);
+    video.addEventListener("timeupdate", onTimeUpdate);
+    video.addEventListener("ended", onEnded);
+    video.addEventListener("error", onError);
+
+    return () => {
+      video.removeEventListener("playing", onPlaying);
+      video.removeEventListener("timeupdate", onTimeUpdate);
+      video.removeEventListener("ended", onEnded);
+      video.removeEventListener("error", onError);
+    };
+  }, [ad, complete]);
+
+  /* ---------- User actions ---------- */
+
+  const handleSkip = useCallback(() => {
+    if (!firedRef.current.has("skip")) {
+      firedRef.current.add("skip");
+      firePixels(ad?.trackingEvents.get("skip") ?? []);
+    }
+    complete();
+  }, [ad, complete]);
+
+  const handleAdClick = useCallback(() => {
+    if (!ad?.clickThrough) return;
+    firePixels(ad.trackingEvents.get("click") ?? []);
+    window.open(ad.clickThrough, "_blank", "noopener,noreferrer");
+  }, [ad]);
+
+  const toggleMute = useCallback(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    video.muted = !video.muted;
+    if (!video.muted) video.volume = 0.5;
+    setIsMuted(video.muted);
+  }, []);
+
+  /* ---------- Render ---------- */
   return (
     <div className="absolute inset-0 bg-black z-10">
-      {/* IMA renders ad creatives into this container */}
-      <div ref={containerRef} className="absolute inset-0" />
-      {/* Hidden content video IMA needs as a handle */}
-      <video ref={videoRef} className="absolute inset-0 w-full h-full" playsInline muted />
+      <video
+        ref={videoRef}
+        className="absolute inset-0 w-full h-full object-contain cursor-pointer"
+        playsInline
+        muted
+        onClick={handleAdClick}
+      />
 
-      {/* Waiting overlay, until IMA fires STARTED */}
       {!adStarted && (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 pointer-events-none">
           <div className="w-10 h-10 border-4 border-orange-500 border-t-transparent rounded-full animate-spin" />
-          <p className="text-xs text-neutral-400 uppercase tracking-wide">Cargando publicidad…</p>
+          <p className="text-xs text-neutral-400 uppercase tracking-wide">
+            Cargando publicidad…
+          </p>
         </div>
       )}
 
-      <div className="absolute top-2 left-3 px-2 py-1 bg-black/70 rounded text-[10px] uppercase tracking-wide text-neutral-300">
+      <div className="absolute top-2 left-3 px-2 py-1 bg-black/70 rounded text-[10px] uppercase tracking-wide text-neutral-300 pointer-events-none">
         Publicidad
       </div>
 
-      {canSkip && (
+      {adStarted && (
         <button
-          onClick={complete}
-          aria-label="Saltar publicidad"
-          className="absolute top-2 right-2 min-w-[44px] min-h-[40px] px-4 py-2 bg-white/95 text-black rounded font-semibold text-xs hover:bg-white transition-colors focus:outline-none focus:ring-2 focus:ring-orange-400"
+          onClick={toggleMute}
+          aria-label={isMuted ? "Activar sonido" : "Silenciar"}
+          className="absolute bottom-3 left-3 min-w-[40px] min-h-[40px] px-3 py-2 bg-black/70 text-white rounded text-xs hover:bg-black/90 transition-colors"
         >
-          Saltar ▶
+          {isMuted ? "🔇 Sonido" : "🔊 Sonido"}
         </button>
       )}
+
+      <div className="absolute top-2 right-2">
+        {countdown !== null && countdown > 0 ? (
+          <span className="px-3 py-2 bg-black/70 text-neutral-300 rounded text-xs tabular-nums">
+            Saltar en {countdown}s
+          </span>
+        ) : canSkip ? (
+          <button
+            onClick={handleSkip}
+            aria-label="Saltar publicidad"
+            className="min-w-[44px] min-h-[40px] px-4 py-2 bg-white/95 text-black rounded font-semibold text-xs hover:bg-white transition-colors focus:outline-none focus:ring-2 focus:ring-orange-400"
+          >
+            Saltar ▶
+          </button>
+        ) : null}
+      </div>
     </div>
   );
 }

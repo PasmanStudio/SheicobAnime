@@ -346,12 +346,14 @@ export default function EpisodePlayer({
           </div>
         )}
 
-        {/* Resume prompt ("Un momento!") — held over the spinner while the viewer decides.
-            startMirror is gated on resumeDecision so the video never plays at 0 behind the modal. */}
+        {/* Resume prompt ("Un momento!") — shown during preroll OR resolving.
+            Appears on top of the ad video (z-30 > z-10) so the viewer decides
+            while the preroll plays underneath. Once decided, the ad continues
+            (or has already finished) and playback starts with the right offset. */}
         {canResume &&
           resumeDecision === "pending" &&
           progress &&
-          state.kind === "resolving" && (
+          (state.kind === "preroll" || state.kind === "resolving") && (
             <ResumePrompt
               positionSeconds={progress.positionSeconds}
               onAccept={() => setResumeDecision("accepted")}

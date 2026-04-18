@@ -57,6 +57,29 @@ export default function CustomVideoPlayer({
   const [activeQuality, setActiveQuality] = useState<number>(-1); // -1 = auto
   const [showSettings, setShowSettings] = useState(false);
   const [buffering, setBuffering] = useState(false);
+  const [controlsVisible, setControlsVisible] = useState(true);
+  const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const showControls = useCallback(() => {
+    setControlsVisible(true);
+    if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
+    hideTimerRef.current = setTimeout(() => setControlsVisible(false), 3000);
+  }, []);
+
+  // Always show controls when paused
+  useEffect(() => {
+    if (!isPlaying) {
+      setControlsVisible(true);
+      if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
+    }
+  }, [isPlaying]);
+
+  // Cleanup hide timer
+  useEffect(() => {
+    return () => {
+      if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
+    };
+  }, []);
 
   // Attach source (HLS via hls.js or native)
   useEffect(() => {
@@ -297,7 +320,11 @@ export default function CustomVideoPlayer({
   }, [togglePlay, toggleMute, toggleFullscreen]);
 
   return (
-    <div className="relative w-full h-full bg-black group">
+    <div
+      className="relative w-full h-full bg-black"
+      onMouseMove={showControls}
+      onTouchStart={showControls}
+    >
       <video
         ref={videoRef}
         poster={poster}
@@ -331,15 +358,16 @@ export default function CustomVideoPlayer({
         </button>
       )}
 
-      {/* Buffering spinner */}
+      {/* Buffering spinner + text */}
       {buffering && (
-        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+        <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none gap-2">
           <div className="w-12 h-12 border-4 border-orange-500 border-t-transparent rounded-full animate-spin" />
+          <p className="text-sm text-neutral-300">Cargando…</p>
         </div>
       )}
 
-      {/* Controls bar */}
-      <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/95 via-black/60 to-transparent px-4 pt-10 pb-3 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+      {/* Controls bar — visible on hover/touch, always visible when paused */}
+      <div className={`absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/95 via-black/60 to-transparent px-4 pt-10 pb-3 transition-opacity ${controlsVisible || !isPlaying ? "opacity-100" : "opacity-0 pointer-events-none"}`}>
         {/* Seekbar */}
         <input
           type="range"
