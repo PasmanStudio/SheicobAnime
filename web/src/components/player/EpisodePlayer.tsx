@@ -7,6 +7,14 @@ import type { Mirror, ResolvableMirror, ResolvedSource } from "@/lib/types";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import CustomVideoPlayer from "./CustomVideoPlayer";
 import ResumePrompt from "./ResumePrompt";
+import VastPreroll from "./VastPreroll";
+
+// ExoClick VAST tag — if empty, we fall back to the simple banner preroll.
+const VAST_URL =
+  process.env.NEXT_PUBLIC_EXOCLICK_VAST_URL ||
+  (process.env.NEXT_PUBLIC_EXOCLICK_VAST_ZONE_ID
+    ? `https://s.magsrv.com/v1/vast.php?idzone=${process.env.NEXT_PUBLIC_EXOCLICK_VAST_ZONE_ID}`
+    : "");
 
 // A "display entry" is what the user sees as a button:
 //   - "sheicob" = the group of ALL resolvable mirrors (internally auto-failovers)
@@ -261,7 +269,11 @@ export default function EpisodePlayer({
     <div className="space-y-3">
       {/* Player area */}
       <div className="aspect-video w-full bg-black rounded-lg overflow-hidden shadow-2xl relative">
-        {state.kind === "preroll" && (
+        {state.kind === "preroll" && VAST_URL && (
+          <VastPreroll vastUrl={VAST_URL} onComplete={handleSkipPreroll} />
+        )}
+
+        {state.kind === "preroll" && !VAST_URL && (
           <div className="absolute inset-0 flex flex-col items-center justify-center bg-neutral-950 z-10">
             <div className="flex flex-col items-center gap-4">
               <p className="text-xs text-neutral-500 uppercase tracking-wide">Publicidad</p>
