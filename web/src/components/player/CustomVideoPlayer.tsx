@@ -59,6 +59,10 @@ export default function CustomVideoPlayer({
   const [buffering, setBuffering] = useState(false);
   const [controlsVisible, setControlsVisible] = useState(true);
   const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const seekbarRef = useRef<HTMLDivElement | null>(null);
+  const [bufferedEnd, setBufferedEnd] = useState(0);
+  const [isSeeking, setIsSeeking] = useState(false);
 
   const showControls = useCallback(() => {
     setControlsVisible(true);
@@ -196,6 +200,17 @@ export default function CustomVideoPlayer({
     };
     const onWaiting = () => setBuffering(true);
     const onCanPlay = () => setBuffering(false);
+    const onProgress = () => {
+      const buf = video.buffered;
+      if (buf.length === 0) { setBufferedEnd(0); return; }
+      for (let i = 0; i < buf.length; i++) {
+        if (buf.start(i) <= video.currentTime + 0.5 && video.currentTime <= buf.end(i)) {
+          setBufferedEnd(buf.end(i));
+          return;
+        }
+      }
+      setBufferedEnd(buf.end(buf.length - 1));
+    };
     const onEndedHandler = () => onEnded?.();
     const onVolume = () => {
       setVolume(video.volume);
@@ -210,6 +225,7 @@ export default function CustomVideoPlayer({
     video.addEventListener("canplay", onCanPlay);
     video.addEventListener("ended", onEndedHandler);
     video.addEventListener("volumechange", onVolume);
+    video.addEventListener("progress", onProgress);
 
     return () => {
       video.removeEventListener("play", onPlay);
@@ -220,6 +236,7 @@ export default function CustomVideoPlayer({
       video.removeEventListener("canplay", onCanPlay);
       video.removeEventListener("ended", onEndedHandler);
       video.removeEventListener("volumechange", onVolume);
+      video.removeEventListener("progress", onProgress);
     };
   }, [autoPlay, startSeconds, onTimeUpdate, onEnded]);
 
@@ -230,10 +247,30 @@ export default function CustomVideoPlayer({
     else video.pause();
   }, []);
 
-  const onSeek = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+  const seekToPosition = useCallback((clientX: number) => {
+    const bar = seekbarRef.current;
     const video = videoRef.current;
-    if (!video) return;
-    video.currentTime = Number(e.target.value);
+    if (!bar || !video || !duration) return;
+    const rect = bar.getBoundingClientRect();
+    const pct = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    video.currentTime = pct * duration;
+  }, [duration]);
+
+  const onSeekBarPointerDown = useCallback((e: React.PointerEvent) => {
+    e.preventDefault();
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    setIsSeeking(true);
+    seekToPosition(e.clientX);
+    showControls();
+  }, [seekToPosition, showControls]);
+
+  const onSeekBarPointerMove = useCallback((e: React.PointerEvent) => {
+    if (e.pressure === 0) return;
+    seekToPosition(e.clientX);
+  }, [seekToPosition]);
+
+  const onSeekBarPointerUp = useCallback(() => {
+    setIsSeeking(false);
   }, []);
 
   const onVolumeChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
@@ -250,12 +287,12 @@ export default function CustomVideoPlayer({
   }, []);
 
   const toggleFullscreen = useCallback(() => {
-    const video = videoRef.current;
-    if (!video) return;
+    const el = containerRef.current;
+    if (!el) return;
     if (document.fullscreenElement) {
       document.exitFullscreen().catch(() => {});
     } else {
-      video.requestFullscreen().catch(() => {});
+      el.requestFullscreen().catch(() => {});
     }
   }, []);
 
@@ -325,6 +362,7 @@ export default function CustomVideoPlayer({
 
   return (
     <div
+      ref={containerRef}
       className="relative w-full h-full bg-black"
       onMouseMove={showControls}
       onTouchStart={showControls}
@@ -371,18 +409,47 @@ export default function CustomVideoPlayer({
       )}
 
       {/* Controls bar — visible on hover/touch, always visible when paused */}
-      <div className={`absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/95 via-black/60 to-transparent px-4 pt-10 pb-3 transition-opacity ${controlsVisible || !isPlaying ? "opacity-100" : "opacity-0 pointer-events-none"}`}>
-        {/* Seekbar */}
-        <input
-          type="range"
-          min={0}
-          max={duration || 0}
-          step={0.1}
-          value={currentTime}
-          onChange={onSeek}
+      <div className={`absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/95 via-black/60 to-transparent px-4 pt-10 pb-3 transition-opacity ${controlsVisible || !isPlaying || isSeeking ? "opacity-100" : "opacity-0 pointer-events-none"}`}>
+        {/* Seekbar with buffer indicator */}
+        <div
+          ref={seekbarRef}
+          className="group/seek relative w-full h-5 flex items-center cursor-pointer select-none touch-none"
+          onPointerDown={onSeekBarPointerDown}
+          onPointerMove={onSeekBarPointerMove}
+          onPointerUp={onSeekBarPointerUp}
+          role="slider"
           aria-label="Seek"
-          className="w-full h-1.5 bg-neutral-700/70 rounded-full appearance-none accent-orange-500 cursor-pointer hover:h-2 transition-all"
-        />
+          aria-valuemin={0}
+          aria-valuemax={duration || 0}
+          aria-valuenow={currentTime}
+          tabIndex={0}
+          onKeyDown={(e) => {
+            const video = videoRef.current;
+            if (!video) return;
+            if (e.key === "ArrowLeft") { e.preventDefault(); e.stopPropagation(); video.currentTime = Math.max(0, video.currentTime - 5); }
+            if (e.key === "ArrowRight") { e.preventDefault(); e.stopPropagation(); video.currentTime = Math.min(duration, video.currentTime + 5); }
+          }}
+        >
+          <div className="absolute inset-x-0 h-1 rounded-full bg-neutral-600/70 group-hover/seek:h-1.5 transition-all">
+            {/* Buffered */}
+            <div
+              className="absolute h-full bg-neutral-400/50 rounded-full transition-[width] duration-300"
+              style={{ width: duration > 0 ? `${(bufferedEnd / duration) * 100}%` : "0%" }}
+            />
+            {/* Played */}
+            <div
+              className="absolute h-full bg-orange-500 rounded-full"
+              style={{ width: duration > 0 ? `${(currentTime / duration) * 100}%` : "0%" }}
+            />
+          </div>
+          {/* Thumb */}
+          <div
+            className={`absolute w-3.5 h-3.5 bg-orange-500 rounded-full shadow-md -translate-x-1/2 pointer-events-none transition-opacity ${
+              isSeeking ? "opacity-100 scale-125" : "opacity-0 group-hover/seek:opacity-100"
+            }`}
+            style={{ left: duration > 0 ? `${(currentTime / duration) * 100}%` : "0%" }}
+          />
+        </div>
         <div className="flex items-center gap-3 mt-2.5 text-white text-sm">
           <button
             onClick={togglePlay}
