@@ -91,7 +91,12 @@ export default async function EpisodePage({ params }: Props) {
       <AdSlot placement="episode_top" />
 
       {/* Player — client component, never SSR */}
-      <EpisodePlayer mirrors={mirrors} episodeTitle={episodeTitle} />
+      <EpisodePlayer
+        mirrors={mirrors}
+        episodeTitle={episodeTitle}
+        episodeId={episode.id}
+        posterUrl={episode.thumbnailUrl ?? undefined}
+      />
 
       <AdSlot placement="episode_mid" />
 
