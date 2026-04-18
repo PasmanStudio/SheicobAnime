@@ -309,7 +309,7 @@ export default function EpisodePlayer({
             key={`${activeUnderlyingMirror?.id ?? "src"}-${state.sheicobTry}`}
             source={state.source}
             poster={posterUrl}
-            autoPlay
+            autoPlay={false}
             startSeconds={resumeFrom}
             onTimeUpdate={reportProgress}
             onError={() => {
