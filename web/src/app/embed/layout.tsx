@@ -29,6 +29,17 @@ export const metadata: Metadata = {
 export default function EmbedRootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en" className="dark">
+      <head>
+        {/*
+          ExoClick Client Hints delegation — the VAST preroll fetches from
+          s.magsrv.com inside this iframe, so the embed layout needs this tag
+          too (not just the site layout).
+        */}
+        <meta
+          httpEquiv="Delegate-CH"
+          content="Sec-CH-UA https://s.magsrv.com; Sec-CH-UA-Mobile https://s.magsrv.com; Sec-CH-UA-Arch https://s.magsrv.com; Sec-CH-UA-Model https://s.magsrv.com; Sec-CH-UA-Platform https://s.magsrv.com; Sec-CH-UA-Platform-Version https://s.magsrv.com; Sec-CH-UA-Bitness https://s.magsrv.com; Sec-CH-UA-Full-Version-List https://s.magsrv.com; Sec-CH-UA-Full-Version https://s.magsrv.com;"
+        />
+      </head>
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased bg-black text-white`}
       >

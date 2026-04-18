@@ -112,14 +112,18 @@ export default function CustomVideoPlayer({
         const hls = new HlsCtor({
           enableWorker: true,
           lowLatencyMode: false,
-          // Larger buffers so cheap CDNs (JKAnime, AnimeFlv mirrors) don't
-          // stall playback while downloading subsequent segments.
-          maxBufferLength: 60,          // target forward buffer (seconds)
-          maxMaxBufferLength: 300,      // absolute cap (seconds)
-          backBufferLength: 60,         // keep 60 s behind current time
+          // Tuned for proxied HLS: Railway free-tier adds latency per segment,
+          // so keep forward buffer modest to avoid flooding the proxy with
+          // concurrent requests. Aim for ~5 segments ahead (~30 s).
+          maxBufferLength: 30,          // target forward buffer (seconds)
+          maxMaxBufferLength: 120,      // absolute cap (seconds)
+          backBufferLength: 30,         // keep 30 s behind current time
           maxBufferHole: 0.5,           // tolerate up to 0.5 s gap in buffer
           nudgeOffset: 0.2,             // jump past small holes automatically
           nudgeMaxRetry: 5,
+          // Start playback faster: load only 1 fragment before attempting play
+          maxBufferSize: 30 * 1000 * 1000,  // 30 MB buffer cap
+          startFragPrefetch: true,           // prefetch next frag during current download
         });
         hlsRef.current = hls;
         hls.loadSource(source.url);

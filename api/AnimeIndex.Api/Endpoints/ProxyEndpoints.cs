@@ -117,11 +117,19 @@ public static class ProxyEndpoints
             }
         }
 
-        // Binary pass-through
+        // Binary pass-through (video segments, init data, etc.)
+        // Cache immutable segments — manifests were already handled above.
+        if (upstream.IsSuccessStatusCode && !looksLikeManifest)
+        {
+            ctx.Response.Headers["Cache-Control"] = "public, max-age=86400, immutable";
+        }
+
         try
         {
             await using var upstreamStream = await upstream.Content.ReadAsStreamAsync(ct);
-            await upstreamStream.CopyToAsync(ctx.Response.Body, 81920, ct);
+            // 256 KB copy buffer — video segments are 1-5 MB, larger buffer → fewer
+            // syscalls → better throughput through the Railway proxy.
+            await upstreamStream.CopyToAsync(ctx.Response.Body, 262_144, ct);
         }
         catch (OperationCanceledException) { /* client disconnected */ }
         finally
