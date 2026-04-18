@@ -89,7 +89,14 @@ export default function CustomVideoPlayer({
         const hls = new HlsCtor({
           enableWorker: true,
           lowLatencyMode: false,
-          backBufferLength: 30,
+          // Larger buffers so cheap CDNs (JKAnime, AnimeFlv mirrors) don't
+          // stall playback while downloading subsequent segments.
+          maxBufferLength: 60,          // target forward buffer (seconds)
+          maxMaxBufferLength: 300,      // absolute cap (seconds)
+          backBufferLength: 60,         // keep 60 s behind current time
+          maxBufferHole: 0.5,           // tolerate up to 0.5 s gap in buffer
+          nudgeOffset: 0.2,             // jump past small holes automatically
+          nudgeMaxRetry: 5,
         });
         hlsRef.current = hls;
         hls.loadSource(source.url);

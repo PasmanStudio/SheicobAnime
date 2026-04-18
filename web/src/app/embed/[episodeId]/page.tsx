@@ -35,7 +35,7 @@ export default async function EmbedPlayerPage({ params }: Readonly<Props>) {
     : `Episodio ${episode.episodeNumber}`;
 
   return (
-    <div className="w-full h-full">
+    <div className="w-full">
       <EpisodePlayer
         mirrors={mirrors}
         episodeTitle={episodeTitle}

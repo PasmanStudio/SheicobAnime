@@ -9,12 +9,12 @@ import CustomVideoPlayer from "./CustomVideoPlayer";
 import ResumePrompt from "./ResumePrompt";
 import VastPreroll from "./VastPreroll";
 
-// ExoClick VAST tag — if empty, we fall back to the simple banner preroll.
+// ExoClick VAST preroll — zone 5904192 (In-Stream Video, site SheicobAnime).
+// Zone ID is public (non-secret); env vars allow override without a redeploy.
+const EXOCLICK_ZONE = process.env.NEXT_PUBLIC_EXOCLICK_VAST_ZONE_ID ?? "5904192";
 const VAST_URL =
   process.env.NEXT_PUBLIC_EXOCLICK_VAST_URL ||
-  (process.env.NEXT_PUBLIC_EXOCLICK_VAST_ZONE_ID
-    ? `https://s.magsrv.com/v1/vast.php?idzone=${process.env.NEXT_PUBLIC_EXOCLICK_VAST_ZONE_ID}`
-    : "");
+  `https://s.magsrv.com/v1/vast.php?idzone=${EXOCLICK_ZONE}`;
 
 // A "display entry" is what the user sees as a button:
 //   - "sheicob" = the group of ALL resolvable mirrors (internally auto-failovers)

@@ -11,7 +11,11 @@ export const metadata: Metadata = {
 
 export default function EmbedLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <div className="w-screen h-screen bg-black overflow-hidden">
+    // No h-screen here — the layout must be content-height, not viewport-height.
+    // If we used h-screen, the inner div would grow whenever the parent
+    // (EmbeddedPlayerFrame) enlarged the iframe, triggering ResizeObserver →
+    // postMessage → parent grows again → infinite loop.
+    <div className="w-screen bg-black">
       {children}
     </div>
   );

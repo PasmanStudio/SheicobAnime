@@ -15,11 +15,18 @@ export default function EmbedHeightReporter() {
     if (w.parent === w) return; // not iframed
 
     const targetOrigin: string = w.location.origin;
+    let lastSent = 0;
+
     const post = () => {
       const height = Math.max(
         document.documentElement.scrollHeight,
         document.body.scrollHeight,
       );
+      // Deadband: skip if the change is insignificant (< 8 px) to prevent
+      // a feedback loop where the parent resizing the iframe causes the
+      // document to report a slightly-different height, which grows again.
+      if (Math.abs(height - lastSent) < 8) return;
+      lastSent = height;
       w.parent.postMessage({ type: "sheicob:resize", height }, targetOrigin);
     };
 
