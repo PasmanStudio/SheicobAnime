@@ -2,6 +2,15 @@
 
 import type { ResolvedSource } from "@/lib/types";
 import type Hls from "hls.js";
+import {
+  Maximize,
+  Pause,
+  PictureInPicture,
+  Play,
+  Settings,
+  Volume2,
+  VolumeX,
+} from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 interface CustomVideoPlayerProps {
@@ -302,6 +311,19 @@ export default function CustomVideoPlayer({
         ))}
       </video>
 
+      {/* Center play indicator (visible when paused) */}
+      {!isPlaying && !buffering && (
+        <button
+          onClick={togglePlay}
+          aria-label="Reproducir"
+          className="absolute inset-0 flex items-center justify-center group/play"
+        >
+          <span className="w-20 h-20 rounded-full bg-orange-500/90 flex items-center justify-center shadow-2xl transition-transform group-hover/play:scale-110">
+            <Play className="w-10 h-10 text-white fill-white translate-x-0.5" />
+          </span>
+        </button>
+      )}
+
       {/* Buffering spinner */}
       {buffering && (
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
@@ -310,7 +332,7 @@ export default function CustomVideoPlayer({
       )}
 
       {/* Controls bar */}
-      <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/90 via-black/50 to-transparent px-3 pt-8 pb-2 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+      <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/95 via-black/60 to-transparent px-4 pt-10 pb-3 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
         {/* Seekbar */}
         <input
           type="range"
@@ -320,18 +342,30 @@ export default function CustomVideoPlayer({
           value={currentTime}
           onChange={onSeek}
           aria-label="Seek"
-          className="w-full h-1 bg-neutral-700 rounded-full appearance-none accent-orange-500 cursor-pointer"
+          className="w-full h-1.5 bg-neutral-700/70 rounded-full appearance-none accent-orange-500 cursor-pointer hover:h-2 transition-all"
         />
-        <div className="flex items-center gap-3 mt-2 text-white text-sm">
-          <button onClick={togglePlay} aria-label={isPlaying ? "Pausa" : "Reproducir"} className="min-w-[32px]">
-            {isPlaying ? "⏸" : "▶"}
+        <div className="flex items-center gap-3 mt-2.5 text-white text-sm">
+          <button
+            onClick={togglePlay}
+            aria-label={isPlaying ? "Pausa" : "Reproducir"}
+            className="p-1.5 rounded hover:bg-white/10 transition-colors"
+          >
+            {isPlaying ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5 fill-white" />}
           </button>
-          <span className="text-xs tabular-nums">
+          <span className="text-xs tabular-nums text-neutral-200">
             {formatTime(currentTime)} / {formatTime(duration)}
           </span>
-          <div className="flex items-center gap-1 ml-2">
-            <button onClick={toggleMute} aria-label={muted ? "Activar sonido" : "Silenciar"}>
-              {muted || volume === 0 ? "🔇" : "🔊"}
+          <div className="flex items-center gap-1 ml-1 group/vol">
+            <button
+              onClick={toggleMute}
+              aria-label={muted ? "Activar sonido" : "Silenciar"}
+              className="p-1.5 rounded hover:bg-white/10 transition-colors"
+            >
+              {muted || volume === 0 ? (
+                <VolumeX className="w-5 h-5" />
+              ) : (
+                <Volume2 className="w-5 h-5" />
+              )}
             </button>
             <input
               type="range"
@@ -341,10 +375,10 @@ export default function CustomVideoPlayer({
               value={muted ? 0 : volume}
               onChange={onVolumeChange}
               aria-label="Volumen"
-              className="w-16 h-1 accent-orange-500 cursor-pointer"
+              className="w-0 group-hover/vol:w-20 h-1 accent-orange-500 cursor-pointer transition-all"
             />
           </div>
-          <div className="ml-auto flex items-center gap-2 relative">
+          <div className="ml-auto flex items-center gap-1 relative">
             {qualities.length > 0 && (
               <>
                 <button
@@ -352,22 +386,25 @@ export default function CustomVideoPlayer({
                   aria-label="Calidad"
                   aria-haspopup="menu"
                   aria-expanded={showSettings}
-                  className="px-2 py-0.5 text-xs border border-neutral-600 rounded hover:bg-neutral-800"
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded hover:bg-white/10 transition-colors text-xs font-medium"
                 >
-                  {activeQuality === -1
-                    ? "Auto"
-                    : qualities.find((q) => q.index === activeQuality)?.label ?? "Auto"}
+                  <Settings className="w-4 h-4" />
+                  <span className="tabular-nums">
+                    {activeQuality === -1
+                      ? "Auto"
+                      : qualities.find((q) => q.index === activeQuality)?.label ?? "Auto"}
+                  </span>
                 </button>
                 {showSettings && (
                   <div
                     role="menu"
-                    className="absolute bottom-8 right-0 bg-neutral-900 border border-neutral-700 rounded shadow-xl py-1 min-w-[100px] z-20"
+                    className="absolute bottom-10 right-0 bg-neutral-900/95 backdrop-blur border border-neutral-700/60 rounded-lg shadow-2xl py-1 min-w-[120px] z-20"
                   >
                     <button
                       role="menuitem"
                       onClick={() => selectQuality(-1)}
-                      className={`block w-full text-left px-3 py-1.5 text-xs hover:bg-neutral-800 ${
-                        activeQuality === -1 ? "text-orange-400" : ""
+                      className={`block w-full text-left px-3 py-1.5 text-xs hover:bg-white/10 transition-colors ${
+                        activeQuality === -1 ? "text-orange-400 font-medium" : ""
                       }`}
                     >
                       Auto
@@ -377,8 +414,8 @@ export default function CustomVideoPlayer({
                         key={q.index}
                         role="menuitem"
                         onClick={() => selectQuality(q.index)}
-                        className={`block w-full text-left px-3 py-1.5 text-xs hover:bg-neutral-800 ${
-                          activeQuality === q.index ? "text-orange-400" : ""
+                        className={`block w-full text-left px-3 py-1.5 text-xs hover:bg-white/10 transition-colors ${
+                          activeQuality === q.index ? "text-orange-400 font-medium" : ""
                         }`}
                       >
                         {q.label}
@@ -388,11 +425,21 @@ export default function CustomVideoPlayer({
                 )}
               </>
             )}
-            <button onClick={togglePip} aria-label="Picture in picture" title="PiP">
-              ⧉
+            <button
+              onClick={togglePip}
+              aria-label="Picture in picture"
+              title="Picture in picture"
+              className="p-1.5 rounded hover:bg-white/10 transition-colors"
+            >
+              <PictureInPicture className="w-5 h-5" />
             </button>
-            <button onClick={toggleFullscreen} aria-label="Pantalla completa" title="Pantalla completa">
-              ⛶
+            <button
+              onClick={toggleFullscreen}
+              aria-label="Pantalla completa"
+              title="Pantalla completa"
+              className="p-1.5 rounded hover:bg-white/10 transition-colors"
+            >
+              <Maximize className="w-5 h-5" />
             </button>
           </div>
         </div>
