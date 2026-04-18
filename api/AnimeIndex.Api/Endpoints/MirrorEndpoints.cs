@@ -1,6 +1,7 @@
 using AnimeIndex.Api.Data;
 using AnimeIndex.Api.DTOs;
 using AnimeIndex.Api.Infrastructure.Cache;
+using AnimeIndex.Api.Infrastructure.Proxy;
 using AnimeIndex.Api.Infrastructure.Resolvers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
@@ -51,9 +52,11 @@ public static class MirrorEndpoints
     /// copyrighted manifests in shared infrastructure.
     /// </summary>
     private static async Task<IResult> ResolveMirror(
+        HttpContext httpCtx,
         Guid id,
         AppDbContext db,
         ResolverRegistry registry,
+        ProxyUrlSigner proxySigner,
         IMemoryCache memCache,
         ILoggerFactory loggerFactory,
         CancellationToken ct = default)
@@ -94,7 +97,8 @@ public static class MirrorEndpoints
         try
         {
             var resolved = await resolver.ResolveAsync(mirror, ct);
-            var dto = ToDto(resolved);
+            var absoluteBase = $"{httpCtx.Request.Scheme}://{httpCtx.Request.Host}";
+            var dto = ToDto(resolved, proxySigner, absoluteBase);
 
             // TTL = ExpiresAt - 5min margin, capped between 30s and 30min
             var ttl = resolved.ExpiresAt - DateTimeOffset.UtcNow - TimeSpan.FromMinutes(5);
@@ -142,13 +146,25 @@ public static class MirrorEndpoints
         return Results.Ok(items);
     }
 
-    private static ResolvedSourceDto ToDto(ResolvedSource r) => new(
-        Url: r.Url,
-        Format: r.Format.ToString().ToLowerInvariant(),
-        Headers: r.Headers,
-        Subtitles: r.Subtitles?.Select(s => new SubtitleDto(s.Language, s.Label, s.Url)).ToList(),
-        Qualities: r.Qualities?.Select(q => new QualityDto(q.Height, q.Url, q.BandwidthKbps)).ToList(),
-        ExpiresAt: r.ExpiresAt,
-        ProxyRequired: r.ProxyRequired,
-        Hoster: r.Hoster);
+    private static ResolvedSourceDto ToDto(ResolvedSource r, ProxyUrlSigner proxySigner, string absoluteBase)
+    {
+        // Any source whose upstream requires a Referer MUST be proxied — browsers
+        // cannot set Referer for cross-origin <video>/fetch, and the upstream will 403.
+        var referer = r.Headers is not null && r.Headers.TryGetValue("Referer", out var ref0) ? ref0 : null;
+        var needsProxy = r.ProxyRequired || !string.IsNullOrEmpty(referer);
+
+        string RewriteUrl(string url) =>
+            needsProxy ? proxySigner.BuildProxyPath(url, referer, absoluteBase) : url;
+
+        return new ResolvedSourceDto(
+            Url: RewriteUrl(r.Url),
+            Format: r.Format.ToString().ToLowerInvariant(),
+            // Headers are satisfied server-side by the proxy; frontend must not try to set them
+            Headers: needsProxy ? null : r.Headers,
+            Subtitles: r.Subtitles?.Select(s => new SubtitleDto(s.Language, s.Label, s.Url)).ToList(),
+            Qualities: r.Qualities?.Select(q => new QualityDto(q.Height, RewriteUrl(q.Url), q.BandwidthKbps)).ToList(),
+            ExpiresAt: r.ExpiresAt,
+            ProxyRequired: needsProxy,
+            Hoster: r.Hoster);
+    }
 }

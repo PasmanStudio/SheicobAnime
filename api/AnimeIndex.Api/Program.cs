@@ -208,6 +208,9 @@ try
     builder.Services.AddSingleton<IHosterResolver, StreamwishResolver>();
     builder.Services.AddSingleton<ResolverRegistry>();
 
+    // ─── Streaming proxy (signed HMAC) ──────────────────
+    builder.Services.AddSingleton<AnimeIndex.Api.Infrastructure.Proxy.ProxyUrlSigner>();
+
     var app = builder.Build();
 
     // ─── Middleware pipeline ─────────────────────────────
@@ -281,6 +284,7 @@ try
     app.MapMirrorEndpoints();
     app.MapProgressEndpoints();
     app.MapAdminEndpoints();
+    app.MapProxyEndpoints();
 
     // ─── DB seeding ────────────────────────────────────────
     if (app.Environment.IsDevelopment())
