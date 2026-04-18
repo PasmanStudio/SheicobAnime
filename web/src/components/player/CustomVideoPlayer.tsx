@@ -290,7 +290,7 @@ export default function CustomVideoPlayer({
         className="w-full h-full"
         onClick={togglePlay}
       >
-        {source.subtitles.map((sub) => (
+        {source.subtitles?.map((sub) => (
           <track
             key={sub.url}
             kind="subtitles"
