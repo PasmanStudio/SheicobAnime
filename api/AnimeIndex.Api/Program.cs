@@ -6,6 +6,7 @@ using AnimeIndex.Api.DTOs.Admin;
 using AnimeIndex.Api.Endpoints;
 using AnimeIndex.Api.Infrastructure.Auth;
 using AnimeIndex.Api.Infrastructure.Cache;
+using AnimeIndex.Api.Infrastructure.Resolvers;
 using AnimeIndex.Api.Infrastructure.Scraping;
 using AnimeIndex.Api.Validators;
 using FluentValidation;
@@ -192,6 +193,18 @@ try
         c.Timeout = TimeSpan.FromSeconds(10);
     });
     builder.Services.AddScoped<MirrorProbeService>();
+
+    // ─── Resolvers (Phase 20) ─────────────────────────────
+    builder.Services.AddMemoryCache();
+    builder.Services.AddHttpClient("resolver", c =>
+    {
+        c.Timeout = TimeSpan.FromSeconds(15);
+    });
+    builder.Services.AddSingleton<IHosterResolver, Mp4UploadResolver>();
+    builder.Services.AddSingleton<IHosterResolver, VidhideResolver>();
+    builder.Services.AddSingleton<IHosterResolver, OkruResolver>();
+    builder.Services.AddSingleton<IHosterResolver, StreamwishResolver>();
+    builder.Services.AddSingleton<ResolverRegistry>();
 
     var app = builder.Build();
 
