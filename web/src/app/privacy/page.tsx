@@ -32,6 +32,13 @@ export default function PrivacyPolicyPage() {
           <p>Utilizamos:</p>
           <ul className="list-disc list-inside mt-2 space-y-1 text-neutral-400">
             <li><strong>localStorage:</strong> Para guardar tu consentimiento de publicidad y búsquedas recientes. Estos datos nunca salen de tu navegador.</li>
+            <li>
+              <strong>Cookie <code>sheicob_did</code>:</strong> Un identificador anónimo aleatorio (UUID) generado por nuestro servidor
+              y almacenado en tu navegador por hasta 2 años. Se usa únicamente para recordar el punto donde dejaste de ver
+              un episodio (función &quot;Continuar viendo&quot;). No se vincula a tu identidad, correo, IP
+              persistente ni a servicios de terceros. Los datos de progreso se eliminan automáticamente tras 180 días de
+              inactividad. Podés borrar esta cookie desde tu navegador en cualquier momento para reiniciar tu historial anónimo.
+            </li>
             <li><strong>Cookies de terceros:</strong> Nuestros socios publicitarios (Adsterra) y de comentarios (Disqus) pueden establecer cookies para personalizar anuncios y funcionalidades. Estas cookies se rigen por las políticas de privacidad de cada proveedor.</li>
           </ul>
         </section>

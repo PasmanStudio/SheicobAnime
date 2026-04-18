@@ -4,6 +4,7 @@ using AnimeIndex.Api.Data;
 using AnimeIndex.Api.DTOs;
 using AnimeIndex.Api.DTOs.Admin;
 using AnimeIndex.Api.Endpoints;
+using AnimeIndex.Api.Infrastructure;
 using AnimeIndex.Api.Infrastructure.Auth;
 using AnimeIndex.Api.Infrastructure.Cache;
 using AnimeIndex.Api.Infrastructure.Resolvers;
@@ -180,7 +181,8 @@ try
         {
             policy.WithOrigins(corsOrigins)
                   .AllowAnyHeader()
-                  .AllowAnyMethod();
+                  .AllowAnyMethod()
+                  .AllowCredentials();
         });
     });
 
@@ -253,6 +255,9 @@ try
     app.UseRateLimiter();
     app.UseCors();
 
+    // Device-id cookie (anonymous viewer identifier for watch_progress)
+    app.UseMiddleware<DeviceIdMiddleware>();
+
     // ─── Hangfire Dashboard ──────────────────────────────
     if (!app.Environment.EnvironmentName.Equals("Testing", StringComparison.OrdinalIgnoreCase))
     {
@@ -274,6 +279,7 @@ try
     app.MapEpisodeEndpoints();
     app.MapGenreEndpoints();
     app.MapMirrorEndpoints();
+    app.MapProgressEndpoints();
     app.MapAdminEndpoints();
 
     // ─── DB seeding ────────────────────────────────────────

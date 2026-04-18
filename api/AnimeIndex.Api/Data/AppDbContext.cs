@@ -12,6 +12,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<SeriesGenre> SeriesGenres => Set<SeriesGenre>();
     public DbSet<BlockedSlug> BlockedSlugs => Set<BlockedSlug>();
     public DbSet<ScrapeJob> ScrapeJobs => Set<ScrapeJob>();
+    public DbSet<WatchProgress> WatchProgress => Set<WatchProgress>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -145,6 +146,25 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
                 .WithMany()
                 .HasForeignKey(j => j.SeriesId)
                 .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        // ─── WatchProgress ───────────────────────────────
+        modelBuilder.Entity<WatchProgress>(e =>
+        {
+            e.ToTable("watch_progress");
+            e.HasKey(w => new { w.DeviceId, w.EpisodeId });
+            e.Property(w => w.SeriesSlug).IsRequired();
+            e.Property(w => w.UpdatedAt).HasDefaultValueSql("now()");
+            e.Property(w => w.Completed).HasDefaultValue(false);
+
+            e.HasIndex(w => new { w.DeviceId, w.UpdatedAt })
+                .IsDescending(false, true)
+                .HasDatabaseName("idx_watch_progress_device_updated");
+
+            e.HasOne(w => w.Episode)
+                .WithMany()
+                .HasForeignKey(w => w.EpisodeId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
 
         // Snake case naming convention for all columns

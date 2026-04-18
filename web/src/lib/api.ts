@@ -5,12 +5,14 @@ import type {
     HealthResponse,
     Mirror,
     PaginatedResponse,
+    RecentProgress,
     ResolvableMirror,
     ResolvedSource,
     SearchQueryParams,
     Series,
     SeriesQueryParams,
     SeriesSuggest,
+    WatchProgress,
 } from "./types";
 
 // ─── Configuration ───────────────────────────────────
@@ -43,6 +45,7 @@ async function request<T>(
   const res = await fetch(url, {
     ...options,
     cache: "no-store",
+    credentials: "include", // send sheicob_did cookie for watch_progress endpoints
     headers: {
       "Content-Type": "application/json",
       ...options.headers,
@@ -181,5 +184,35 @@ export async function resolveMirror(mirrorId: string): Promise<ResolvedSource> {
 export async function getResolvableSet(episodeId: string): Promise<ResolvableMirror[]> {
   return request<ResolvableMirror[]>(
     `/mirrors/${encodeURIComponent(episodeId)}/resolvable-set`
+  );
+}
+
+// ─── Watch progress ──────────────────────────────────
+
+export async function getWatchProgress(episodeId: string): Promise<WatchProgress | null> {
+  try {
+    return await request<WatchProgress>(
+      `/progress/${encodeURIComponent(episodeId)}`
+    );
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) return null;
+    throw err;
+  }
+}
+
+export async function updateWatchProgress(
+  episodeId: string,
+  positionSeconds: number,
+  durationSeconds: number
+): Promise<void> {
+  await request<void>(`/progress/${encodeURIComponent(episodeId)}`, {
+    method: "PUT",
+    body: JSON.stringify({ positionSeconds, durationSeconds }),
+  });
+}
+
+export async function getRecentProgress(limit = 20): Promise<RecentProgress[]> {
+  return request<RecentProgress[]>(
+    `/progress/recent${toQueryString({ limit })}`
   );
 }

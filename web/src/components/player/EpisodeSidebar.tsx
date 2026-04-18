@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import Image from "next/image";
 import Link from "next/link";
-import type { Episode } from "@/lib/types";
+import type { Episode, RecentProgress } from "@/lib/types";
+import { getRecentProgress } from "@/lib/api";
 
 interface EpisodeSidebarProps {
   episodes: Episode[];
@@ -22,6 +23,20 @@ export default function EpisodeSidebar({
 }: EpisodeSidebarProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [filter, setFilter] = useState("");
+  const [progressMap, setProgressMap] = useState<Map<string, RecentProgress>>(new Map());
+
+  useEffect(() => {
+    let cancelled = false;
+    getRecentProgress(100)
+      .then((items) => {
+        if (cancelled) return;
+        const map = new Map<string, RecentProgress>();
+        for (const p of items) map.set(p.episodeId, p);
+        setProgressMap(map);
+      })
+      .catch(() => { /* silent — progress is optional */ });
+    return () => { cancelled = true; };
+  }, []);
 
   const filtered = useMemo(() => {
     if (!filter.trim()) return episodes;
@@ -80,6 +95,10 @@ export default function EpisodeSidebar({
                 {filtered.map((ep) => {
                   const isCurrent = ep.episodeNumber === currentEpisodeNumber;
                   const thumb = ep.thumbnailUrl ?? ep.series?.coverUrl ?? seriesCoverUrl ?? null;
+                  const prog = progressMap.get(ep.id);
+                  const ratio = prog && prog.durationSeconds > 0
+                    ? Math.min(100, Math.round((prog.positionSeconds / prog.durationSeconds) * 100))
+                    : 0;
 
                   return (
                     <li key={ep.id}>
@@ -105,6 +124,19 @@ export default function EpisodeSidebar({
                           ) : (
                             <div className="w-full h-full flex items-center justify-center text-neutral-600 text-[10px]">
                               Sin img
+                            </div>
+                          )}
+                          {prog?.completed && (
+                            <span className="absolute top-0.5 right-0.5 bg-green-600 text-white text-[9px] font-bold px-1 rounded">
+                              Visto
+                            </span>
+                          )}
+                          {prog && !prog.completed && ratio > 0 && (
+                            <div className="absolute bottom-0 left-0 right-0 h-1 bg-black/60">
+                              <div
+                                className="h-full bg-orange-500"
+                                style={{ width: `${ratio}%` }}
+                              />
                             </div>
                           )}
                         </div>

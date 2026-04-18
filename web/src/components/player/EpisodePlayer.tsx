@@ -3,8 +3,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Mirror, ResolvableMirror, ResolvedSource } from "@/lib/types";
 import { ApiError, getResolvableSet, reportMirrorFailure, resolveMirror } from "@/lib/api";
+import { useWatchProgress } from "@/hooks/useWatchProgress";
 import AdSlot from "@/components/ads/AdSlot";
 import CustomVideoPlayer from "./CustomVideoPlayer";
+import ResumePrompt from "./ResumePrompt";
 
 type PlayerState =
   | { kind: "preroll"; mirrorIdx: number; remaining: number }
@@ -46,6 +48,12 @@ export default function EpisodePlayer({
 
   const [resolvableSet, setResolvableSet] = useState<Map<string, ResolvableMirror> | null>(null);
   const [reported, setReported] = useState<Set<string>>(new Set());
+
+  // Watch progress + resume prompt
+  const { initial: progress, canResume, reportProgress, flush } = useWatchProgress(episodeId);
+  const [resumeDecision, setResumeDecision] = useState<"pending" | "accepted" | "dismissed">("pending");
+  const resumeFrom =
+    resumeDecision === "accepted" && progress ? progress.positionSeconds : 0;
 
   // Reorder: Sheicob (resolvable) first, by priority; then iframe-only by priority
   const orderedMirrors = useMemo(() => {
@@ -124,14 +132,33 @@ export default function EpisodePlayer({
 
   const handleSkipPreroll = useCallback(() => {
     if (state.kind !== "preroll") return;
+    const mirror = orderedMirrors[state.mirrorIdx];
+    const isResolvable = mirror && resolvableSet?.get(mirror.id)?.resolvable === true;
+    // Resume only matters for resolvable mirrors (iframes can't seek).
+    // Hold in "resolving" (spinner + prompt overlay) until the viewer picks Aceptar/Cancelar.
+    if (isResolvable && canResume && resumeDecision === "pending") {
+      setState({ kind: "resolving", mirrorIdx: state.mirrorIdx });
+      return;
+    }
     void startMirror(state.mirrorIdx);
-  }, [state, startMirror]);
+  }, [state, startMirror, canResume, resumeDecision, orderedMirrors, resolvableSet]);
 
+  // Once the viewer decides (accept/dismiss), flush progress if dismissing and start playback.
+  useEffect(() => {
+    if (resumeDecision === "pending") return;
+    if (state.kind !== "resolving") return;
+    void startMirror(state.mirrorIdx);
+    // Only trigger on decision change, not on every state transition
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resumeDecision]);
+
+  // Flush progress before switching mirror (so the old mirror's position is saved)
   const handleMirrorSelect = useCallback(
     (idx: number) => {
+      flush();
       void startMirror(idx);
     },
-    [startMirror]
+    [startMirror, flush]
   );
 
   const handleReport = useCallback(async () => {
@@ -210,6 +237,8 @@ export default function EpisodePlayer({
             source={state.source}
             poster={posterUrl}
             autoPlay
+            startSeconds={resumeFrom}
+            onTimeUpdate={reportProgress}
             onError={() => {
               setState({ kind: "fallback_iframe", mirrorIdx: state.mirrorIdx });
             }}
@@ -233,6 +262,19 @@ export default function EpisodePlayer({
             <p className="text-sm text-red-400">{state.message}</p>
           </div>
         )}
+
+        {/* Resume prompt ("Un momento!") — held over the spinner while the viewer decides.
+            startMirror is gated on resumeDecision so the video never plays at 0 behind the modal. */}
+        {canResume &&
+          resumeDecision === "pending" &&
+          progress &&
+          state.kind === "resolving" && (
+            <ResumePrompt
+              positionSeconds={progress.positionSeconds}
+              onAccept={() => setResumeDecision("accepted")}
+              onCancel={() => setResumeDecision("dismissed")}
+            />
+          )}
       </div>
 
       {/* Mirror selector — Sheicob mirrors first, branded gold */}

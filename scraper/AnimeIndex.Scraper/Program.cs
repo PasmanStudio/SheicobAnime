@@ -90,6 +90,7 @@ try
     builder.Services.AddScoped<ScrapeOrchestratorJob>();
     builder.Services.AddScoped<ScrapeSchedulerJob>();
     builder.Services.AddScoped<BackfillJob>();
+    builder.Services.AddScoped<WatchProgressCleanupJob>();
 
     var app = builder.Build();
 
@@ -113,6 +114,14 @@ try
             "scraper",
             job => job.RunAsync(CancellationToken.None),
             source2Cron,
+            new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc });
+
+        // Daily cleanup of anonymous watch_progress rows (180-day retention)
+        recurring.AddOrUpdate<WatchProgressCleanupJob>(
+            "watch-progress-cleanup",
+            "scraper",
+            job => job.RunAsync(CancellationToken.None),
+            "0 3 * * *", // 03:00 UTC daily
             new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc });
 
         // Auto-create initial scrape jobs if none exist (first deployment bootstrap)

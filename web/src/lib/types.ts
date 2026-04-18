@@ -105,6 +105,24 @@ export interface ResolvableMirror {
   resolvable: boolean;
 }
 
+// ─── Watch progress ──────────────────────────────────
+
+export interface WatchProgress {
+  episodeId: string;
+  seriesSlug: string;
+  positionSeconds: number;
+  durationSeconds: number;
+  completed: boolean;
+  updatedAt: string;
+}
+
+export interface RecentProgress extends WatchProgress {
+  seriesTitle: string | null;
+  seriesCoverUrl: string | null;
+  episodeNumber: number;
+  episodeTitle: string | null;
+}
+
 // ─── API response shapes ─────────────────────────────
 
 export interface PaginatedResponse<T> {
