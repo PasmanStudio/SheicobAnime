@@ -19,11 +19,13 @@ public sealed class VidhideResolver : IHosterResolver
     private readonly IHttpClientFactory _httpFactory;
 
     private static readonly Regex EmbedIdRegex = new(
-        @"(?:vidhide|vid-hide|vidhidepro|d000d|kinoger|streamhide)[^/]*\.(?:com|net|to|pro|sx)/(?:embed-|e/|d/|v/)?([a-z0-9]+)",
+        @"(?:vidhide|vid-hide|vidhidepro|d000d|kinoger|streamhide)[^/]*\.(?:com|net|to|pro|sx)/(?:embed/|embed-|e/|d/|v/)?([a-z0-9]+)",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
+    // Vidhide uses the same indirection as Streamwish (sources:[{file:links.hlsN||...}] with URLs
+    // defined in separate `links.hlsN="..."` assignments). Scan for the .m3u8 URL directly.
     private static readonly Regex M3u8Regex = new(
-        @"(?:file|src|source|url)\s*[:=]\s*[""'](https?://[^""'\s]+\.m3u8[^""'\s]*)[""']",
+        @"(https?://[^\s""'\\<>]+\.m3u8[^\s""'\\<>]*)",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     public VidhideResolver(IHttpClientFactory httpFactory)
@@ -40,7 +42,8 @@ public sealed class VidhideResolver : IHosterResolver
 
         var id = idMatch.Groups[1].Value;
         var host = new Uri(mirror.EmbedUrl).Host;
-        var embedUrl = $"https://{host}/embed-{id}.html";
+        // Vidhide's current URL scheme is /embed/{id} — the old /embed-{id}.html returns 404.
+        var embedUrl = $"https://{host}/embed/{id}";
         var client = _httpFactory.CreateClient("resolver");
 
         try

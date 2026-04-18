@@ -15,9 +15,11 @@ public sealed class Mp4UploadResolver : IHosterResolver
 
     private readonly IHttpClientFactory _httpFactory;
 
+    // Mp4Upload's player calls `player.src({ type: "video/mp4", src: "https://aN.mp4upload.com:PORT/d/.../video.mp4" })`.
+    // The old loose pattern falsely matched `/player/videojs/video.min.js`. Anchor to player.src({ ... src: "..." }).
     private static readonly Regex Mp4SourceRegex = new(
-        @"(?:player\.src|src|file)\s*[:=]\s*[""']?(https?://[^""'\s)]+\.mp4[^""'\s)]*)",
-        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        @"player\.src\s*\(\s*\{[^}]*?src\s*:\s*[""'](https?://[^""'\s]+\.mp4[^""'\s]*)[""']",
+        RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.Compiled);
 
     private static readonly Regex EmbedIdRegex = new(
         @"mp4upload\.com/(?:embed-)?([a-z0-9]+)",

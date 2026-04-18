@@ -1,8 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import type Hls from "hls.js";
 import type { ResolvedSource } from "@/lib/types";
+import type Hls from "hls.js";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 interface CustomVideoPlayerProps {
   source: ResolvedSource;

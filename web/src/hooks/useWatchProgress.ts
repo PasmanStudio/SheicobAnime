@@ -1,8 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import type { WatchProgress } from "@/lib/types";
 import { getWatchProgress, updateWatchProgress } from "@/lib/api";
+import type { WatchProgress } from "@/lib/types";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 /** How often to persist progress to the server while playing. */
 const SAVE_INTERVAL_MS = 15_000;

@@ -1,10 +1,10 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { getRecentProgress } from "@/lib/api";
+import type { Episode, RecentProgress } from "@/lib/types";
 import Image from "next/image";
 import Link from "next/link";
-import type { Episode, RecentProgress } from "@/lib/types";
-import { getRecentProgress } from "@/lib/api";
+import { useEffect, useMemo, useState } from "react";
 
 interface EpisodeSidebarProps {
   episodes: Episode[];

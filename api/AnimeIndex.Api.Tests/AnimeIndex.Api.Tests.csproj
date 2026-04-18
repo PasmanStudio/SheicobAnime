@@ -25,4 +25,10 @@
     <ProjectReference Include="..\..\scraper\AnimeIndex.Scraper\AnimeIndex.Scraper.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Update="Fixtures\Resolvers\*.html">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
 </Project>

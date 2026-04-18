@@ -28,10 +28,14 @@ public class HosterResolversTests
     [Fact]
     public async Task Mp4Upload_ExtractsMp4UrlFromEmbedHtml()
     {
+        // Shape mirrors the real production markup: player.src({ type, src }) — see
+        // ResolverFixtureTests for a test that runs against an actual captured dump.
         var html = """
         <html><body><script>
-            var player = jwplayer("vplayer");
-            player.setup({ src: "https://www4.mp4upload.com/d/abc123/video.mp4", type: "mp4" });
+            player.src({
+                type: "video/mp4",
+                src: "https://www4.mp4upload.com/d/abc123/video.mp4"
+            });
         </script></body></html>
         """;
         var resolver = new Mp4UploadResolver(MakeFactory(html));

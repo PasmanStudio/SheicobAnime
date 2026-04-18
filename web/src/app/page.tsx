@@ -1,8 +1,8 @@
 import AdSlot from "@/components/ads/AdSlot";
 import InactivityAdTrigger from "@/components/ads/InactivityAdTrigger";
+import ContinueWatchingRow from "@/components/ui/ContinueWatchingRow";
 import HeroCarousel from "@/components/ui/HeroCarousel";
 import RecentEpisodes from "@/components/ui/RecentEpisodes";
-import ContinueWatchingRow from "@/components/ui/ContinueWatchingRow";
 import { getRecentEpisodes, getSeries } from "@/lib/api";
 import type { Episode, PaginatedResponse, Series } from "@/lib/types";
 import type { Metadata } from "next";

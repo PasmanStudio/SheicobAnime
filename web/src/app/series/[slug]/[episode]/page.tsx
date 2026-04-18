@@ -1,14 +1,14 @@
-import type { Metadata } from "next";
-import { notFound } from "next/navigation";
-import Link from "next/link";
-import { getEpisodeBySlug, getEpisodeMirrorsBySlug, getSeriesEpisodes, ApiError } from "@/lib/api";
-
-export const dynamic = "force-dynamic";
-import EpisodePlayer from "@/components/player/EpisodePlayer";
-import EpisodeSidebar from "@/components/player/EpisodeSidebar";
 import AdSlot from "@/components/ads/AdSlot";
 import NavigationAdTrigger from "@/components/ads/NavigationAdTrigger";
 import CommentSection from "@/components/comments/CommentSection";
+import EpisodePlayer from "@/components/player/EpisodePlayer";
+import EpisodeSidebar from "@/components/player/EpisodeSidebar";
+import { ApiError, getEpisodeBySlug, getEpisodeMirrorsBySlug, getSeriesEpisodes } from "@/lib/api";
+import type { Metadata } from "next";
+import Link from "next/link";
+import { notFound } from "next/navigation";
+
+export const dynamic = "force-dynamic";
 
 interface Props {
   params: { slug: string; episode: string };

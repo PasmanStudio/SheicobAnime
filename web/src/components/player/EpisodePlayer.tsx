@@ -1,10 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import type { Mirror, ResolvableMirror, ResolvedSource } from "@/lib/types";
-import { ApiError, getResolvableSet, reportMirrorFailure, resolveMirror } from "@/lib/api";
-import { useWatchProgress } from "@/hooks/useWatchProgress";
 import AdSlot from "@/components/ads/AdSlot";
+import { useWatchProgress } from "@/hooks/useWatchProgress";
+import { ApiError, getResolvableSet, reportMirrorFailure, resolveMirror } from "@/lib/api";
+import type { Mirror, ResolvableMirror, ResolvedSource } from "@/lib/types";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import CustomVideoPlayer from "./CustomVideoPlayer";
 import ResumePrompt from "./ResumePrompt";
 

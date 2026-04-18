@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import Image from "next/image";
-import Link from "next/link";
 import { getRecentProgress } from "@/lib/api";
 import type { RecentProgress } from "@/lib/types";
+import Image from "next/image";
+import Link from "next/link";
+import { useEffect, useState } from "react";
 
 function formatTime(sec: number): string {
   const s = Math.max(0, Math.floor(sec));

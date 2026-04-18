@@ -20,8 +20,11 @@ public sealed class StreamwishResolver : IHosterResolver
         @"(?:streamwish|swhoi|cilootv|swdyu|sfastwish|streamwsh)\.[^/]+/(?:e/|f/|embed-)?([a-z0-9]+)",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
+    // Streamwish's player references sources via `sources:[{file:links.hls4||links.hls3||links.hls2}]`
+    // where links.hlsN are set in separate assignments. The actual .m3u8 URL is the only hls manifest
+    // URL in the entire unpacked body, so we scan for it directly.
     private static readonly Regex SourceRegex = new(
-        @"file\s*:\s*[""'](https?://[^""'\s]+\.m3u8[^""'\s]*)[""']",
+        @"(https?://[^\s""'\\<>]+\.m3u8[^\s""'\\<>]*)",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     public StreamwishResolver(IHttpClientFactory httpFactory)
