@@ -275,7 +275,12 @@ public sealed class Source2Strategy(
                     genres.Add(genreName);
             }
 
-            // Status from div.enemision class (currently | completed | notyet)
+            // Pre-read metadata list items (used by status fallback, type, and year)
+            var metaItems = await Page.Locator("div.card-bod ul li").AllAsync();
+
+            // Status — try div.enemision class first, then fall back to
+            // the "Estado:" text in the metadata list (JKAnime uses "Concluido",
+            // "En emision", "Por estrenar", etc.).
             string? status = null;
             var statusEl = Page.Locator("div.card-bod div.enemision");
             if (await statusEl.CountAsync() > 0)
@@ -290,10 +295,28 @@ public sealed class Source2Strategy(
                     var statusText = (await statusEl.First.InnerTextAsync()).Trim().ToLowerInvariant();
                     if (statusText.Contains("emision") || statusText.Contains("emisión"))
                         status = "ongoing";
-                    else if (statusText.Contains("finalizado"))
+                    else if (statusText.Contains("concluido") || statusText.Contains("finalizado"))
                         status = "completed";
                     else if (statusText.Contains("estrenar"))
                         status = "upcoming";
+                }
+            }
+
+            // Fallback: scan metadata <li> items for "Estado:" text
+            if (status is null)
+            {
+                foreach (var li in metaItems)
+                {
+                    var liText = (await li.InnerTextAsync()).Trim().ToLowerInvariant();
+                    if (!liText.Contains("estado")) continue;
+
+                    if (liText.Contains("concluido") || liText.Contains("finalizado"))
+                        status = "completed";
+                    else if (liText.Contains("emision") || liText.Contains("emisión"))
+                        status = "ongoing";
+                    else if (liText.Contains("estrenar"))
+                        status = "upcoming";
+                    break;
                 }
             }
 
@@ -312,7 +335,6 @@ public sealed class Source2Strategy(
 
             // Year — extract from metadata list items (e.g. "Emitido: Oct 2023", "Año: 2023")
             short? year = null;
-            var metaItems = await Page.Locator("div.card-bod ul li").AllAsync();
             foreach (var li in metaItems)
             {
                 var text = (await li.InnerTextAsync()).Trim();
@@ -330,7 +352,7 @@ public sealed class Source2Strategy(
                 Slug: slug,
                 Title: title.Trim(),
                 CoverUrl: coverUrl,
-                Status: status ?? "ongoing",
+                Status: status,  // null → COALESCE preserves directory value
                 Type: type ?? "tv",
                 Synopsis: synopsis,
                 Year: year,

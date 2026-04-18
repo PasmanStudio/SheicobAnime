@@ -328,7 +328,7 @@ public sealed class Source1Strategy(
                 Slug: slug,
                 Title: title.Trim(),
                 CoverUrl: coverUrl,
-                Status: status ?? "ongoing",
+                Status: status,  // null → COALESCE preserves existing value
                 Type: type ?? "tv",
                 Synopsis: synopsis,
                 Score: score,
