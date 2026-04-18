@@ -73,6 +73,22 @@ public sealed class Source2Strategy(
                 continue;
             }
 
+            // ── Skip completed series that already have episodes ──
+            // If a series is marked "completed" and we already have episodes indexed,
+            // there's no need to re-scrape its detail + episode pages — saves huge time.
+            var existing = await db.Series
+                .Where(s => s.Slug == series.Slug)
+                .Select(s => new { s.Id, s.Status, EpisodeCount = s.Episodes.Count })
+                .FirstOrDefaultAsync(ct);
+
+            if (existing is { Status: "completed", EpisodeCount: > 0 })
+            {
+                logger.LogDebug("Skipping completed series {Slug} — already has {Count} episodes",
+                    series.Slug, existing.EpisodeCount);
+                seriesCount++;
+                continue;
+            }
+
             // Navigate to series detail page for enrichment
             var detail = await ScrapeSeriesDetailAsync(baseUrl, series.Slug, delayMs, ct);
             var enriched = detail ?? series;

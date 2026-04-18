@@ -72,51 +72,12 @@ export default async function SeriesPage({ params, searchParams }: Props) {
         </div>
 
         {/* Info */}
-        <div className="flex-1 space-y-3">
+        <div className="flex-1 space-y-4">
           <h1 className="text-2xl md:text-3xl font-bold text-white">
             {series.title}
           </h1>
           {series.titleRomaji && series.titleRomaji !== series.title && (
             <p className="text-neutral-400 text-sm">{series.titleRomaji}</p>
-          )}
-
-          {/* Meta badges */}
-          <div className="flex flex-wrap gap-2 text-xs">
-            {series.status && (
-              <span className="px-2 py-0.5 rounded bg-neutral-800 text-neutral-300 capitalize">
-                {series.status}
-              </span>
-            )}
-            {series.type && (
-              <span className="px-2 py-0.5 rounded bg-neutral-800 text-neutral-300 uppercase">
-                {series.type}
-              </span>
-            )}
-            {series.year && (
-              <span className="px-2 py-0.5 rounded bg-neutral-800 text-neutral-300">
-                {series.year}
-              </span>
-            )}
-            {series.score !== null && (
-              <span className="px-2 py-0.5 rounded bg-indigo-900/60 text-indigo-300">
-                ★ {series.score.toFixed(1)}
-              </span>
-            )}
-          </div>
-
-          {/* Genres */}
-          {series.genres.length > 0 && (
-            <div className="flex flex-wrap gap-1.5">
-              {series.genres.map((g) => (
-                <Link
-                  key={g.id}
-                  href={`/genres/${encodeURIComponent(g.name)}`}
-                  className="px-2 py-0.5 text-xs rounded-full border border-indigo-700/50 text-indigo-400 hover:bg-indigo-700/20 transition-colors"
-                >
-                  {g.name}
-                </Link>
-              ))}
-            </div>
           )}
 
           {/* Synopsis */}
@@ -125,6 +86,75 @@ export default async function SeriesPage({ params, searchParams }: Props) {
               {series.synopsis}
             </p>
           )}
+
+          {/* Genres */}
+          {series.genres.length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {series.genres.map((g) => (
+                <Link
+                  key={g.id}
+                  href={`/genres/${encodeURIComponent(g.name)}`}
+                  className="px-2.5 py-1 text-xs rounded-full border border-indigo-700/50 text-indigo-400 hover:bg-indigo-700/20 transition-colors"
+                >
+                  {g.name}
+                </Link>
+              ))}
+            </div>
+          )}
+
+          {/* Metadata grid */}
+          <dl className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-2 text-sm mt-2">
+            {series.type && (
+              <div>
+                <dt className="text-neutral-500 text-xs font-medium">Tipo</dt>
+                <dd className="text-neutral-200 capitalize">{
+                  series.type === "tv" ? "Serie" :
+                  series.type === "movie" ? "Película" :
+                  series.type.toUpperCase()
+                }</dd>
+              </div>
+            )}
+            {series.status && (
+              <div>
+                <dt className="text-neutral-500 text-xs font-medium">Estado</dt>
+                <dd>
+                  <span className={`inline-block px-2 py-0.5 text-xs rounded font-medium ${
+                    series.status === "ongoing"
+                      ? "bg-green-900/50 text-green-400"
+                      : series.status === "completed"
+                      ? "bg-blue-900/50 text-blue-400"
+                      : series.status === "upcoming"
+                      ? "bg-yellow-900/50 text-yellow-400"
+                      : "bg-neutral-800 text-neutral-300"
+                  }`}>
+                    {series.status === "ongoing" ? "En emisión" :
+                     series.status === "completed" ? "Concluido" :
+                     series.status === "upcoming" ? "Próximamente" :
+                     series.status === "hiatus" ? "En pausa" :
+                     series.status}
+                  </span>
+                </dd>
+              </div>
+            )}
+            {series.year && (
+              <div>
+                <dt className="text-neutral-500 text-xs font-medium">Año</dt>
+                <dd className="text-neutral-200">{series.year}</dd>
+              </div>
+            )}
+            {series.episodeCount !== null && series.episodeCount > 0 && (
+              <div>
+                <dt className="text-neutral-500 text-xs font-medium">Episodios</dt>
+                <dd className="text-neutral-200">{series.episodeCount}</dd>
+              </div>
+            )}
+            {series.score !== null && (
+              <div>
+                <dt className="text-neutral-500 text-xs font-medium">Puntuación</dt>
+                <dd className="text-indigo-300">★ {series.score.toFixed(1)}</dd>
+              </div>
+            )}
+          </dl>
         </div>
       </div>
 
@@ -133,7 +163,7 @@ export default async function SeriesPage({ params, searchParams }: Props) {
       {/* Episodes */}
       <section className="mt-8">
         <h2 className="text-lg font-semibold text-white mb-4">
-          Episodes
+          Episodios
           {series.episodeCount !== null && (
             <span className="ml-2 text-sm text-neutral-500 font-normal">
               ({series.episodeCount} total)
@@ -142,7 +172,7 @@ export default async function SeriesPage({ params, searchParams }: Props) {
         </h2>
 
         {episodesPage.data.length === 0 ? (
-          <p className="text-neutral-500 text-sm">No episodes available yet.</p>
+          <p className="text-neutral-500 text-sm">Aún no hay episodios disponibles.</p>
         ) : (
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2">
             {episodesPage.data.map((ep) => (

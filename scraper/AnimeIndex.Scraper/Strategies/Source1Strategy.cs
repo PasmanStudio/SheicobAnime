@@ -77,6 +77,20 @@ public sealed class Source1Strategy(
                 continue;
             }
 
+            // ── Skip completed series that already have episodes ──
+            var existing = await db.Series
+                .Where(s => s.Slug == series.Slug)
+                .Select(s => new { s.Id, s.Status, EpisodeCount = s.Episodes.Count })
+                .FirstOrDefaultAsync(ct);
+
+            if (existing is { Status: "completed", EpisodeCount: > 0 })
+            {
+                logger.LogDebug("Skipping completed series {Slug} — already has {Count} episodes",
+                    series.Slug, existing.EpisodeCount);
+                seriesCount++;
+                continue;
+            }
+
             // Get full series detail (synopsis, genres, score, etc.)
             var detail = await ScrapeSeriesDetailAsync(baseUrl, series.Slug, delayMs, ct);
             var enriched = detail ?? series;
