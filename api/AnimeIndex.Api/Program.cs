@@ -1,4 +1,5 @@
 using System.Threading.RateLimiting;
+using Microsoft.AspNetCore.HttpOverrides;
 using AnimeIndex.Api;
 using AnimeIndex.Api.Data;
 using AnimeIndex.Api.DTOs;
@@ -212,6 +213,26 @@ try
     builder.Services.AddSingleton<AnimeIndex.Api.Infrastructure.Proxy.ProxyUrlSigner>();
 
     var app = builder.Build();
+
+    // ─── Forwarded Headers (Railway / Cloudflare reverse proxy) ──
+    // Railway terminates TLS at its edge and forwards requests to the container
+    // over plain HTTP. Without this, HttpContext.Request.Scheme is "http" and
+    // proxy URLs returned by /mirrors/{id}/resolve have an http:// base, causing
+    // Mixed Content errors in the browser.
+    // ─── Forwarded Headers (Railway / Cloudflare reverse proxy) ──
+    // Railway terminates TLS at its edge and forwards requests to the container
+    // over plain HTTP. Without this, HttpContext.Request.Scheme is "http" and
+    // proxy URLs returned by /mirrors/{id}/resolve have an http:// base, causing
+    // Mixed Content errors in the browser.
+    {
+        var fhOpts = new ForwardedHeadersOptions
+        {
+            ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto,
+        };
+        fhOpts.KnownNetworks.Clear();
+        fhOpts.KnownProxies.Clear();
+        app.UseForwardedHeaders(fhOpts);
+    }
 
     // ─── Middleware pipeline ─────────────────────────────
 
