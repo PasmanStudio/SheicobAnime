@@ -1,9 +1,9 @@
 import AdSlot from "@/components/ads/AdSlot";
 import NavigationAdTrigger from "@/components/ads/NavigationAdTrigger";
 import CommentSection from "@/components/comments/CommentSection";
-import EpisodePlayer from "@/components/player/EpisodePlayer";
+import EmbeddedPlayerFrame from "@/components/player/EmbeddedPlayerFrame";
 import EpisodeSidebar from "@/components/player/EpisodeSidebar";
-import { ApiError, getEpisodeBySlug, getEpisodeMirrorsBySlug, getSeriesEpisodes } from "@/lib/api";
+import { ApiError, getEpisodeBySlug, getSeriesEpisodes } from "@/lib/api";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -39,16 +39,13 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   }
 }
 
-export default async function EpisodePage({ params }: Props) {
+export default async function EpisodePage({ params }: Readonly<Props>) {
   const episodeNumber = Number(params.episode);
   if (!Number.isInteger(episodeNumber) || episodeNumber < 1) notFound();
 
-  let episode, mirrors;
+  let episode;
   try {
-    [episode, mirrors] = await Promise.all([
-      getEpisodeBySlug(params.slug, episodeNumber),
-      getEpisodeMirrorsBySlug(params.slug, episodeNumber),
-    ]);
+    episode = await getEpisodeBySlug(params.slug, episodeNumber);
   } catch (err) {
     if (err instanceof ApiError && err.status === 404) notFound();
     throw err;
@@ -97,13 +94,9 @@ export default async function EpisodePage({ params }: Props) {
 
       <AdSlot placement="episode_top" />
 
-      {/* Player — client component, never SSR */}
-      <EpisodePlayer
-        mirrors={mirrors}
-        episodeTitle={episodeTitle}
-        episodeId={episode.id}
-        posterUrl={episode.thumbnailUrl ?? undefined}
-      />
+      {/* Player — rendered inside a same-origin iframe to isolate the player
+          DOM/JS runtime from the host page. See /app/embed/[episodeId]/. */}
+      <EmbeddedPlayerFrame episodeId={episode.id} episodeTitle={episodeTitle} />
 
       <AdSlot placement="episode_mid" />
 
