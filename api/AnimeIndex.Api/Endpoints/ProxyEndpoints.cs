@@ -36,15 +36,12 @@ public static class ProxyEndpoints
         IHttpClientFactory httpFactory,
         ProxyUrlSigner signer,
         ILoggerFactory loggerFactory,
-        string u,
-        string r,
-        long exp,
-        string sig,
+        string t,
         CancellationToken ct)
     {
         var logger = loggerFactory.CreateLogger("ProxyEndpoints");
 
-        if (!signer.TryVerify(u, r, exp, sig, out var upstreamUrl, out var referer))
+        if (!signer.TryVerify(t, out var upstreamUrl, out var referer))
         {
             return Results.StatusCode((int)HttpStatusCode.Forbidden);
         }
