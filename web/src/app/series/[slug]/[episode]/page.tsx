@@ -43,16 +43,23 @@ export default async function EpisodePage({ params }: Props) {
   const episodeNumber = Number(params.episode);
   if (!Number.isInteger(episodeNumber) || episodeNumber < 1) notFound();
 
-  let episode, mirrors, allEpisodes;
+  let episode, mirrors;
   try {
-    [episode, mirrors, { data: allEpisodes }] = await Promise.all([
+    [episode, mirrors] = await Promise.all([
       getEpisodeBySlug(params.slug, episodeNumber),
       getEpisodeMirrorsBySlug(params.slug, episodeNumber),
-      getSeriesEpisodes(params.slug, { pageSize: 500 }),
     ]);
   } catch (err) {
     if (err instanceof ApiError && err.status === 404) notFound();
     throw err;
+  }
+
+  // Episode sidebar list is non-critical — never let a slow/failed call 500 the page
+  let allEpisodes: Awaited<ReturnType<typeof getSeriesEpisodes>>["data"] = [];
+  try {
+    ({ data: allEpisodes } = await getSeriesEpisodes(params.slug, { pageSize: 500 }));
+  } catch {
+    allEpisodes = [];
   }
 
   const episodeTitle = episode.title

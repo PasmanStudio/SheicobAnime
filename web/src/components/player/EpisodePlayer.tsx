@@ -8,11 +8,18 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import CustomVideoPlayer from "./CustomVideoPlayer";
 import ResumePrompt from "./ResumePrompt";
 
+// A "display entry" is what the user sees as a button:
+//   - "sheicob" = the group of ALL resolvable mirrors (internally auto-failovers)
+//   - "iframe"  = a single non-resolvable mirror, shown with its provider name
+type DisplayEntry =
+  | { kind: "sheicob" }
+  | { kind: "iframe"; mirror: Mirror };
+
 type PlayerState =
-  | { kind: "preroll"; mirrorIdx: number; remaining: number }
-  | { kind: "resolving"; mirrorIdx: number }
-  | { kind: "playing"; mirrorIdx: number; source: ResolvedSource }
-  | { kind: "fallback_iframe"; mirrorIdx: number }
+  | { kind: "preroll"; displayIdx: number; sheicobTry: number; remaining: number }
+  | { kind: "resolving"; displayIdx: number; sheicobTry: number }
+  | { kind: "playing"; displayIdx: number; sheicobTry: number; source: ResolvedSource }
+  | { kind: "fallback_iframe"; displayIdx: number }
   | { kind: "error"; message: string };
 
 const PREROLL_SECONDS = 5;
@@ -55,20 +62,33 @@ export default function EpisodePlayer({
   const resumeFrom =
     resumeDecision === "accepted" && progress ? progress.positionSeconds : 0;
 
-  // Reorder: Sheicob (resolvable) first, by priority; then iframe-only by priority
-  const orderedMirrors = useMemo(() => {
-    if (!resolvableSet) return activeMirrors;
-    return [...activeMirrors].sort((a, b) => {
-      const aRes = resolvableSet.get(a.id)?.resolvable === true;
-      const bRes = resolvableSet.get(b.id)?.resolvable === true;
-      if (aRes !== bRes) return aRes ? -1 : 1;
-      return a.priority - b.priority;
-    });
+  // Resolvable mirrors, sorted by priority — the "Sheicob" group auto-failovers through this list
+  const resolvableMirrors = useMemo(() => {
+    if (!resolvableSet) return [] as Mirror[];
+    return activeMirrors.filter(
+      (m) => resolvableSet.get(m.id)?.resolvable === true
+    );
   }, [activeMirrors, resolvableSet]);
+
+  // Non-resolvable mirrors, shown individually with their provider name
+  const iframeMirrors = useMemo(() => {
+    if (!resolvableSet) return activeMirrors; // before resolvableSet loads, treat all as iframe
+    return activeMirrors.filter(
+      (m) => resolvableSet.get(m.id)?.resolvable !== true
+    );
+  }, [activeMirrors, resolvableSet]);
+
+  // Display entries: one "Sheicob" group button (if any resolvable) + every iframe mirror
+  const displayEntries = useMemo<DisplayEntry[]>(() => {
+    const entries: DisplayEntry[] = [];
+    if (resolvableMirrors.length > 0) entries.push({ kind: "sheicob" });
+    for (const m of iframeMirrors) entries.push({ kind: "iframe", mirror: m });
+    return entries;
+  }, [resolvableMirrors, iframeMirrors]);
 
   const [state, setState] = useState<PlayerState>(() =>
     activeMirrors.length > 0
-      ? { kind: "preroll", mirrorIdx: 0, remaining: PREROLL_SECONDS }
+      ? { kind: "preroll", displayIdx: 0, sheicobTry: 0, remaining: PREROLL_SECONDS }
       : { kind: "error", message: "No hay enlaces disponibles para este episodio." }
   );
 
@@ -100,79 +120,119 @@ export default function EpisodePlayer({
     return () => clearTimeout(t);
   }, [state]);
 
-  const startMirror = useCallback(
-    async (idx: number) => {
-      const mirror = orderedMirrors[idx];
-      if (!mirror) return;
-      const isResolvable = resolvableSet?.get(mirror.id)?.resolvable === true;
+  // Resolve the (displayIdx, sheicobTry) pair → play / fallback / advance
+  const startEntry = useCallback(
+    async (displayIdx: number, sheicobTry: number) => {
+      const entry = displayEntries[displayIdx];
+      if (!entry) return;
 
-      if (!isResolvable) {
-        setState({ kind: "fallback_iframe", mirrorIdx: idx });
+      if (entry.kind === "iframe") {
+        setState({ kind: "fallback_iframe", displayIdx });
         return;
       }
 
-      setState({ kind: "resolving", mirrorIdx: idx });
+      // Sheicob group — try resolvableMirrors[sheicobTry]
+      const mirror = resolvableMirrors[sheicobTry];
+      if (!mirror) {
+        setState({
+          kind: "error",
+          message:
+            "Ningún enlace Sheicob está disponible en este momento. Probá otro servidor.",
+        });
+        return;
+      }
+
+      setState({ kind: "resolving", displayIdx, sheicobTry });
       try {
         const source = await resolveMirror(mirror.id);
         setState((s) => {
-          if (s.kind !== "resolving" || s.mirrorIdx !== idx) return s;
-          return { kind: "playing", mirrorIdx: idx, source };
+          if (
+            s.kind !== "resolving" ||
+            s.displayIdx !== displayIdx ||
+            s.sheicobTry !== sheicobTry
+          ) {
+            return s;
+          }
+          return { kind: "playing", displayIdx, sheicobTry, source };
         });
       } catch (err) {
         const status = err instanceof ApiError ? err.status : 0;
         if (status === 410) {
           setState({ kind: "error", message: "Este enlace está bloqueado." });
+          return;
+        }
+        // Auto-failover to the next resolvable mirror in the group
+        if (sheicobTry + 1 < resolvableMirrors.length) {
+          void startEntry(displayIdx, sheicobTry + 1);
         } else {
-          setState({ kind: "fallback_iframe", mirrorIdx: idx });
+          setState({
+            kind: "error",
+            message:
+              "No pudimos cargar ningún enlace Sheicob. Probá otro servidor.",
+          });
         }
       }
     },
-    [orderedMirrors, resolvableSet]
+    [displayEntries, resolvableMirrors]
   );
 
   const handleSkipPreroll = useCallback(() => {
     if (state.kind !== "preroll") return;
-    const mirror = orderedMirrors[state.mirrorIdx];
-    const isResolvable = mirror && resolvableSet?.get(mirror.id)?.resolvable === true;
+    const entry = displayEntries[state.displayIdx];
+    const isSheicob = entry?.kind === "sheicob";
     // Resume only matters for resolvable mirrors (iframes can't seek).
     // Hold in "resolving" (spinner + prompt overlay) until the viewer picks Aceptar/Cancelar.
-    if (isResolvable && canResume && resumeDecision === "pending") {
-      setState({ kind: "resolving", mirrorIdx: state.mirrorIdx });
+    if (isSheicob && canResume && resumeDecision === "pending") {
+      setState({
+        kind: "resolving",
+        displayIdx: state.displayIdx,
+        sheicobTry: state.sheicobTry,
+      });
       return;
     }
-    void startMirror(state.mirrorIdx);
-  }, [state, startMirror, canResume, resumeDecision, orderedMirrors, resolvableSet]);
+    void startEntry(state.displayIdx, state.sheicobTry);
+  }, [state, startEntry, canResume, resumeDecision, displayEntries]);
 
-  // Once the viewer decides (accept/dismiss), flush progress if dismissing and start playback.
+  // Once the viewer decides (accept/dismiss), start playback.
   useEffect(() => {
     if (resumeDecision === "pending") return;
     if (state.kind !== "resolving") return;
-    void startMirror(state.mirrorIdx);
+    void startEntry(state.displayIdx, state.sheicobTry);
     // Only trigger on decision change, not on every state transition
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resumeDecision]);
 
-  // Flush progress before switching mirror (so the old mirror's position is saved)
-  const handleMirrorSelect = useCallback(
-    (idx: number) => {
+  // Flush progress before switching entry (so the old mirror's position is saved)
+  const handleEntrySelect = useCallback(
+    (displayIdx: number) => {
       flush();
-      void startMirror(idx);
+      void startEntry(displayIdx, 0);
     },
-    [startMirror, flush]
+    [startEntry, flush]
   );
 
-  const handleReport = useCallback(async () => {
-    let idx = -1;
+  // Currently playing underlying mirror (if any) — used for reporting broken links
+  const activeUnderlyingMirror = useMemo<Mirror | null>(() => {
+    if (state.kind === "fallback_iframe") {
+      const entry = displayEntries[state.displayIdx];
+      return entry?.kind === "iframe" ? entry.mirror : null;
+    }
     if (
       state.kind === "playing" ||
-      state.kind === "fallback_iframe" ||
       state.kind === "resolving" ||
       state.kind === "preroll"
     ) {
-      idx = state.mirrorIdx;
+      const entry = displayEntries[state.displayIdx];
+      if (entry?.kind === "sheicob") {
+        return resolvableMirrors[state.sheicobTry] ?? null;
+      }
+      if (entry?.kind === "iframe") return entry.mirror;
     }
-    if (idx < 0) return;
-    const mirror = orderedMirrors[idx];
+    return null;
+  }, [state, displayEntries, resolvableMirrors]);
+
+  const handleReport = useCallback(async () => {
+    const mirror = activeUnderlyingMirror;
     if (!mirror || reported.has(mirror.id)) return;
     setReported((prev) => new Set(prev).add(mirror.id));
     try {
@@ -180,9 +240,9 @@ export default function EpisodePlayer({
     } catch {
       // fire-and-forget
     }
-  }, [state, orderedMirrors, reported]);
+  }, [activeUnderlyingMirror, reported]);
 
-  if (orderedMirrors.length === 0) {
+  if (displayEntries.length === 0) {
     return (
       <div className="aspect-video w-full bg-neutral-900 flex items-center justify-center rounded-lg border border-neutral-800">
         <p className="text-neutral-400 text-sm">
@@ -192,9 +252,10 @@ export default function EpisodePlayer({
     );
   }
 
-  const currentIdx = state.kind === "error" ? 0 : state.mirrorIdx;
-  const currentMirror = orderedMirrors[currentIdx];
-  const currentReported = currentMirror ? reported.has(currentMirror.id) : false;
+  const currentDisplayIdx = state.kind === "error" ? -1 : state.displayIdx;
+  const currentReported = activeUnderlyingMirror
+    ? reported.has(activeUnderlyingMirror.id)
+    : false;
 
   return (
     <div className="space-y-3">
@@ -233,29 +294,39 @@ export default function EpisodePlayer({
 
         {state.kind === "playing" && (
           <CustomVideoPlayer
-            key={currentMirror?.id}
+            key={`${activeUnderlyingMirror?.id ?? "src"}-${state.sheicobTry}`}
             source={state.source}
             poster={posterUrl}
             autoPlay
             startSeconds={resumeFrom}
             onTimeUpdate={reportProgress}
             onError={() => {
-              setState({ kind: "fallback_iframe", mirrorIdx: state.mirrorIdx });
+              // Auto-failover to the next resolvable mirror when playback fails
+              if (state.sheicobTry + 1 < resolvableMirrors.length) {
+                void startEntry(state.displayIdx, state.sheicobTry + 1);
+              } else {
+                setState({
+                  kind: "error",
+                  message:
+                    "No pudimos reproducir ningún enlace Sheicob. Probá otro servidor.",
+                });
+              }
             }}
           />
         )}
 
-        {state.kind === "fallback_iframe" && currentMirror && (
-          <iframe
-            key={currentMirror.id}
-            src={currentMirror.embedUrl}
-            title={episodeTitle}
-            className="w-full h-full"
-            allowFullScreen
-            allow="fullscreen; autoplay; encrypted-media; picture-in-picture"
-            referrerPolicy="no-referrer"
-          />
-        )}
+        {state.kind === "fallback_iframe" &&
+          displayEntries[state.displayIdx]?.kind === "iframe" && (
+            <iframe
+              key={(displayEntries[state.displayIdx] as { kind: "iframe"; mirror: Mirror }).mirror.id}
+              src={(displayEntries[state.displayIdx] as { kind: "iframe"; mirror: Mirror }).mirror.embedUrl}
+              title={episodeTitle}
+              className="w-full h-full"
+              allowFullScreen
+              allow="fullscreen; autoplay; encrypted-media; picture-in-picture"
+              referrerPolicy="no-referrer"
+            />
+          )}
 
         {state.kind === "error" && (
           <div className="absolute inset-0 flex items-center justify-center bg-neutral-950 z-10">
@@ -277,16 +348,21 @@ export default function EpisodePlayer({
           )}
       </div>
 
-      {/* Mirror selector — Sheicob mirrors first, branded gold */}
+      {/* Mirror selector — single "Sheicob" button for all resolvable mirrors (auto-failover) */}
       <div className="space-y-2">
         <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-1.5">
-          {orderedMirrors.map((m, i) => {
-            const isSheicob = resolvableSet?.get(m.id)?.resolvable === true;
-            const selected = i === currentIdx;
+          {displayEntries.map((entry, i) => {
+            const isSheicob = entry.kind === "sheicob";
+            const selected = i === currentDisplayIdx;
+            const label = isSheicob ? "Sheicob" : entry.mirror.providerName;
+            const quality = isSheicob
+              ? resolvableMirrors[0]?.qualityLabel ?? 0
+              : entry.mirror.qualityLabel;
+            const key = isSheicob ? "sheicob" : entry.mirror.id;
             return (
               <button
-                key={m.id}
-                onClick={() => handleMirrorSelect(i)}
+                key={key}
+                onClick={() => handleEntrySelect(i)}
                 aria-pressed={selected}
                 className={`relative px-3 py-2.5 text-sm font-medium rounded transition-colors text-center ${
                   selected
@@ -298,12 +374,10 @@ export default function EpisodePlayer({
                     : "bg-neutral-800 text-neutral-300 hover:bg-neutral-700 hover:text-white"
                 }`}
               >
-                {isSheicob ? (
-                  <span className="font-bold tracking-wide">Sheicob</span>
-                ) : (
-                  m.providerName
-                )}
-                {m.qualityLabel > 0 && (
+                <span className={isSheicob ? "font-bold tracking-wide" : undefined}>
+                  {label}
+                </span>
+                {quality > 0 && (
                   <span
                     className={`block text-[10px] mt-0.5 ${
                       selected
@@ -315,7 +389,7 @@ export default function EpisodePlayer({
                         : "text-neutral-500"
                     }`}
                   >
-                    {m.qualityLabel}p
+                    {quality}p
                   </span>
                 )}
               </button>
@@ -327,7 +401,7 @@ export default function EpisodePlayer({
         <div className="flex justify-end">
           <button
             onClick={handleReport}
-            disabled={currentReported}
+            disabled={currentReported || !activeUnderlyingMirror}
             className="text-xs text-neutral-600 hover:text-red-400 disabled:text-neutral-700 transition-colors"
           >
             {currentReported ? "Reportado ✓" : "Reportar enlace roto"}
