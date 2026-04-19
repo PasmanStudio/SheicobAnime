@@ -5,7 +5,7 @@ import type { WatchProgress } from "@/lib/types";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 /** How often to persist progress to the server while playing. */
-const SAVE_INTERVAL_MS = 15_000;
+const SAVE_INTERVAL_MS = 30_000;
 /** Don't prompt to resume if the viewer was essentially at the start. */
 const MIN_RESUMABLE_SECONDS = 10;
 /** Don't prompt if they're within 30s of the end — just let them watch the outro. */

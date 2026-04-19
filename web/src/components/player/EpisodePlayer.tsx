@@ -11,10 +11,16 @@ import VastPreroll from "./VastPreroll";
 
 // ExoClick VAST preroll — zone 5904192 (In-Stream Video, site SheicobAnime).
 // Zone ID is public (non-secret); env vars allow override without a redeploy.
+// The VAST XML is fetched through our API proxy (/vast?url=...) because ExoClick
+// does NOT send Access-Control-Allow-Origin headers, so a direct browser fetch()
+// is silently blocked by CORS.  The proxy also follows VAST Wrapper chains
+// server-side so the client always receives a resolved InLine VAST.
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5000";
 const EXOCLICK_ZONE = process.env.NEXT_PUBLIC_EXOCLICK_VAST_ZONE_ID ?? "5904192";
-const VAST_URL =
+const RAW_VAST_URL =
   process.env.NEXT_PUBLIC_EXOCLICK_VAST_URL ||
   `https://s.magsrv.com/v1/vast.php?idzone=${EXOCLICK_ZONE}`;
+const VAST_URL = `${API_URL}/vast?url=${encodeURIComponent(RAW_VAST_URL)}`;
 
 // A "display entry" is what the user sees as a button:
 //   - "sheicob" = the group of ALL resolvable mirrors (internally auto-failovers)

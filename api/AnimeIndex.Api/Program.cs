@@ -197,6 +197,12 @@ try
     });
     builder.Services.AddScoped<MirrorProbeService>();
 
+    // ─── VAST proxy client ─────────────────────────────────
+    builder.Services.AddHttpClient("vast", c =>
+    {
+        c.Timeout = TimeSpan.FromSeconds(10);
+    });
+
     // ─── Resolvers (Phase 20) ─────────────────────────────
     builder.Services.AddMemoryCache();
     builder.Services.AddHttpClient("resolver", c =>
@@ -314,6 +320,7 @@ try
     app.MapProgressEndpoints();
     app.MapAdminEndpoints();
     app.MapProxyEndpoints();
+    app.MapVastProxyEndpoints();
 
     // ─── DB seeding ────────────────────────────────────────
     if (app.Environment.IsDevelopment())

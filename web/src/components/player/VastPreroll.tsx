@@ -159,20 +159,29 @@ export default function VastPreroll({
     onComplete();
   }, [onComplete]);
 
+  // When VAST has no ad fill, delegate to the parent (onNoFill) so it can show
+  // a fallback ad.  Only call complete() when there's no onNoFill handler,
+  // otherwise the parent will manage the transition via its own skip button.
+  const noFillOrComplete = useCallback(() => {
+    if (onNoFill) {
+      onNoFill();
+    } else {
+      complete();
+    }
+  }, [onNoFill, complete]);
+
   /* ---------- Fetch & parse VAST ---------- */
   useEffect(() => {
     if (!vastUrl) {
       vastLog("No VAST URL provided");
-      onNoFill?.();
-      complete();
+      noFillOrComplete();
       return;
     }
 
     let cancelled = false;
     const hardTimeout = setTimeout(() => {
       vastLog("Hard timeout reached (%dms)", HARD_TIMEOUT_MS);
-      onNoFill?.();
-      complete();
+      noFillOrComplete();
     }, HARD_TIMEOUT_MS);
 
     (async () => {
@@ -183,8 +192,7 @@ export default function VastPreroll({
         vastLog("VAST response status=%d", res.status);
         if (!res.ok) {
           vastLog("VAST fetch not OK — skipping");
-          onNoFill?.();
-          complete();
+          noFillOrComplete();
           return;
         }
         const xml = await res.text();
@@ -194,8 +202,7 @@ export default function VastPreroll({
         const parsed = parseVastXml(xml);
         if (!parsed) {
           vastLog("VAST parsed to null (no <Ad>, no <MediaFile>, or parse error)");
-          onNoFill?.();
-          complete();
+          noFillOrComplete();
           return;
         }
 
@@ -206,8 +213,7 @@ export default function VastPreroll({
       } catch (err) {
         vastLog("VAST fetch/parse error", err);
         if (!cancelled) {
-          onNoFill?.();
-          complete();
+          noFillOrComplete();
         }
       }
     })();
