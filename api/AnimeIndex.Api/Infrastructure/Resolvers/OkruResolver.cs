@@ -90,7 +90,11 @@ public sealed class OkruResolver : IHosterResolver
             return new ResolvedSource(
                 Url: bestUrl,
                 Format: SourceFormat.Mp4,
-                Headers: new Dictionary<string, string> { ["Referer"] = "https://ok.ru/" },
+                // OK.ru MP4 tokens are NOT IP-bound and do not require a Referer — the
+                // signed URL alone is sufficient.  Setting Headers=null keeps needsProxy
+                // false so the frontend fetches MP4 directly from OK.ru CDN, bypassing
+                // the Railway proxy entirely (huge bandwidth saving).
+                Headers: null,
                 Subtitles: null,
                 Qualities: qualities,
                 ExpiresAt: DateTimeOffset.UtcNow.AddHours(2),

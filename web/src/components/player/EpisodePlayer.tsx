@@ -100,6 +100,10 @@ export default function EpisodePlayer({
       : { kind: "error", message: "No hay enlaces disponibles para este episodio." }
   );
 
+  // When VAST returns no fill, show the fallback Adsterra banner instead of blank
+  const [vastNoFill, setVastNoFill] = useState(false);
+  const handleVastNoFill = useCallback(() => setVastNoFill(true), []);
+
   // Fetch resolvable set on mount
   useEffect(() => {
     let cancelled = false;
@@ -269,11 +273,11 @@ export default function EpisodePlayer({
     <div className="space-y-3">
       {/* Player area */}
       <div className="aspect-video w-full bg-black rounded-lg overflow-hidden shadow-2xl relative">
-        {state.kind === "preroll" && VAST_URL && (
-          <VastPreroll vastUrl={VAST_URL} onComplete={handleSkipPreroll} />
+        {state.kind === "preroll" && VAST_URL && !vastNoFill && (
+          <VastPreroll vastUrl={VAST_URL} onComplete={handleSkipPreroll} onNoFill={handleVastNoFill} />
         )}
 
-        {state.kind === "preroll" && !VAST_URL && (
+        {state.kind === "preroll" && (!VAST_URL || vastNoFill) && (
           <div className="absolute inset-0 flex flex-col items-center justify-center bg-neutral-950 z-10">
             <div className="flex flex-col items-center gap-4">
               <p className="text-xs text-neutral-500 uppercase tracking-wide">Publicidad</p>

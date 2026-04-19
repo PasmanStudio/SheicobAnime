@@ -104,6 +104,8 @@ public static class ProxyEndpoints
                 var bytes = Encoding.UTF8.GetBytes(rewritten);
                 ctx.Response.ContentType = "application/vnd.apple.mpegurl";
                 ctx.Response.ContentLength = bytes.Length;
+                // Manifests contain per-request signed tokens — never cache.
+                ctx.Response.Headers["Cache-Control"] = "private, no-store";
                 // Content-Length already set — clear Content-Range we may have copied for partial
                 ctx.Response.Headers.Remove("Content-Range");
                 ctx.Response.Headers.Remove("Accept-Ranges");
@@ -127,9 +129,11 @@ public static class ProxyEndpoints
         try
         {
             await using var upstreamStream = await upstream.Content.ReadAsStreamAsync(ct);
-            // 256 KB copy buffer — video segments are 1-5 MB, larger buffer → fewer
+            // Disable reverse-proxy buffering (Railway/nginx) for faster streaming.
+            ctx.Response.Headers["X-Accel-Buffering"] = "no";
+            // 1 MB copy buffer — video segments are 1-5 MB, larger buffer → fewer
             // syscalls → better throughput through the Railway proxy.
-            await upstreamStream.CopyToAsync(ctx.Response.Body, 262_144, ct);
+            await upstreamStream.CopyToAsync(ctx.Response.Body, 1_048_576, ct);
         }
         catch (OperationCanceledException) { /* client disconnected */ }
         finally

@@ -118,16 +118,24 @@ export default function CustomVideoPlayer({
           lowLatencyMode: false,
           // Tuned for proxied HLS: Railway free-tier adds latency per segment,
           // so keep forward buffer modest to avoid flooding the proxy with
-          // concurrent requests. Aim for ~5 segments ahead (~30 s).
-          maxBufferLength: 30,          // target forward buffer (seconds)
-          maxMaxBufferLength: 120,      // absolute cap (seconds)
-          backBufferLength: 30,         // keep 30 s behind current time
+          // concurrent requests. Aim for ~3 segments ahead (~15 s).
+          maxBufferLength: 15,          // target forward buffer (seconds)
+          maxMaxBufferLength: 60,       // absolute cap (seconds)
+          backBufferLength: 15,         // keep 15 s behind current time
           maxBufferHole: 0.5,           // tolerate up to 0.5 s gap in buffer
           nudgeOffset: 0.2,             // jump past small holes automatically
           nudgeMaxRetry: 5,
-          // Start playback faster: load only 1 fragment before attempting play
           maxBufferSize: 30 * 1000 * 1000,  // 30 MB buffer cap
           startFragPrefetch: true,           // prefetch next frag during current download
+          // Tolerate higher latency through Railway proxy
+          fragLoadingTimeOut: 20_000,        // segment fetch timeout (default 20s)
+          manifestLoadingTimeOut: 15_000,    // manifest fetch timeout (default 10s)
+          fragLoadingMaxRetry: 4,            // retry segments up to 4 times
+          manifestLoadingMaxRetry: 3,        // retry manifest up to 3 times
+          // Conservative ABR — don't jump to max quality immediately
+          abrBandWidthUpFactor: 0.7,         // need 70% of bandwidth to upgrade (default 0.7)
+          maxLoadingDelay: 4,                // wait up to 4s before quality downswitch
+          startLevel: -1,                    // auto-select initial quality
         });
         hlsRef.current = hls;
         hls.loadSource(source.url);

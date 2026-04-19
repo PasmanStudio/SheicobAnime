@@ -202,6 +202,14 @@ try
     builder.Services.AddHttpClient("resolver", c =>
     {
         c.Timeout = TimeSpan.FromSeconds(15);
+    })
+    .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+    {
+        // Higher connection pool for concurrent proxy streaming (default is 2 per host).
+        MaxConnectionsPerServer = 64,
+        // Keep TCP connections alive between segment requests.
+        PooledConnectionIdleTimeout = TimeSpan.FromMinutes(2),
+        EnableMultipleHttp2Connections = true,
     });
     builder.Services.AddSingleton<IHosterResolver, Mp4UploadResolver>();
     builder.Services.AddSingleton<IHosterResolver, VidhideResolver>();

@@ -18,6 +18,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 const HARD_TIMEOUT_MS = 12_000;
 const DEFAULT_SKIP_SECONDS = 5;
+const DEBUG = typeof window !== "undefined" && new URLSearchParams(window.location.search).has("vastDebug");
+
+function vastLog(msg: string, ...args: unknown[]) {
+  if (DEBUG) console.warn(`[VAST] ${msg}`, ...args);
+}
 
 /* ------------------------------------------------------------------ */
 /*  VAST XML types                                                     */
@@ -104,7 +109,8 @@ function parseVastXml(xml: string): VastAd | null {
       impressionUrls,
       trackingEvents,
     };
-  } catch {
+  } catch (err) {
+    vastLog("XML parse threw", err);
     return null;
   }
 }
@@ -123,11 +129,14 @@ function firePixels(urls: string[]) {
 interface VastPrerollProps {
   vastUrl: string;
   onComplete: () => void;
+  /** Called when VAST returns no fill (empty XML / fetch error). Parent can show fallback ad. */
+  onNoFill?: () => void;
 }
 
 export default function VastPreroll({
   vastUrl,
   onComplete,
+  onNoFill,
 }: Readonly<VastPrerollProps>) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const completedRef = useRef(false);
@@ -153,34 +162,53 @@ export default function VastPreroll({
   /* ---------- Fetch & parse VAST ---------- */
   useEffect(() => {
     if (!vastUrl) {
+      vastLog("No VAST URL provided");
+      onNoFill?.();
       complete();
       return;
     }
 
     let cancelled = false;
-    const hardTimeout = setTimeout(complete, HARD_TIMEOUT_MS);
+    const hardTimeout = setTimeout(() => {
+      vastLog("Hard timeout reached (%dms)", HARD_TIMEOUT_MS);
+      onNoFill?.();
+      complete();
+    }, HARD_TIMEOUT_MS);
 
     (async () => {
       try {
-        const res = await fetch(vastUrl);
+        vastLog("Fetching VAST from %s", vastUrl);
+        const res = await fetch(vastUrl, { mode: "cors", credentials: "omit" });
         if (cancelled) return;
+        vastLog("VAST response status=%d", res.status);
         if (!res.ok) {
+          vastLog("VAST fetch not OK — skipping");
+          onNoFill?.();
           complete();
           return;
         }
         const xml = await res.text();
         if (cancelled) return;
+        vastLog("VAST XML length=%d, first 200 chars: %s", xml.length, xml.slice(0, 200));
 
         const parsed = parseVastXml(xml);
         if (!parsed) {
+          vastLog("VAST parsed to null (no <Ad>, no <MediaFile>, or parse error)");
+          onNoFill?.();
           complete();
           return;
         }
 
+        vastLog("VAST ad found: media=%s, skip=%ds, impressions=%d",
+          parsed.mediaUrl, parsed.skipOffsetSeconds, parsed.impressionUrls.length);
         setAd(parsed);
         firePixels(parsed.impressionUrls);
-      } catch {
-        if (!cancelled) complete();
+      } catch (err) {
+        vastLog("VAST fetch/parse error", err);
+        if (!cancelled) {
+          onNoFill?.();
+          complete();
+        }
       }
     })();
 
@@ -197,11 +225,13 @@ export default function VastPreroll({
     const video = videoRef.current;
     if (!video) return;
 
+    vastLog("Loading ad creative: %s", ad.mediaUrl);
     video.src = ad.mediaUrl;
     video.load();
     video.muted = true;
-    video.play().catch(() => {
+    video.play().catch((err) => {
       // Autoplay truly blocked → skip to content
+      vastLog("Autoplay blocked", err);
       complete();
     });
   }, [ad, complete]);
