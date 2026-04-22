@@ -3,20 +3,20 @@ using AnimeIndex.Api.Infrastructure.Scraping;
 using AnimeIndex.Scraper.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
-using Microsoft.Playwright;
 
 namespace AnimeIndex.Scraper.Strategies;
 
 /// <summary>
-/// JKAnime scraper (jkanime.net).
-/// Browse /directorio with pagination → series detail → episode pages → Desu player iframe.
+/// JKAnime scraper (jkanime.net) — pure HTTP, no Playwright/Chromium.
+/// Browse /directorio with pagination → series detail → episode AJAX → episode page mirrors.
 /// </summary>
 public sealed class Source2Strategy(
     AppDbContext db,
     MirrorProbeService probe,
     UpsertPipelineService upsert,
+    JkAnimeHttpClient http,
     IConfiguration config,
-    ILogger<Source2Strategy> logger) : PlaywrightBase, IScrapeStrategy
+    ILogger<Source2Strategy> logger) : IScrapeStrategy
 {
     public string SourceKey => "source2";
 
@@ -51,19 +51,16 @@ public sealed class Source2Strategy(
             }
         }
 
-        await using var _ = this;
-        await InitializeAsync();
-
-        logger.LogInformation("JKAnimeStrategy starting — baseUrl={BaseUrl}, maxPages={MaxPages}", baseUrl, maxPages);
+        logger.LogInformation("JKAnimeStrategy starting (HTTP mode) — baseUrl={BaseUrl}, maxPages={MaxPages}", baseUrl, maxPages);
 
         // ── Discover series from /directorio ──────────────────
         var discovered = await DiscoverSeriesAsync(baseUrl, maxPages, delayMs, ct);
 
-        foreach (var series in discovered)
+        foreach (var (series, animeId) in discovered)
         {
             if (ct.IsCancellationRequested) break;
 
-            if (await CheckCircuitBreakerAsync(ct))
+            if (await http.CheckCircuitBreakerAsync(ct))
                 logger.LogWarning("Circuit breaker tripped — paused 10 min");
 
             var blocked = await db.BlockedSlugs.AnyAsync(b => b.Slug == series.Slug, ct);
@@ -74,7 +71,6 @@ public sealed class Source2Strategy(
             }
 
             // ── Smart skip logic ────────────────────────────────
-            // Query: what do we already have for this series?
             var existing = await db.Series
                 .Where(s => s.Slug == series.Slug)
                 .Select(s => new
@@ -82,26 +78,17 @@ public sealed class Source2Strategy(
                     s.Id,
                     s.Status,
                     DbEpisodeCount = s.Episodes.Count,
-                    // Episodes that have at least 1 active mirror
                     EpisodesWithMirrors = s.Episodes.Count(e =>
                         e.Mirrors.Any(m => m.IsActive)),
                 })
                 .FirstOrDefaultAsync(ct);
 
-            // Skip if:
-            //  - Directory OR DB says "completed"
-            //  - Has at least 1 episode
-            //  - Every episode has at least 1 active mirror
-            //  - If directory gives a total episode count, we have all of them
             var isCompleted = series.Status == "completed"
                               || existing is { Status: "completed" };
             var hasAllEps = existing is { DbEpisodeCount: > 0 }
                             && existing.EpisodesWithMirrors == existing.DbEpisodeCount;
-            var matchesExpected = series.EpisodeCount is null
-                                 || (existing is not null
-                                     && existing.DbEpisodeCount >= series.EpisodeCount);
 
-            if (isCompleted && hasAllEps && matchesExpected)
+            if (isCompleted && hasAllEps)
             {
                 logger.LogDebug(
                     "Skipping fully-indexed completed series {Slug} — {Eps} episodes, all with mirrors",
@@ -111,14 +98,33 @@ public sealed class Source2Strategy(
             }
 
             // Navigate to series detail page for enrichment
-            var detail = await ScrapeSeriesDetailAsync(baseUrl, series.Slug, delayMs, ct);
-            var enriched = detail ?? series;
+            var detail = await http.GetSeriesDetailAsync(baseUrl, series.Slug, ct);
+            var enriched = detail is not null
+                ? series with
+                {
+                    Title = detail.Title,
+                    Synopsis = detail.Synopsis ?? series.Synopsis,
+                    CoverUrl = detail.CoverUrl ?? series.CoverUrl,
+                    Status = detail.Status ?? series.Status,
+                    Type = detail.Type ?? series.Type,
+                    Year = detail.Year,
+                    Genres = detail.Genres ?? series.Genres,
+                }
+                : series;
 
             var seriesId = await upsert.UpsertSeriesAsync(enriched, ct);
             seriesCount++;
 
-            // ── Discover episodes from detail page ────────────
-            var episodes = await ScrapeEpisodesFromDetailAsync(baseUrl, series.Slug, seriesId, delayMs, ct);
+            // ── Discover episodes ─────────────────────────────
+            var effectiveAnimeId = detail?.AnimeId ?? animeId;
+            if (effectiveAnimeId is null)
+            {
+                logger.LogDebug("No anime ID for {Slug} — skipping episode discovery", series.Slug);
+                await JkAnimeHttpClient.JitterDelayAsync(delayMs, ct);
+                continue;
+            }
+
+            var episodes = await http.GetAllEpisodesAsync(baseUrl, effectiveAnimeId.Value, series.Slug, ct);
 
             // Pre-load episode numbers that already have active mirrors → skip those
             var episodesWithMirrors = existing is not null
@@ -132,35 +138,56 @@ public sealed class Source2Strategy(
             {
                 if (ct.IsCancellationRequested) break;
 
-                var episodeId = await upsert.UpsertEpisodeAsync(ep, ct);
+                if (ep.Number <= 0 || ep.Number > short.MaxValue) continue;
+                var epNum = (short)ep.Number;
+
+                var epData = new EpisodeScrapedData(
+                    SeriesId: seriesId,
+                    EpisodeNumber: epNum,
+                    Title: null,
+                    PendingMirrors: []);
+
+                var episodeId = await upsert.UpsertEpisodeAsync(epData, ct);
                 episodeCount++;
 
                 // Skip mirror scraping for episodes that already have active mirrors
-                if (episodesWithMirrors.Contains(ep.EpisodeNumber))
+                if (episodesWithMirrors.Contains(epNum))
                 {
                     logger.LogDebug("Episode {Slug} ep{Num}: already has mirrors — skipping",
-                        series.Slug, ep.EpisodeNumber);
+                        series.Slug, epNum);
                     continue;
                 }
 
-                // Navigate to episode page to extract Desu player mirrors
-                var epUrl = $"{baseUrl.TrimEnd('/')}/{series.Slug}/{ep.EpisodeNumber}/";
-                var mirrors = await ScrapeEpisodeMirrorsAsync(epUrl, episodeId, delayMs, ct);
+                // Fetch episode page for mirror extraction
+                var epUrl = $"{baseUrl.TrimEnd('/')}/{series.Slug}/{epNum}/";
+                var mirrorUrls = await http.GetEpisodeMirrorUrlsAsync(epUrl, ct);
 
-                foreach (var mirror in mirrors)
+                foreach (var url in mirrorUrls)
                 {
-                    var embeddable = await probe.IsEmbeddableAsync(mirror.EmbedUrl, ct);
+                    if (IsJkAnimeDomain(url)) continue;
+
+                    var providerName = ExtractProviderName(url);
+                    if (BlockedProviders.Contains(providerName)) continue;
+
+                    var embeddable = await probe.IsEmbeddableAsync(url, ct);
                     if (!embeddable)
                     {
-                        logger.LogDebug("Mirror {Url} not embeddable — skipped", mirror.EmbedUrl);
+                        logger.LogDebug("Mirror {Url} not embeddable — skipped", url);
                         continue;
                     }
+
+                    var mirror = new MirrorScrapedData(
+                        EpisodeId: episodeId,
+                        ProviderName: providerName,
+                        EmbedUrl: url,
+                        QualityLabel: 720,
+                        Priority: GetProviderPriority(providerName));
 
                     await upsert.UpsertMirrorAsync(mirror, ct);
                     mirrorCount++;
                 }
 
-                await JitterDelayAsync(delayMs, ct);
+                await JkAnimeHttpClient.JitterDelayAsync(delayMs, ct);
             }
 
             // Sync episode count from actual DB records
@@ -168,10 +195,9 @@ public sealed class Source2Strategy(
         }
 
         logger.LogInformation(
-            "JKAnimeStrategy complete — series={S} episodes={E} mirrors={M}",
+            "JKAnimeStrategy complete (HTTP mode) — series={S} episodes={E} mirrors={M}",
             seriesCount, episodeCount, mirrorCount);
 
-        // Fail if we discovered nothing — likely blocked or site down
         if (seriesCount == 0 && episodeCount == 0)
             return new ScrapeResult(false,
                 "Zero series and episodes indexed — JKAnime may be unreachable or has changed structure.");
@@ -182,54 +208,23 @@ public sealed class Source2Strategy(
             MirrorsIndexed: mirrorCount);
     }
 
-    // ── Directory browsing (/directorio?p=N) ────────────────
+    // ── Directory browsing ──────────────────────────────────
 
-    private async Task<IReadOnlyList<SeriesScrapedData>> DiscoverSeriesAsync(
+    private async Task<IReadOnlyList<(SeriesScrapedData Series, int? AnimeId)>> DiscoverSeriesAsync(
         string baseUrl, int maxPages, int delayMs, CancellationToken ct)
     {
-        var result = new List<SeriesScrapedData>();
+        var result = new List<(SeriesScrapedData, int?)>();
 
         for (var page = 1; page <= maxPages; page++)
         {
             if (ct.IsCancellationRequested) break;
-            if (await CheckCircuitBreakerAsync(ct)) break;
+            if (await http.CheckCircuitBreakerAsync(ct)) break;
 
-            var url = $"{baseUrl.TrimEnd('/')}/directorio?p={page}";
-            if (!await GoToAsync(url, ct))
-            {
-                logger.LogWarning("Cannot reach {Url}", url);
+            var directoryPage = await http.GetDirectoryPageAsync(baseUrl, page, ct);
+            if (directoryPage?.Data is null || directoryPage.Data.Count == 0)
                 break;
-            }
 
-            // JKAnime embeds directory data as `var animes = {...}` JSON in an inline script.
-            // Extract it via JS evaluation instead of fragile CSS selectors.
-            string? animesJson = null;
-            try
-            {
-                await Page.WaitForFunctionAsync("typeof animes !== 'undefined' && animes.data && animes.data.length > 0",
-                    new PageWaitForFunctionOptions { Timeout = 10_000 });
-                animesJson = await Page.EvaluateAsync<string>("JSON.stringify(animes)");
-            }
-            catch (TimeoutException)
-            {
-                logger.LogDebug("No animes variable found on page {Page} — end of directory", page);
-                break;
-            }
-
-            if (string.IsNullOrWhiteSpace(animesJson))
-            {
-                logger.LogDebug("Empty animes data on page {Page} — end of directory", page);
-                break;
-            }
-
-            var animesPage = System.Text.Json.JsonSerializer.Deserialize<JkDirectoryPage>(animesJson);
-            if (animesPage?.Data is null || animesPage.Data.Count == 0)
-            {
-                logger.LogDebug("No series data on page {Page} — end of directory", page);
-                break;
-            }
-
-            foreach (var item in animesPage.Data)
+            foreach (var item in directoryPage.Data)
             {
                 if (string.IsNullOrWhiteSpace(item.Slug) || string.IsNullOrWhiteSpace(item.Title))
                     continue;
@@ -252,326 +247,24 @@ public sealed class Source2Strategy(
                     _ => "tv"
                 };
 
-                // Parse episode count from directory (may be a number string)
-                short? epCount = short.TryParse(item.Episodes, out var parsedEpCount) && parsedEpCount > 0
-                    ? parsedEpCount : null;
-
-                result.Add(new SeriesScrapedData(
+                result.Add((new SeriesScrapedData(
                     Slug: item.Slug.Trim(),
                     Title: item.Title.Trim(),
                     CoverUrl: item.Image,
                     Status: status,
                     Type: type,
-                    Synopsis: string.IsNullOrWhiteSpace(item.Synopsis) ? null : item.Synopsis.Trim(),
-                    EpisodeCount: epCount));
+                    Synopsis: string.IsNullOrWhiteSpace(item.Synopsis) ? null : item.Synopsis.Trim()),
+                    item.Id > 0 ? item.Id : null));
             }
 
-            logger.LogDebug("Page {Page}: discovered {Count} series", page, animesPage.Data.Count);
-            await JitterDelayAsync(delayMs, ct);
+            logger.LogDebug("Page {Page}: discovered {Count} series", page, directoryPage.Data.Count);
+            await JkAnimeHttpClient.JitterDelayAsync(delayMs, ct);
         }
 
         return result;
     }
 
-    // JSON model for `var animes` on /directorio pages
-    private sealed record JkDirectoryPage(
-        [property: System.Text.Json.Serialization.JsonPropertyName("current_page")] int CurrentPage,
-        [property: System.Text.Json.Serialization.JsonPropertyName("data")] IReadOnlyList<JkDirectoryItem> Data);
-
-    private sealed record JkDirectoryItem(
-        [property: System.Text.Json.Serialization.JsonPropertyName("slug")] string? Slug,
-        [property: System.Text.Json.Serialization.JsonPropertyName("title")] string? Title,
-        [property: System.Text.Json.Serialization.JsonPropertyName("synopsis")] string? Synopsis,
-        [property: System.Text.Json.Serialization.JsonPropertyName("image")] string? Image,
-        [property: System.Text.Json.Serialization.JsonPropertyName("type")] string? Type,
-        [property: System.Text.Json.Serialization.JsonPropertyName("status")] string? Status,
-        [property: System.Text.Json.Serialization.JsonPropertyName("episodes")] string? Episodes);
-
-    // ── Series detail page (/{slug}/) ───────────────────────
-
-    private async Task<SeriesScrapedData?> ScrapeSeriesDetailAsync(
-        string baseUrl, string slug, int delayMs, CancellationToken ct)
-    {
-        var url = $"{baseUrl.TrimEnd('/')}/{slug}/";
-        if (!await GoToAsync(url, ct))
-        {
-            logger.LogWarning("Cannot reach series detail {Url}", url);
-            return null;
-        }
-
-        try
-        {
-            // Title — div.anime_info h3
-            var title = await Page.Locator("div.anime_info h3").First.InnerTextAsync();
-
-            // Synopsis — p.scroll inside anime_info
-            string? synopsis = null;
-            var synopsisEl = Page.Locator("div.anime_info p.scroll");
-            if (await synopsisEl.CountAsync() > 0)
-                synopsis = (await synopsisEl.First.InnerTextAsync()).Trim();
-
-            // Cover from CDN pattern
-            var coverUrl = $"https://cdn.jkdesa.com/assets/images/animes/image/{slug}.jpg";
-
-            // Genres from genre links inside card-bod
-            var genres = new List<string>();
-            var genreLinks = await Page.Locator("div.card-bod a[href*='/genero/']").AllAsync();
-            foreach (var g in genreLinks)
-            {
-                var genreName = (await g.InnerTextAsync()).Trim();
-                if (!string.IsNullOrWhiteSpace(genreName))
-                    genres.Add(genreName);
-            }
-
-            // Pre-read metadata list items (used by status fallback, type, and year)
-            var metaItems = await Page.Locator("div.card-bod ul li").AllAsync();
-
-            // Status — try div.enemision class first, then fall back to
-            // the "Estado:" text in the metadata list (JKAnime uses "Concluido",
-            // "En emision", "Por estrenar", etc.).
-            string? status = null;
-            var statusEl = Page.Locator("div.card-bod div.enemision");
-            if (await statusEl.CountAsync() > 0)
-            {
-                var statusClass = await statusEl.First.GetAttributeAsync("class") ?? "";
-                if (statusClass.Contains("currently"))
-                    status = "ongoing";
-                else if (statusClass.Contains("completed"))
-                    status = "completed";
-                else
-                {
-                    var statusText = (await statusEl.First.InnerTextAsync()).Trim().ToLowerInvariant();
-                    if (statusText.Contains("emision") || statusText.Contains("emisión"))
-                        status = "ongoing";
-                    else if (statusText.Contains("concluido") || statusText.Contains("finalizado"))
-                        status = "completed";
-                    else if (statusText.Contains("estrenar"))
-                        status = "upcoming";
-                }
-            }
-
-            // Fallback: scan metadata <li> items for "Estado:" text
-            if (status is null)
-            {
-                foreach (var li in metaItems)
-                {
-                    var liText = (await li.InnerTextAsync()).Trim().ToLowerInvariant();
-                    if (!liText.Contains("estado")) continue;
-
-                    if (liText.Contains("concluido") || liText.Contains("finalizado"))
-                        status = "completed";
-                    else if (liText.Contains("emision") || liText.Contains("emisión"))
-                        status = "ongoing";
-                    else if (liText.Contains("estrenar"))
-                        status = "upcoming";
-                    break;
-                }
-            }
-
-            // Type from li[rel="tipo"] text content
-            string? type = null;
-            var tipoEl = Page.Locator("div.card-bod li[rel='tipo']");
-            if (await tipoEl.CountAsync() > 0)
-            {
-                var tipoText = (await tipoEl.First.InnerTextAsync()).Trim().ToLowerInvariant();
-                if (tipoText.Contains("serie") || tipoText.Contains("tv")) type = "tv";
-                else if (tipoText.Contains("película") || tipoText.Contains("pelicula") || tipoText.Contains("movie")) type = "movie";
-                else if (tipoText.Contains("ova")) type = "ova";
-                else if (tipoText.Contains("ona")) type = "ona";
-                else if (tipoText.Contains("especial") || tipoText.Contains("special")) type = "special";
-            }
-
-            // Year — extract from metadata list items (e.g. "Emitido: Oct 2023", "Año: 2023")
-            short? year = null;
-            foreach (var li in metaItems)
-            {
-                var text = (await li.InnerTextAsync()).Trim();
-                var yearMatch = System.Text.RegularExpressions.Regex.Match(text, @"\b(19|20)\d{2}\b");
-                if (yearMatch.Success && short.TryParse(yearMatch.Value, out var parsedYear))
-                {
-                    year = parsedYear;
-                    break;
-                }
-            }
-
-            await JitterDelayAsync(delayMs, ct);
-
-            return new SeriesScrapedData(
-                Slug: slug,
-                Title: title.Trim(),
-                CoverUrl: coverUrl,
-                Status: status,  // null → COALESCE preserves directory value
-                Type: type ?? "tv",
-                Synopsis: synopsis,
-                Year: year,
-                Genres: genres.Count > 0 ? genres : null);
-        }
-        catch (Exception ex)
-        {
-            logger.LogWarning(ex, "Failed to parse series detail for {Slug}", slug);
-            return null;
-        }
-    }
-
-    // ── Episode list from series page ───────────────────────
-
-    private async Task<IReadOnlyList<EpisodeScrapedData>> ScrapeEpisodesFromDetailAsync(
-        string baseUrl, string slug, Guid seriesId, int delayMs, CancellationToken ct)
-    {
-        var result = new List<EpisodeScrapedData>();
-
-        try
-        {
-            // JKAnime loads episode links dynamically inside div.capitulos.
-            // Wait for episode links to appear (they have pattern /{slug}/{N}/).
-            try
-            {
-                await Page.WaitForSelectorAsync("div.capitulos a[href]",
-                    new PageWaitForSelectorOptions { Timeout = 10_000 });
-            }
-            catch (TimeoutException)
-            {
-                logger.LogDebug("No episode links loaded for {Slug} — may be upcoming", slug);
-                return result;
-            }
-
-            var rows = await Page.Locator($"div.capitulos a[href*='/{slug}/']").AllAsync();
-
-            foreach (var row in rows)
-            {
-                try
-                {
-                    var href = await row.GetAttributeAsync("href");
-                    if (href is null) continue;
-
-                    // Extract episode number from href: /{slug}/{N}/
-                    var match = System.Text.RegularExpressions.Regex.Match(href, @"/(\d+)/?$");
-                    if (!match.Success || !short.TryParse(match.Groups[1].Value, out var epNum) || epNum <= 0)
-                        continue;
-
-                    result.Add(new EpisodeScrapedData(
-                        SeriesId: seriesId,
-                        EpisodeNumber: epNum,
-                        Title: null,
-                        PendingMirrors: []));
-                }
-                catch (Exception ex)
-                {
-                    logger.LogDebug(ex, "Failed to parse episode link");
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            logger.LogWarning(ex, "Failed to extract episode list for {Slug}", slug);
-        }
-
-        return result;
-    }
-
-    // ── Episode mirrors (extract from JS variables) ─────────
-    //
-    // JKAnime mechanism:
-    //  - The episode page defines `var servers = [...]` with base64-encoded embed URLs
-    //    for external providers (Streamwish, VOE, Vidhide, Mixdrop, Mp4upload, etc.).
-    //  - Static servers (Desu, Magi, Xtreme S) use JKAnime's own player wrapper
-    //    and don't have standard embed URLs.
-    //  - OK.ru is embedded via `jkokru.php?u=ID` in the `video[]` array.
-    //  - We extract URLs directly from JS evaluation — no tab clicking needed.
-
-    private async Task<IReadOnlyList<MirrorScrapedData>> ScrapeEpisodeMirrorsAsync(
-        string episodeUrl, Guid episodeId, int delayMs, CancellationToken ct)
-    {
-        var mirrors = new List<MirrorScrapedData>();
-        var capturedEmbeds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-        if (!await GoToAsync(episodeUrl, ct))
-        {
-            logger.LogWarning("Cannot reach episode {Url}", episodeUrl);
-            return mirrors;
-        }
-
-        // ── 1. Extract external mirrors from the `servers` JS variable ──
-        // JKAnime defines `var servers = [{ remote: "base64url", server: "Name", ... }]`
-        try
-        {
-            await Page.WaitForFunctionAsync(
-                "typeof servers !== 'undefined' && Array.isArray(servers)",
-                new PageWaitForFunctionOptions { Timeout = 15_000 });
-
-            var externalUrls = await Page.EvaluateAsync<string[]>(@"
-                (() => {
-                    const results = [];
-                    if (typeof servers !== 'undefined' && Array.isArray(servers)) {
-                        for (const s of servers) {
-                            if (!s.remote || s.server === 'Mediafire') continue;
-                            try {
-                                const url = atob(s.remote).trim();
-                                if (url.startsWith('http')) results.push(url);
-                            } catch {}
-                        }
-                    }
-                    return results;
-                })()
-            ");
-
-            foreach (var url in externalUrls)
-                capturedEmbeds.Add(url);
-
-            logger.LogDebug("Extracted {Count} external mirrors from servers[] on {Url}",
-                externalUrls.Length, episodeUrl);
-        }
-        catch (TimeoutException)
-        {
-            logger.LogDebug("No servers JS variable found on {Url}", episodeUrl);
-        }
-
-        // ── 2. Extract OK.ru mirror from video[] array ──
-        try
-        {
-            var okruId = await Page.EvaluateAsync<string?>(@"
-                (() => {
-                    if (typeof video === 'undefined' || !Array.isArray(video)) return null;
-                    for (const v of video) {
-                        const m = v.match(/jkokru\.php\?u=(\d+)/);
-                        if (m) return m[1];
-                    }
-                    return null;
-                })()
-            ");
-
-            if (!string.IsNullOrWhiteSpace(okruId))
-            {
-                capturedEmbeds.Add($"https://ok.ru/videoembed/{okruId}");
-                logger.LogDebug("Extracted OK.ru mirror: {Id}", okruId);
-            }
-        }
-        catch (Exception ex)
-        {
-            logger.LogDebug(ex, "Failed extracting OK.ru mirror on {Url}", episodeUrl);
-        }
-
-        // ── 3. Build mirror records (sorted by provider quality) ──
-        foreach (var url in capturedEmbeds)
-        {
-            if (IsJkAnimeDomain(url)) continue;
-
-            var providerName = ExtractProviderName(url);
-            if (BlockedProviders.Contains(providerName)) continue;
-
-            mirrors.Add(new MirrorScrapedData(
-                EpisodeId: episodeId,
-                ProviderName: providerName,
-                EmbedUrl: url,
-                QualityLabel: 720,
-                Priority: GetProviderPriority(providerName)));
-        }
-
-        logger.LogDebug("Episode {Url}: captured {Count} real mirrors", episodeUrl, mirrors.Count);
-
-        await JitterDelayAsync(delayMs, ct);
-        return mirrors;
-    }
+    // ── Provider helpers ────────────────────────────────────
 
     private static bool IsJkAnimeDomain(string url) =>
         url.Contains("jkanime.net", StringComparison.OrdinalIgnoreCase) ||
@@ -593,7 +286,7 @@ public sealed class Source2Strategy(
     private static short GetProviderPriority(string provider) =>
         ProviderPriorities.TryGetValue(provider, out var p) ? p : (short)50;
 
-    private static string ExtractProviderName(string url)
+    public static string ExtractProviderName(string url)
     {
         try
         {

@@ -23,19 +23,10 @@ public class ScraperTests
     private static IConfiguration CreateConfig(Dictionary<string, string?> values) =>
         new ConfigurationBuilder().AddInMemoryCollection(values).Build();
 
+    private static JkAnimeHttpClient CreateHttpClient() =>
+        new(new StubHttpClientFactory(), NullLogger<JkAnimeHttpClient>.Instance);
+
     // ── Strategy identity ──────────────────────────────────
-
-    [Fact]
-    public void Source1Strategy_SourceKey_IsSource1()
-    {
-        var db = CreateInMemoryDb();
-        var config = CreateConfig(new() { ["Source1:BaseUrl"] = "https://example.com" });
-        var probe = new MirrorProbeService(new StubHttpClientFactory());
-        var upsert = new UpsertPipelineService(db);
-        var strategy = new Source1Strategy(db, probe, upsert, config, NullLogger<Source1Strategy>.Instance);
-
-        Assert.Equal("source1", strategy.SourceKey);
-    }
 
     [Fact]
     public void Source2Strategy_SourceKey_IsSource2()
@@ -44,59 +35,27 @@ public class ScraperTests
         var config = CreateConfig(new() { ["Source2:BaseUrl"] = "https://example.com" });
         var probe = new MirrorProbeService(new StubHttpClientFactory());
         var upsert = new UpsertPipelineService(db);
-        var strategy = new Source2Strategy(db, probe, upsert, config, NullLogger<Source2Strategy>.Instance);
+        var http = CreateHttpClient();
+        var strategy = new Source2Strategy(db, probe, upsert, http, config, NullLogger<Source2Strategy>.Instance);
 
         Assert.Equal("source2", strategy.SourceKey);
     }
 
     [Fact]
-    public void BothStrategies_Implement_IScrapeStrategy()
+    public void Source2Strategy_Implements_IScrapeStrategy()
     {
         var db = CreateInMemoryDb();
-        var config = CreateConfig(new()
-        {
-            ["Source1:BaseUrl"] = "https://example.com",
-            ["Source2:BaseUrl"] = "https://example.com"
-        });
+        var config = CreateConfig(new() { ["Source2:BaseUrl"] = "https://example.com" });
         var probe = new MirrorProbeService(new StubHttpClientFactory());
         var upsert = new UpsertPipelineService(db);
+        var http = CreateHttpClient();
 
-        IScrapeStrategy s1 = new Source1Strategy(db, probe, upsert, config, NullLogger<Source1Strategy>.Instance);
-        IScrapeStrategy s2 = new Source2Strategy(db, probe, upsert, config, NullLogger<Source2Strategy>.Instance);
+        IScrapeStrategy s2 = new Source2Strategy(db, probe, upsert, http, config, NullLogger<Source2Strategy>.Instance);
 
-        Assert.NotEqual(s1.SourceKey, s2.SourceKey);
+        Assert.Equal("source2", s2.SourceKey);
     }
 
     // ── Blocked slug guard ─────────────────────────────────
-
-    [Fact]
-    public async Task Source1_RejectsBlockedSlug()
-    {
-        var db = CreateInMemoryDb();
-        var series = new Series { Id = Guid.NewGuid(), Slug = "blocked-anime", Title = "Blocked" };
-        db.Series.Add(series);
-        db.BlockedSlugs.Add(new BlockedSlug { Slug = "blocked-anime", Reason = "DMCA" });
-        var job = new ScrapeJob
-        {
-            Id = Guid.NewGuid(),
-            SeriesId = series.Id,
-            JobType = "scrape:source1",
-            Status = "pending",
-            ScheduledAt = DateTime.UtcNow
-        };
-        db.ScrapeJobs.Add(job);
-        await db.SaveChangesAsync();
-
-        var config = CreateConfig(new() { ["Source1:BaseUrl"] = "https://example.com" });
-        var probe = new MirrorProbeService(new StubHttpClientFactory());
-        var upsert = new UpsertPipelineService(db);
-        var strategy = new Source1Strategy(db, probe, upsert, config, NullLogger<Source1Strategy>.Instance);
-
-        var result = await strategy.ScrapeAsync(job.Id);
-
-        Assert.False(result.Success);
-        Assert.Contains("blocked_slugs", result.ErrorMessage);
-    }
 
     [Fact]
     public async Task Source2_RejectsBlockedSlug()
@@ -119,7 +78,8 @@ public class ScraperTests
         var config = CreateConfig(new() { ["Source2:BaseUrl"] = "https://example.com" });
         var probe = new MirrorProbeService(new StubHttpClientFactory());
         var upsert = new UpsertPipelineService(db);
-        var strategy = new Source2Strategy(db, probe, upsert, config, NullLogger<Source2Strategy>.Instance);
+        var http = CreateHttpClient();
+        var strategy = new Source2Strategy(db, probe, upsert, http, config, NullLogger<Source2Strategy>.Instance);
 
         var result = await strategy.ScrapeAsync(job.Id);
 
@@ -130,28 +90,14 @@ public class ScraperTests
     // ── Missing job guard ──────────────────────────────────
 
     [Fact]
-    public async Task Source1_ReturnsFailure_WhenJobNotFound()
-    {
-        var db = CreateInMemoryDb();
-        var config = CreateConfig(new() { ["Source1:BaseUrl"] = "https://example.com" });
-        var probe = new MirrorProbeService(new StubHttpClientFactory());
-        var upsert = new UpsertPipelineService(db);
-        var strategy = new Source1Strategy(db, probe, upsert, config, NullLogger<Source1Strategy>.Instance);
-
-        var result = await strategy.ScrapeAsync(Guid.NewGuid());
-
-        Assert.False(result.Success);
-        Assert.Contains("not found", result.ErrorMessage);
-    }
-
-    [Fact]
     public async Task Source2_ReturnsFailure_WhenJobNotFound()
     {
         var db = CreateInMemoryDb();
         var config = CreateConfig(new() { ["Source2:BaseUrl"] = "https://example.com" });
         var probe = new MirrorProbeService(new StubHttpClientFactory());
         var upsert = new UpsertPipelineService(db);
-        var strategy = new Source2Strategy(db, probe, upsert, config, NullLogger<Source2Strategy>.Instance);
+        var http = CreateHttpClient();
+        var strategy = new Source2Strategy(db, probe, upsert, http, config, NullLogger<Source2Strategy>.Instance);
 
         var result = await strategy.ScrapeAsync(Guid.NewGuid());
 
@@ -159,29 +105,23 @@ public class ScraperTests
         Assert.Contains("not found", result.ErrorMessage);
     }
 
-    // ── Config validation ──────────────────────────────────
+    // ── Provider name extraction ───────────────────────────
 
-    [Fact]
-    public async Task Source1_ThrowsWithoutBaseUrl()
+    [Theory]
+    [InlineData("https://sfastwish.com/e/abc123", "streamwish")]
+    [InlineData("https://filemoon.sx/e/xyz", "filemoon")]
+    [InlineData("https://ok.ru/videoembed/12345", "okru")]
+    [InlineData("https://mp4upload.com/embed-abc", "mp4upload")]
+    [InlineData("https://www.yourupload.com/embed/xyz", "yourupload")]
+    [InlineData("https://voe.sx/e/abc123", "voe")]
+    [InlineData("https://vidhide.com/e/abc123", "vidhide")]
+    [InlineData("https://dsvplay.com/e/abc123", "vidhide")]
+    [InlineData("https://mxdrop.org/d/abc", "mixdrop")]
+    [InlineData("https://bysekoze.com/e/abc", "streamwish")]
+    [InlineData("https://mixdrop.co/e/abc", "mixdrop")]
+    public void ExtractProviderName_MapsCorrectly(string url, string expected)
     {
-        var db = CreateInMemoryDb();
-        var config = CreateConfig(new() { ["Source1:DelayMs"] = "2000" }); // no BaseUrl
-        var probe = new MirrorProbeService(new StubHttpClientFactory());
-        var upsert = new UpsertPipelineService(db);
-
-        db.ScrapeJobs.Add(new ScrapeJob
-        {
-            Id = Guid.NewGuid(),
-            JobType = "scrape:source1",
-            Status = "pending",
-            ScheduledAt = DateTime.UtcNow
-        });
-        db.SaveChanges();
-        var jobId = db.ScrapeJobs.First().Id;
-
-        var strategy = new Source1Strategy(db, probe, upsert, config, NullLogger<Source1Strategy>.Instance);
-
-        await Assert.ThrowsAsync<InvalidOperationException>(() => strategy.ScrapeAsync(jobId));
+        Assert.Equal(expected, Source2Strategy.ExtractProviderName(url));
     }
 
     // ── ScrapeResult record ────────────────────────────────

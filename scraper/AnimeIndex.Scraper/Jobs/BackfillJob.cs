@@ -2,15 +2,15 @@ using AnimeIndex.Api.Data;
 using AnimeIndex.Api.Data.Entities;
 using AnimeIndex.Api.Infrastructure.Scraping;
 using AnimeIndex.Scraper.Infrastructure;
+using AnimeIndex.Scraper.Strategies;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
-using Microsoft.Playwright;
 using System.Text.Json;
 
 namespace AnimeIndex.Scraper.Jobs;
 
 /// <summary>
-/// Two-pass backfill job for full historical scrape.
+/// Two-pass backfill job for full historical scrape — pure HTTP, no Playwright.
 /// Pass 1: Crawl all directory pages to discover every series slug.
 /// Pass 2: For each series needing enrichment, scrape detail + episodes + mirrors.
 /// Supports resume from last progress on restart.
@@ -19,9 +19,10 @@ public class BackfillJob(
     AppDbContext db,
     MirrorProbeService probe,
     UpsertPipelineService upsert,
+    JkAnimeHttpClient http,
     DeadLetterAlerter alerter,
     IConfiguration config,
-    ILogger<BackfillJob> logger) : PlaywrightBase
+    ILogger<BackfillJob> logger)
 {
     public async Task ExecuteAsync(Guid scrapeJobId, int maxPages, CancellationToken ct = default)
     {
@@ -49,23 +50,18 @@ public class BackfillJob(
         var startPage = resumeState.LastCompletedPage + 1;
 
         logger.LogInformation(
-            "Backfill starting — source={Source}, maxPages={MaxPages}, resumeFrom={StartPage}",
+            "Backfill starting (HTTP mode) — source={Source}, maxPages={MaxPages}, resumeFrom={StartPage}",
             sourceKey, maxPages, startPage);
 
         try
         {
-            await using var _ = this;
-            await InitializeAsync();
-
             // ═══════════════════════════════════════════════
             // PASS 1: Discover all series slugs from directory pages
-            // Only upsert series that don't exist yet (skip existing ones).
             // ═══════════════════════════════════════════════
-            var discoveredSlugs = new List<string>();
+            var discoveredSeries = new List<(string Slug, int? AnimeId)>();
             var newSeriesCount = 0;
             var skippedExisting = 0;
 
-            // Pre-load existing slugs to avoid unnecessary upserts
             var existingSlugs = await db.Series
                 .AsNoTracking()
                 .Select(s => s.Slug)
@@ -75,58 +71,37 @@ public class BackfillJob(
             for (var page = startPage; page <= maxPages; page++)
             {
                 if (ct.IsCancellationRequested) break;
-                if (await CheckCircuitBreakerAsync(ct))
+                if (await http.CheckCircuitBreakerAsync(ct))
                     logger.LogWarning("Circuit breaker tripped during discovery — paused 10 min");
 
-                var url = $"{baseUrl.TrimEnd('/')}/directorio?p={page}";
-                if (!await GoToAsync(url, ct))
+                var directoryPage = await http.GetDirectoryPageAsync(baseUrl, page, ct);
+
+                if (directoryPage is null)
                 {
-                    logger.LogWarning("Cannot reach {Url} — retrying once", url);
-                    await JitterDelayAsync(delayMs * 2, ct);
-                    if (!await GoToAsync(url, ct))
+                    // Retry once
+                    await JkAnimeHttpClient.JitterDelayAsync(delayMs * 2, ct);
+                    directoryPage = await http.GetDirectoryPageAsync(baseUrl, page, ct);
+                    if (directoryPage is null)
                     {
-                        logger.LogWarning("Cannot reach {Url} on retry — ending pass 1 at page {Page}", url, page);
+                        logger.LogWarning("Cannot reach directory page {Page} on retry — ending pass 1", page);
                         break;
                     }
                 }
 
-                // Extract JSON from `var animes = {...}`
-                string? animesJson = null;
-                try
-                {
-                    await Page.WaitForFunctionAsync(
-                        "typeof animes !== 'undefined' && animes.data && animes.data.length > 0",
-                        new PageWaitForFunctionOptions { Timeout = 10_000 });
-                    animesJson = await Page.EvaluateAsync<string>("JSON.stringify(animes)");
-                }
-                catch (TimeoutException)
-                {
-                    logger.LogDebug("No animes data on page {Page} — end of directory", page);
-                    break;
-                }
+                if (directoryPage.Data.Count == 0) break;
 
-                if (string.IsNullOrWhiteSpace(animesJson))
-                    break;
-
-                var animesPage = JsonSerializer.Deserialize<JkDirectoryPage>(animesJson);
-                if (animesPage?.Data is null || animesPage.Data.Count == 0)
-                    break;
-
-                foreach (var item in animesPage.Data)
+                foreach (var item in directoryPage.Data)
                 {
                     if (string.IsNullOrWhiteSpace(item.Slug) || string.IsNullOrWhiteSpace(item.Title))
                         continue;
 
                     var slug = item.Slug.Trim();
 
-                    // Check blocked slugs
                     var blocked = await db.BlockedSlugs.AnyAsync(b => b.Slug == slug, ct);
                     if (blocked) continue;
 
-                    // Track the slug for Pass 2 consideration
-                    discoveredSlugs.Add(slug);
+                    discoveredSeries.Add((slug, item.Id > 0 ? item.Id : null));
 
-                    // Only upsert if series doesn't exist yet — skip existing ones
                     if (existingSlugSet.Contains(slug))
                     {
                         skippedExisting++;
@@ -152,11 +127,10 @@ public class BackfillJob(
                 logger.LogDebug("Pass 1 — page {Page}/{MaxPages}: {New} new, {Skipped} existing",
                     page, maxPages, newSeriesCount, skippedExisting);
 
-                // Update progress every 5 pages
                 if (page % 5 == 0)
                     await UpdateProgressAsync(job, $"pass1:page:{page}/{maxPages},new:{newSeriesCount},skipped:{skippedExisting}", ct);
 
-                await JitterDelayAsync(delayMs, ct);
+                await JkAnimeHttpClient.JitterDelayAsync(delayMs, ct);
             }
 
             await UpdateProgressAsync(job, $"pass1:complete,new:{newSeriesCount},skipped:{skippedExisting},starting:pass2", ct);
@@ -170,10 +144,6 @@ public class BackfillJob(
             var mirrorTotal = 0;
             var skippedCount = 0;
 
-            // Get all series that need enrichment:
-            //  - Never enriched (no synopsis, never scraped)
-            //  - Not scraped in the last 24h
-            //  - Has no mirrors at all (needs mirror extraction regardless of last_scraped_at)
             var seriesToEnrich = await db.Series
                 .AsNoTracking()
                 .Where(s => s.Synopsis == null
@@ -185,8 +155,13 @@ public class BackfillJob(
                 .Select(s => new { s.Id, s.Slug })
                 .ToListAsync(ct);
 
-            // Also include series from resume state that may not have been enriched yet
             var alreadyEnrichedSlugs = resumeState.EnrichedSlugs;
+
+            // Build a lookup for anime IDs from pass 1 discovery
+            var animeIdBySlug = discoveredSeries
+                .Where(d => d.AnimeId.HasValue)
+                .GroupBy(d => d.Slug, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.First().AnimeId!.Value, StringComparer.OrdinalIgnoreCase);
 
             logger.LogInformation("Pass 2 — {Count} series to enrich (skipping {Enriched} already done)",
                 seriesToEnrich.Count, alreadyEnrichedSlugs.Count);
@@ -197,66 +172,99 @@ public class BackfillJob(
             {
                 if (ct.IsCancellationRequested) break;
 
-                // Skip if already enriched in this run (resume support)
                 if (alreadyEnrichedSlugs.Contains(series.Slug))
                 {
                     skippedCount++;
                     continue;
                 }
 
-                if (await CheckCircuitBreakerAsync(ct))
+                if (await http.CheckCircuitBreakerAsync(ct))
                     logger.LogWarning("Circuit breaker tripped during enrichment — paused 10 min");
 
                 try
                 {
                     // Scrape series detail page
-                    var detail = await ScrapeSeriesDetailAsync(baseUrl, series.Slug, delayMs, ct);
+                    var detail = await http.GetSeriesDetailAsync(baseUrl, series.Slug, ct);
                     if (detail is not null)
                     {
-                        await upsert.UpsertSeriesAsync(detail, ct);
+                        var enrichedData = new SeriesScrapedData(
+                            Slug: series.Slug,
+                            Title: detail.Title,
+                            CoverUrl: detail.CoverUrl,
+                            Status: detail.Status ?? "ongoing",
+                            Type: detail.Type ?? "tv",
+                            Synopsis: detail.Synopsis,
+                            Year: detail.Year,
+                            Genres: detail.Genres);
+                        await upsert.UpsertSeriesAsync(enrichedData, ct);
                     }
 
-                    // Discover episodes
-                    var episodes = await ScrapeEpisodesFromDetailAsync(baseUrl, series.Slug, series.Id, delayMs, ct);
+                    // Get anime ID for AJAX episodes endpoint
+                    var animeId = detail?.AnimeId
+                        ?? (animeIdBySlug.TryGetValue(series.Slug, out var cached) ? cached : (int?)null);
+
+                    if (animeId is null)
+                    {
+                        logger.LogDebug("No anime ID for {Slug} — skipping episodes", series.Slug);
+                        enrichedCount++;
+                        continue;
+                    }
+
+                    // Discover episodes via AJAX
+                    var episodes = await http.GetAllEpisodesAsync(baseUrl, animeId.Value, series.Slug, ct);
 
                     foreach (var ep in episodes)
                     {
                         if (ct.IsCancellationRequested) break;
+                        if (ep.Number <= 0 || ep.Number > short.MaxValue) continue;
+                        var epNum = (short)ep.Number;
 
-                        var episodeId = await upsert.UpsertEpisodeAsync(ep, ct);
+                        var epData = new EpisodeScrapedData(
+                            SeriesId: series.Id,
+                            EpisodeNumber: epNum,
+                            Title: null,
+                            PendingMirrors: []);
+
+                        var episodeId = await upsert.UpsertEpisodeAsync(epData, ct);
                         episodeTotal++;
 
                         // Extract mirrors from episode page
-                        var epUrl = $"{baseUrl.TrimEnd('/')}/{series.Slug}/{ep.EpisodeNumber}/";
-                        var mirrors = await ScrapeEpisodeMirrorsAsync(epUrl, episodeId, delayMs, ct);
+                        var epUrl = $"{baseUrl.TrimEnd('/')}/{series.Slug}/{epNum}/";
+                        var mirrorUrls = await http.GetEpisodeMirrorUrlsAsync(epUrl, ct);
 
-                        foreach (var mirror in mirrors)
+                        foreach (var url in mirrorUrls)
                         {
-                            var embeddable = await probe.IsEmbeddableAsync(mirror.EmbedUrl, ct);
+                            if (IsJkAnimeDomain(url)) continue;
+                            var providerName = Source2Strategy.ExtractProviderName(url);
+                            if (BlockedProviders.Contains(providerName)) continue;
+
+                            var embeddable = await probe.IsEmbeddableAsync(url, ct);
                             if (!embeddable) continue;
 
-                            await upsert.UpsertMirrorAsync(mirror, ct);
+                            await upsert.UpsertMirrorAsync(new MirrorScrapedData(
+                                EpisodeId: episodeId,
+                                ProviderName: providerName,
+                                EmbedUrl: url,
+                                QualityLabel: 720,
+                                Priority: GetProviderPriority(providerName)), ct);
                             mirrorTotal++;
                         }
 
-                        await JitterDelayAsync(delayMs, ct);
+                        await JkAnimeHttpClient.JitterDelayAsync(delayMs, ct);
                     }
 
-                    // Sync episode count from actual DB records
                     await upsert.SyncEpisodeCountAsync(series.Id, ct);
 
                     enrichedCount++;
-                    logger.LogDebug("Enriched {Slug}: {EpCount} episodes found so far, {MirrorCount} mirrors total",
+                    logger.LogDebug("Enriched {Slug}: {EpCount} episodes, {MirrorCount} mirrors total",
                         series.Slug, episodeTotal, mirrorTotal);
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
                     failedCount++;
                     logger.LogWarning(ex, "Failed to enrich {Slug} — skipping (failures={Failed})", series.Slug, failedCount);
-                    // Continue with next series instead of crashing the entire job
                 }
 
-                // Update progress every 5 series (more frequent for monitoring)
                 if ((enrichedCount + failedCount) % 5 == 0)
                 {
                     await UpdateProgressAsync(job,
@@ -279,7 +287,7 @@ public class BackfillJob(
         {
             logger.LogError(ex, "Backfill job {JobId} failed", scrapeJobId);
             await alerter.HandleFailureAsync(scrapeJobId, ex.Message, ct);
-            throw; // Let Hangfire retry
+            throw;
         }
     }
 
@@ -305,7 +313,6 @@ public class BackfillJob(
             var maxPages = root.TryGetProperty("maxPages", out var mp) ? mp.GetInt32() : 200;
             var progress = root.TryGetProperty("progress", out var p) ? p.GetString() ?? "" : "";
 
-            // Parse last completed page from "pass1:page:N/M" format
             var lastPage = 0;
             if (progress.StartsWith("pass1:page:"))
             {
@@ -316,12 +323,10 @@ public class BackfillJob(
             }
             else if (progress.Contains("pass1:complete") || progress.StartsWith("pass2:") || progress.StartsWith("complete:"))
             {
-                lastPage = maxPages; // Pass 1 done, skip to pass 2
+                lastPage = maxPages;
             }
 
-            // Parse enriched slugs for pass 2 resume (not stored — re-computed from DB)
             var enrichedSlugs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
             return new BackfillProgress(maxPages, lastPage, enrichedSlugs);
         }
         catch
@@ -332,303 +337,24 @@ public class BackfillJob(
 
     private sealed record BackfillProgress(int MaxPages, int LastCompletedPage, HashSet<string> EnrichedSlugs);
 
-    // ── JKAnime directory JSON models ───────────────────────
-
-    private sealed record JkDirectoryPage(
-        [property: System.Text.Json.Serialization.JsonPropertyName("current_page")] int CurrentPage,
-        [property: System.Text.Json.Serialization.JsonPropertyName("data")] IReadOnlyList<JkDirectoryItem> Data);
-
-    private sealed record JkDirectoryItem(
-        [property: System.Text.Json.Serialization.JsonPropertyName("slug")] string? Slug,
-        [property: System.Text.Json.Serialization.JsonPropertyName("title")] string? Title,
-        [property: System.Text.Json.Serialization.JsonPropertyName("synopsis")] string? Synopsis,
-        [property: System.Text.Json.Serialization.JsonPropertyName("image")] string? Image,
-        [property: System.Text.Json.Serialization.JsonPropertyName("type")] string? Type,
-        [property: System.Text.Json.Serialization.JsonPropertyName("status")] string? Status);
-
-    // ── Series detail enrichment ────────────────────────────
-
-    private async Task<SeriesScrapedData?> ScrapeSeriesDetailAsync(
-        string baseUrl, string slug, int delayMs, CancellationToken ct)
-    {
-        var url = $"{baseUrl.TrimEnd('/')}/{slug}/";
-        if (!await GoToAsync(url, ct))
-        {
-            logger.LogWarning("Cannot reach series detail {Url}", url);
-            return null;
-        }
-
-        try
-        {
-            var title = await Page.Locator("div.anime_info h3").First.InnerTextAsync();
-
-            string? synopsis = null;
-            var synopsisEl = Page.Locator("div.anime_info p.scroll");
-            if (await synopsisEl.CountAsync() > 0)
-                synopsis = (await synopsisEl.First.InnerTextAsync()).Trim();
-
-            var coverUrl = $"https://cdn.jkdesa.com/assets/images/animes/image/{slug}.jpg";
-
-            var genres = new List<string>();
-            var genreLinks = await Page.Locator("div.card-bod a[href*='/genero/']").AllAsync();
-            foreach (var g in genreLinks)
-            {
-                var genreName = (await g.InnerTextAsync()).Trim();
-                if (!string.IsNullOrWhiteSpace(genreName))
-                    genres.Add(genreName);
-            }
-
-            string? status = null;
-            var statusEl = Page.Locator("div.card-bod div.enemision");
-            if (await statusEl.CountAsync() > 0)
-            {
-                var statusClass = await statusEl.First.GetAttributeAsync("class") ?? "";
-                if (statusClass.Contains("currently")) status = "ongoing";
-                else if (statusClass.Contains("completed")) status = "completed";
-                else
-                {
-                    var statusText = (await statusEl.First.InnerTextAsync()).Trim().ToLowerInvariant();
-                    if (statusText.Contains("emision") || statusText.Contains("emisión")) status = "ongoing";
-                    else if (statusText.Contains("finalizado")) status = "completed";
-                    else if (statusText.Contains("estrenar")) status = "upcoming";
-                }
-            }
-
-            string? type = null;
-            var tipoEl = Page.Locator("div.card-bod li[rel='tipo']");
-            if (await tipoEl.CountAsync() > 0)
-            {
-                var tipoText = (await tipoEl.First.InnerTextAsync()).Trim().ToLowerInvariant();
-                if (tipoText.Contains("serie") || tipoText.Contains("tv")) type = "tv";
-                else if (tipoText.Contains("película") || tipoText.Contains("pelicula") || tipoText.Contains("movie")) type = "movie";
-                else if (tipoText.Contains("ova")) type = "ova";
-                else if (tipoText.Contains("ona")) type = "ona";
-                else if (tipoText.Contains("especial") || tipoText.Contains("special")) type = "special";
-            }
-
-            // Year — extract from metadata list items (e.g. "Emitido: Oct 2023", "Año: 2023")
-            short? year = null;
-            var metaItems = await Page.Locator("div.card-bod ul li").AllAsync();
-            foreach (var li in metaItems)
-            {
-                var text = (await li.InnerTextAsync()).Trim();
-                var yearMatch = System.Text.RegularExpressions.Regex.Match(text, @"\b(19|20)\d{2}\b");
-                if (yearMatch.Success && short.TryParse(yearMatch.Value, out var parsedYear))
-                {
-                    year = parsedYear;
-                    break;
-                }
-            }
-
-            await JitterDelayAsync(delayMs, ct);
-
-            return new SeriesScrapedData(
-                Slug: slug,
-                Title: title.Trim(),
-                CoverUrl: coverUrl,
-                Status: status ?? "ongoing",
-                Type: type ?? "tv",
-                Synopsis: synopsis,
-                Year: year,
-                Genres: genres.Count > 0 ? genres : null);
-        }
-        catch (Exception ex)
-        {
-            logger.LogWarning(ex, "Failed to parse series detail for {Slug}", slug);
-            return null;
-        }
-    }
-
-    // ── Episode discovery ───────────────────────────────────
-
-    private async Task<IReadOnlyList<EpisodeScrapedData>> ScrapeEpisodesFromDetailAsync(
-        string baseUrl, string slug, Guid seriesId, int delayMs, CancellationToken ct)
-    {
-        var result = new List<EpisodeScrapedData>();
-
-        try
-        {
-            try
-            {
-                await Page.WaitForSelectorAsync("div.capitulos a[href]",
-                    new PageWaitForSelectorOptions { Timeout = 10_000 });
-            }
-            catch (TimeoutException)
-            {
-                logger.LogDebug("No episode links for {Slug}", slug);
-                return result;
-            }
-
-            var rows = await Page.Locator($"div.capitulos a[href*='/{slug}/']").AllAsync();
-            foreach (var row in rows)
-            {
-                try
-                {
-                    var href = await row.GetAttributeAsync("href");
-                    if (href is null) continue;
-
-                    var match = System.Text.RegularExpressions.Regex.Match(href, @"/(\d+)/?$");
-                    if (!match.Success || !short.TryParse(match.Groups[1].Value, out var epNum) || epNum <= 0)
-                        continue;
-
-                    result.Add(new EpisodeScrapedData(
-                        SeriesId: seriesId,
-                        EpisodeNumber: epNum,
-                        Title: null,
-                        PendingMirrors: []));
-                }
-                catch (Exception ex)
-                {
-                    logger.LogDebug(ex, "Failed to parse episode link");
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            logger.LogWarning(ex, "Failed to extract episode list for {Slug}", slug);
-        }
-
-        return result;
-    }
-
-    // ── Mirror extraction (extract from JS variables) ──────
-    //
-    // JKAnime defines `var servers = [...]` with base64-encoded embed URLs
-    // for external providers (Streamwish, VOE, Vidhide, Mixdrop, etc.).
-    // OK.ru is embedded via `jkokru.php?u=ID` in the `video[]` array.
-    // We extract URLs directly from JS evaluation — no tab clicking needed.
-
-    private async Task<IReadOnlyList<MirrorScrapedData>> ScrapeEpisodeMirrorsAsync(
-        string episodeUrl, Guid episodeId, int delayMs, CancellationToken ct)
-    {
-        var mirrors = new List<MirrorScrapedData>();
-        var capturedEmbeds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-        if (!await GoToAsync(episodeUrl, ct))
-        {
-            logger.LogWarning("Cannot reach episode {Url}", episodeUrl);
-            return mirrors;
-        }
-
-        // ── 1. Extract external mirrors from the `servers` JS variable ──
-        try
-        {
-            await Page.WaitForFunctionAsync(
-                "typeof servers !== 'undefined' && Array.isArray(servers)",
-                new PageWaitForFunctionOptions { Timeout = 15_000 });
-
-            var externalUrls = await Page.EvaluateAsync<string[]>(@"
-                (() => {
-                    const results = [];
-                    if (typeof servers !== 'undefined' && Array.isArray(servers)) {
-                        for (const s of servers) {
-                            if (!s.remote || s.server === 'Mediafire') continue;
-                            try {
-                                const url = atob(s.remote).trim();
-                                if (url.startsWith('http')) results.push(url);
-                            } catch {}
-                        }
-                    }
-                    return results;
-                })()
-            ");
-
-            foreach (var url in externalUrls)
-                capturedEmbeds.Add(url);
-
-            logger.LogDebug("Extracted {Count} external mirrors from servers[] on {Url}",
-                externalUrls.Length, episodeUrl);
-        }
-        catch (TimeoutException)
-        {
-            logger.LogDebug("No servers JS variable found on {Url}", episodeUrl);
-        }
-
-        // ── 2. Extract OK.ru mirror from video[] array ──
-        try
-        {
-            var okruId = await Page.EvaluateAsync<string?>(@"
-                (() => {
-                    if (typeof video === 'undefined' || !Array.isArray(video)) return null;
-                    for (const v of video) {
-                        const m = v.match(/jkokru\.php\?u=(\d+)/);
-                        if (m) return m[1];
-                    }
-                    return null;
-                })()
-            ");
-
-            if (!string.IsNullOrWhiteSpace(okruId))
-            {
-                capturedEmbeds.Add($"https://ok.ru/videoembed/{okruId}");
-                logger.LogDebug("Extracted OK.ru mirror: {Id}", okruId);
-            }
-        }
-        catch (Exception ex)
-        {
-            logger.LogDebug(ex, "Failed extracting OK.ru mirror on {Url}", episodeUrl);
-        }
-
-        // ── 3. Build mirror records (sorted by provider quality) ──
-        foreach (var url in capturedEmbeds)
-        {
-            if (IsJkAnimeDomain(url)) continue;
-
-            var providerName = ExtractProviderName(url);
-
-            // Skip providers known to have bad embed experience
-            if (BlockedProviders.Contains(providerName)) continue;
-
-            mirrors.Add(new MirrorScrapedData(
-                EpisodeId: episodeId,
-                ProviderName: providerName,
-                EmbedUrl: url,
-                QualityLabel: 720,
-                Priority: GetProviderPriority(providerName)));
-        }
-
-        logger.LogDebug("Episode {Url}: captured {Count} real mirrors", episodeUrl, mirrors.Count);
-
-        await JitterDelayAsync(delayMs, ct);
-        return mirrors;
-    }
+    // ── Helpers ─────────────────────────────────────────────
 
     private static bool IsJkAnimeDomain(string url) =>
         url.Contains("jkanime.net", StringComparison.OrdinalIgnoreCase) ||
         url.Contains("jkdesa.com", StringComparison.OrdinalIgnoreCase);
 
-    // ── Provider quality system ─────────────────────────────
-    // Lower number = higher priority = shown first in the player UI.
-    // Providers with fewer ads/captchas get better priority.
-
-    private static readonly HashSet<string> BlockedProviders = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "mega",       // Requires decryption key, heavy JS, often doesn't play in iframe
-        "mediafire",  // Download-only, no embed player
-    };
+    private static readonly HashSet<string> BlockedProviders = new(StringComparer.OrdinalIgnoreCase) { "mega", "mediafire" };
 
     private static readonly Dictionary<string, short> ProviderPriorities = new(StringComparer.OrdinalIgnoreCase)
     {
-        ["okru"]        = 1,   // cleanest, fewest ads
-        ["mp4upload"]   = 2,
-        ["sendvid"]     = 3,
-        ["yourupload"]  = 4,
-        ["filemoon"]    = 5,
-        ["streamwish"]  = 6,   // ads but plays reliably
-        ["voe"]         = 7,
-        ["vidhide"]     = 8,
-        ["streamtape"]  = 9,
-        ["fembed"]      = 10,
-        ["doodstream"]  = 11,
-        ["nozomi"]      = 12,
-        ["mixdrop"]     = 13,  // captcha overlay before play
-        ["desu"]        = 14,
+        ["okru"] = 1, ["mp4upload"] = 2, ["sendvid"] = 3, ["yourupload"] = 4,
+        ["filemoon"] = 5, ["streamwish"] = 6, ["voe"] = 7, ["vidhide"] = 8,
+        ["streamtape"] = 9, ["fembed"] = 10, ["doodstream"] = 11, ["nozomi"] = 12,
+        ["mixdrop"] = 13, ["desu"] = 14,
     };
 
     private static short GetProviderPriority(string provider) =>
         ProviderPriorities.TryGetValue(provider, out var p) ? p : (short)50;
-
-    // ── Helpers ─────────────────────────────────────────────
 
     private static string MapStatus(string? raw) => raw switch
     {
@@ -640,42 +366,7 @@ public class BackfillJob(
 
     private static string MapType(string? raw) => raw?.ToLowerInvariant() switch
     {
-        "tv" => "tv",
-        "movie" => "movie",
-        "ova" => "ova",
-        "ona" => "ona",
-        "special" => "special",
-        _ => "tv"
+        "tv" => "tv", "movie" => "movie", "ova" => "ova",
+        "ona" => "ona", "special" => "special", _ => "tv"
     };
-
-    private static string ExtractProviderName(string url)
-    {
-        try
-        {
-            var host = new Uri(url).Host.ToLowerInvariant();
-            if (host.StartsWith("www.")) host = host[4..];
-
-            return host switch
-            {
-                var h when h.Contains("fembed") || h.Contains("fplayer") => "fembed",
-                var h when h.Contains("streamtape") => "streamtape",
-                var h when h.Contains("mp4upload") => "mp4upload",
-                var h when h.Contains("yourupload") => "yourupload",
-                var h when h.Contains("dood") => "doodstream",
-                var h when h.Contains("ok.ru") => "okru",
-                var h when h.Contains("sendvid") => "sendvid",
-                var h when h.Contains("vidlox") => "vidlox",
-                var h when h.Contains("mixdrop") => "mixdrop",
-                var h when h.Contains("filemoon") => "filemoon",
-                var h when h.Contains("streamwish") || h.Contains("fastwish") || h.Contains("swish") => "streamwish",
-                var h when h.Contains("voe") => "voe",
-                var h when h.Contains("desu") || h.Contains("playmudos") => "desu",
-                var h when h.Contains("nozomi") => "nozomi",
-                var h when h.Contains("mega") => "mega",
-                var h when h.Contains("vidhide") => "vidhide",
-                _ => host.Split('.')[0]
-            };
-        }
-        catch { return "unknown"; }
-    }
 }

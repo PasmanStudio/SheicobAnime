@@ -81,9 +81,11 @@ try
     builder.Services.AddScoped<MirrorProbeService>();
     builder.Services.AddScoped<UpsertPipelineService>();
     builder.Services.AddScoped<DeadLetterAlerter>();
+    builder.Services.AddScoped<JkAnimeHttpClient>();
 
     // ─── Scrape strategies (all IScrapeStrategy impls) ────
     // Source1 (AnimeFlv) removed — consistently blocked by Cloudflare, 0 data indexed.
+    // Note: Playwright removed — all scraping now uses pure HTTP (10-50x faster).
     builder.Services.AddScoped<IScrapeStrategy, Source2Strategy>();
 
     // ─── Hangfire job classes ─────────────────────────────
