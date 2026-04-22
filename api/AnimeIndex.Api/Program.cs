@@ -338,9 +338,11 @@ try
     }
     else if (app.Environment.IsProduction())
     {
-        // Seed reference data (genres) — idempotent, safe to run every startup
+        // Apply pending EF migrations on startup (safe — idempotent)
         using var scope = app.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        await db.Database.MigrateAsync();
+        // Seed reference data (genres) — idempotent, safe to run every startup
         await SeedData.SeedGenresAsync(db);
         // Invalidate genres cache so stale empty results don't persist
         var cache = scope.ServiceProvider.GetRequiredService<ICacheService>();
