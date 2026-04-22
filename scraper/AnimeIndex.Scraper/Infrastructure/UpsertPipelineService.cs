@@ -16,8 +16,8 @@ public class UpsertPipelineService(AppDbContext db)
     public async Task<Guid> UpsertSeriesAsync(SeriesScrapedData data, CancellationToken ct = default)
     {
         await db.Database.ExecuteSqlAsync($"""
-            INSERT INTO series (id, slug, title, title_romaji, title_native, synopsis, cover_url, status, type, score, year, episode_count, created_at, updated_at)
-            VALUES (gen_random_uuid(), {data.Slug}, {data.Title}, {data.TitleRomaji}, {data.TitleNative}, {data.Synopsis}, {data.CoverUrl}, {data.Status}, {data.Type}, {data.Score}, {data.Year}, {data.EpisodeCount}, now(), now())
+            INSERT INTO series (id, slug, title, title_romaji, title_native, synopsis, cover_url, status, type, score, year, episode_count, studio, season, demographics, language, duration_minutes, aired_date, quality, created_at, updated_at)
+            VALUES (gen_random_uuid(), {data.Slug}, {data.Title}, {data.TitleRomaji}, {data.TitleNative}, {data.Synopsis}, {data.CoverUrl}, {data.Status}, {data.Type}, {data.Score}, {data.Year}, {data.EpisodeCount}, {data.Studio}, {data.Season}, {data.Demographics}, {data.Language}, {data.DurationMinutes}, {data.AiredDate}, {data.Quality}, now(), now())
             ON CONFLICT (slug) DO UPDATE SET
                 title           = EXCLUDED.title,
                 title_romaji    = COALESCE(EXCLUDED.title_romaji, series.title_romaji),
@@ -29,6 +29,13 @@ public class UpsertPipelineService(AppDbContext db)
                 score           = COALESCE(EXCLUDED.score, series.score),
                 year            = COALESCE(EXCLUDED.year, series.year),
                 episode_count   = COALESCE(EXCLUDED.episode_count, series.episode_count),
+                studio          = COALESCE(EXCLUDED.studio, series.studio),
+                season          = COALESCE(EXCLUDED.season, series.season),
+                demographics    = COALESCE(EXCLUDED.demographics, series.demographics),
+                language        = COALESCE(EXCLUDED.language, series.language),
+                duration_minutes = COALESCE(EXCLUDED.duration_minutes, series.duration_minutes),
+                aired_date      = COALESCE(EXCLUDED.aired_date, series.aired_date),
+                quality         = COALESCE(EXCLUDED.quality, series.quality),
                 updated_at      = now(),
                 last_scraped_at = now()
             """, ct);

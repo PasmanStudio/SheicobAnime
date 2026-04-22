@@ -79,7 +79,7 @@ public sealed class Source2Strategy(
         await WriteHeartbeatAsync();
 
         // ── Discover series from /directorio ──────────────────
-        var discovered = await DiscoverSeriesAsync(baseUrl, maxPages, delayMs, ct);
+        var discovered = await DiscoverSeriesAsync(baseUrl, maxPages, delayMs, scrapeJobId, ct);
         totalDiscovered = discovered.Count;
 
         foreach (var (series, animeId) in discovered)
@@ -138,6 +138,16 @@ public sealed class Source2Strategy(
                     Type = detail.Type ?? series.Type,
                     Year = detail.Year,
                     Genres = detail.Genres ?? series.Genres,
+                    TitleRomaji = detail.TitleEnglish,
+                    TitleNative = detail.TitleJapanese,
+                    EpisodeCount = detail.EpisodeCount ?? series.EpisodeCount,
+                    Studio = detail.Studio,
+                    Season = detail.Season,
+                    Demographics = detail.Demographics,
+                    Language = detail.Language,
+                    DurationMinutes = detail.DurationMinutes,
+                    AiredDate = detail.AiredDate,
+                    Quality = detail.Quality,
                 }
                 : series;
 
@@ -258,7 +268,7 @@ public sealed class Source2Strategy(
     // ── Directory browsing ──────────────────────────────────
 
     private async Task<IReadOnlyList<(SeriesScrapedData Series, int? AnimeId)>> DiscoverSeriesAsync(
-        string baseUrl, int maxPages, int delayMs, CancellationToken ct)
+        string baseUrl, int maxPages, int delayMs, Guid scrapeJobId, CancellationToken ct)
     {
         var result = new List<(SeriesScrapedData, int?)>();
 
@@ -266,6 +276,19 @@ public sealed class Source2Strategy(
         {
             if (ct.IsCancellationRequested) break;
             if (await http.CheckCircuitBreakerAsync(ct)) break;
+
+            // Write heartbeat every 10 pages during discovery
+            if (page % 10 == 0)
+            {
+                try
+                {
+                    var msg = $"discovering page {page}/{maxPages} ({result.Count} series so far)";
+                    await db.Database.ExecuteSqlRawAsync(
+                        """UPDATE scrape_jobs SET progress_message = {0}, last_heartbeat = now() WHERE id = {1}""",
+                        msg, scrapeJobId);
+                }
+                catch { /* best-effort */ }
+            }
 
             var directoryPage = await http.GetDirectoryPageAsync(baseUrl, page, ct);
             if (directoryPage?.Data is null || directoryPage.Data.Count == 0)

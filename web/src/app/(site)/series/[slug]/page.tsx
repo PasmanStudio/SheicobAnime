@@ -76,8 +76,12 @@ export default async function SeriesPage({ params, searchParams }: Props) {
           <h1 className="text-2xl md:text-3xl font-bold text-white">
             {series.title}
           </h1>
+          {/* Alternative titles */}
           {series.titleRomaji && series.titleRomaji !== series.title && (
             <p className="text-neutral-400 text-sm">{series.titleRomaji}</p>
+          )}
+          {series.titleNative && (
+            <p className="text-neutral-500 text-sm">{series.titleNative}</p>
           )}
 
           {/* Synopsis */}
@@ -142,10 +146,52 @@ export default async function SeriesPage({ params, searchParams }: Props) {
                 <dd className="text-neutral-200">{series.year}</dd>
               </div>
             )}
+            {series.studio && (
+              <div>
+                <dt className="text-neutral-500 text-xs font-medium">Estudio</dt>
+                <dd className="text-neutral-200">{series.studio}</dd>
+              </div>
+            )}
+            {series.season && (
+              <div>
+                <dt className="text-neutral-500 text-xs font-medium">Temporada</dt>
+                <dd className="text-neutral-200">{series.season}</dd>
+              </div>
+            )}
+            {series.demographics && (
+              <div>
+                <dt className="text-neutral-500 text-xs font-medium">Demografía</dt>
+                <dd className="text-neutral-200">{series.demographics}</dd>
+              </div>
+            )}
             {series.episodeCount !== null && series.episodeCount > 0 && (
               <div>
                 <dt className="text-neutral-500 text-xs font-medium">Episodios</dt>
                 <dd className="text-neutral-200">{series.episodeCount}</dd>
+              </div>
+            )}
+            {series.durationMinutes !== null && (
+              <div>
+                <dt className="text-neutral-500 text-xs font-medium">Duración</dt>
+                <dd className="text-neutral-200">{series.durationMinutes} min</dd>
+              </div>
+            )}
+            {series.airedDate && (
+              <div>
+                <dt className="text-neutral-500 text-xs font-medium">Emitido</dt>
+                <dd className="text-neutral-200">{series.airedDate}</dd>
+              </div>
+            )}
+            {series.language && (
+              <div>
+                <dt className="text-neutral-500 text-xs font-medium">Idioma</dt>
+                <dd className="text-neutral-200">{series.language}</dd>
+              </div>
+            )}
+            {series.quality && (
+              <div>
+                <dt className="text-neutral-500 text-xs font-medium">Calidad</dt>
+                <dd className="text-neutral-200">{series.quality}</dd>
               </div>
             )}
             {series.score !== null && (

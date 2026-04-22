@@ -20,6 +20,13 @@ export interface Series {
   type: SeriesType | null;
   score: number | null;
   episodeCount: number | null;
+  studio: string | null;
+  season: string | null;
+  demographics: string | null;
+  language: string | null;
+  durationMinutes: number | null;
+  airedDate: string | null;
+  quality: string | null;
   genres: Genre[];
   createdAt: string;
   updatedAt: string;

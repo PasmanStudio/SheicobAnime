@@ -171,6 +171,7 @@ public sealed partial class JkAnimeHttpClient
 
     /// <summary>
     /// Fetches a series detail page and extracts metadata from the raw HTML.
+    /// Primary source: the hidden &lt;div class="card anime_data mov"&gt; card with structured &lt;li&gt; items.
     /// </summary>
     public async Task<SeriesDetailResult?> GetSeriesDetailAsync(string baseUrl, string slug, CancellationToken ct)
     {
@@ -196,58 +197,119 @@ public sealed partial class JkAnimeHttpClient
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
-            // Status — <div class="enemision completed"> or <div class="enemision currently">
-            string? status = null;
-            var statusClassMatch = StatusClassRegex().Match(html);
-            if (statusClassMatch.Success)
-            {
-                var classes = statusClassMatch.Groups[1].Value.ToLowerInvariant();
-                if (classes.Contains("currently")) status = "ongoing";
-                else if (classes.Contains("completed")) status = "completed";
-            }
-
-            // Fallback: scan for "Estado:" text
-            if (status is null)
-            {
-                var estadoMatch = EstadoTextRegex().Match(html);
-                if (estadoMatch.Success)
-                {
-                    var estadoText = estadoMatch.Groups[1].Value.ToLowerInvariant();
-                    if (estadoText.Contains("concluido") || estadoText.Contains("finalizado"))
-                        status = "completed";
-                    else if (estadoText.Contains("emision") || estadoText.Contains("emisión"))
-                        status = "ongoing";
-                    else if (estadoText.Contains("estrenar"))
-                        status = "upcoming";
-                }
-            }
-
-            // Type — <li rel="tipo">TV</li>
-            string? type = null;
-            var tipoMatch = TipoRegex().Match(html);
-            if (tipoMatch.Success)
-            {
-                var tipoText = tipoMatch.Groups[1].Value.ToLowerInvariant();
-                if (tipoText.Contains("serie") || tipoText.Contains("tv")) type = "tv";
-                else if (tipoText.Contains("película") || tipoText.Contains("pelicula") || tipoText.Contains("movie")) type = "movie";
-                else if (tipoText.Contains("ova")) type = "ova";
-                else if (tipoText.Contains("ona")) type = "ona";
-                else if (tipoText.Contains("especial") || tipoText.Contains("special")) type = "special";
-            }
-
-            // Year — extract from any metadata text matching (19|20)\d\d
-            short? year = null;
-            var yearMatch = YearRegex().Match(html);
-            if (yearMatch.Success && short.TryParse(yearMatch.Value, out var parsedYear))
-                year = parsedYear;
-
             // Anime ID — needed for episode AJAX endpoint
-            // Pattern: data-url="https://jkanime.net/ajax/personajes?{id}"
-            // or: $.post('https://jkanime.net/ajax/votado/{id}',
             int? animeId = null;
             var idMatch = AnimeIdRegex().Match(html);
             if (idMatch.Success && int.TryParse(idMatch.Groups[1].Value, out var parsedId))
                 animeId = parsedId;
+
+            // ── Parse the hidden metadata card ──────────────
+            // <div class="card...anime_data mov...">...<ul>...<li>...</li>...</ul>...</div>
+            string? status = null;
+            string? type = null;
+            short? year = null;
+            string? studio = null;
+            string? season = null;
+            string? demographics = null;
+            string? language = null;
+            short? durationMinutes = null;
+            string? airedDate = null;
+            string? quality = null;
+            short? episodeCount = null;
+
+            var cardMatch = MovCardRegex().Match(html);
+            if (cardMatch.Success)
+            {
+                var card = cardMatch.Value;
+
+                // Type: <li rel="tipo"><span>Tipo:</span> Serie</li>
+                var tipoMatch = CardTipoRegex().Match(card);
+                if (tipoMatch.Success)
+                {
+                    var tipoText = tipoMatch.Groups[1].Value.Trim().ToLowerInvariant();
+                    type = tipoText switch
+                    {
+                        var t when t.Contains("serie") || t.Contains("tv") => "tv",
+                        var t when t.Contains("película") || t.Contains("pelicula") || t.Contains("movie") => "movie",
+                        var t when t.Contains("ova") => "ova",
+                        var t when t.Contains("ona") => "ona",
+                        var t when t.Contains("especial") || t.Contains("special") => "special",
+                        _ => null
+                    };
+                }
+
+                // Status: <li><span>Estado:</span> <div class="enemision finished">Concluido</div></li>
+                var statusMatch = CardStatusClassRegex().Match(card);
+                if (statusMatch.Success)
+                {
+                    var classes = statusMatch.Groups[1].Value.ToLowerInvariant();
+                    status = classes switch
+                    {
+                        var c when c.Contains("finished") || c.Contains("completed") => "completed",
+                        var c when c.Contains("currently") => "ongoing",
+                        var c when c.Contains("notyet") => "upcoming",
+                        _ => null
+                    };
+                }
+
+                // Studio: <li><span>Studios:</span> <a href="...">Name</a></li>
+                studio = ExtractLinkedFieldText(card, "Studios");
+
+                // Season: <li><span>Temporada:</span> <a href="...">Invierno 2024</a></li>
+                season = ExtractLinkedFieldText(card, "Temporada");
+
+                // Year from season (e.g., "Invierno 2024" → 2024)
+                if (season is not null)
+                {
+                    var yearMatch = YearRegex().Match(season);
+                    if (yearMatch.Success && short.TryParse(yearMatch.Value, out var parsedYear))
+                        year = parsedYear;
+                }
+
+                // Demographics: <li><span>Demografia:</span> <a href="...">Shoujo</a></li>
+                demographics = ExtractLinkedFieldText(card, "Demografia");
+
+                // Language: <li><span>Idiomas:</span>  Japonés  </li>
+                language = ExtractPlainFieldText(card, "Idiomas");
+
+                // Episode count: <li><span>Episodios:</span> 12</li>
+                var epText = ExtractPlainFieldText(card, "Episodios");
+                if (epText is not null && short.TryParse(epText, out var epCount))
+                    episodeCount = epCount;
+
+                // Duration: <li><span>Duracion:</span> 24 min.</li>
+                var durText = ExtractPlainFieldText(card, "Duraci");
+                if (durText is not null)
+                {
+                    var numMatch = NumberRegex().Match(durText);
+                    if (numMatch.Success && short.TryParse(numMatch.Value, out var dur))
+                        durationMinutes = dur;
+                }
+
+                // Aired date: <li><span> Emitido: </span> Viernes, 05 de Enero de 2024</li>
+                airedDate = ExtractPlainFieldText(card, "Emitido");
+
+                // Quality: <li><span>Calidad:</span> 720p</li>
+                quality = ExtractPlainFieldText(card, "Calidad");
+
+                // Fallback: year from aired date if not found in season
+                if (year is null && airedDate is not null)
+                {
+                    var yearMatch = YearRegex().Match(airedDate);
+                    if (yearMatch.Success && short.TryParse(yearMatch.Value, out var parsedYear))
+                        year = parsedYear;
+                }
+            }
+
+            // ── Alternative titles ──────────────────────────
+            string? titleEnglish = null;
+            string? titleJapanese = null;
+            var altEngMatch = AltTitleRegex("Ingles").Match(html);
+            if (altEngMatch.Success)
+                titleEnglish = altEngMatch.Groups[1].Value.Trim();
+            var altJpnMatch = AltTitleRegex("Japon").Match(html);
+            if (altJpnMatch.Success)
+                titleJapanese = altJpnMatch.Groups[1].Value.Trim();
 
             return new SeriesDetailResult(
                 Title: title ?? slug,
@@ -257,7 +319,17 @@ public sealed partial class JkAnimeHttpClient
                 Type: type ?? "tv",
                 Year: year,
                 Genres: genres.Count > 0 ? genres : null,
-                AnimeId: animeId);
+                AnimeId: animeId,
+                TitleEnglish: titleEnglish,
+                TitleJapanese: titleJapanese,
+                Studio: studio,
+                Season: season,
+                Demographics: demographics,
+                Language: language,
+                DurationMinutes: durationMinutes,
+                AiredDate: airedDate,
+                Quality: quality,
+                EpisodeCount: episodeCount);
         }
         catch (Exception ex)
         {
@@ -265,6 +337,51 @@ public sealed partial class JkAnimeHttpClient
             return null;
         }
     }
+
+    // ── Detail-page extraction helpers ──────────────────────
+
+    /// <summary>
+    /// Extracts linked text for a field inside the metadata card.
+    /// E.g., for "Studios": &lt;li&gt;&lt;span&gt;Studios:&lt;/span&gt; &lt;a href="..."&gt;Drive&lt;/a&gt;&lt;/li&gt; → "Drive"
+    /// </summary>
+    private static string? ExtractLinkedFieldText(string cardHtml, string label)
+    {
+        // Build a regex to find <li> containing the label, then extract <a> text(s)
+        var pattern = $@"<li[^>]*>\s*<span[^>]*>\s*{label}\s*:?\s*</span>(.*?)</li>";
+        var match = Regex.Match(cardHtml, pattern, RegexOptions.IgnoreCase | RegexOptions.Singleline);
+        if (!match.Success) return null;
+
+        var content = match.Groups[1].Value;
+        var anchors = Regex.Matches(content, @">([^<]+)</a>", RegexOptions.IgnoreCase);
+        if (anchors.Count > 0)
+            return string.Join(", ", anchors.Select(a => a.Groups[1].Value.Trim()));
+
+        // Fallback: plain text
+        var text = Regex.Replace(content, @"<[^>]+>", "").Trim();
+        return string.IsNullOrWhiteSpace(text) ? null : text;
+    }
+
+    /// <summary>
+    /// Extracts plain text for a field inside the metadata card.
+    /// E.g., for "Idiomas": &lt;li&gt;&lt;span&gt;Idiomas:&lt;/span&gt;  Japonés  &lt;/li&gt; → "Japonés"
+    /// </summary>
+    private static string? ExtractPlainFieldText(string cardHtml, string label)
+    {
+        var pattern = $@"<li[^>]*>\s*<span[^>]*>\s*{label}\s*:?\s*</span>(.*?)</li>";
+        var match = Regex.Match(cardHtml, pattern, RegexOptions.IgnoreCase | RegexOptions.Singleline);
+        if (!match.Success) return null;
+
+        var text = Regex.Replace(match.Groups[1].Value, @"<[^>]+>", "").Trim();
+        return string.IsNullOrWhiteSpace(text) ? null : text;
+    }
+
+    /// <summary>
+    /// Builds a regex for alternative title extraction.
+    /// Pattern: &lt;b class="t"&gt;{prefix}...&lt;/b&gt; TEXT (until next &lt;b or end of div)
+    /// </summary>
+    private static Regex AltTitleRegex(string labelPrefix) =>
+        new($@"<b[^>]*class=""t""[^>]*>\s*{labelPrefix}\w*\s*</b>\s*([^<]+)",
+            RegexOptions.IgnoreCase | RegexOptions.Singleline);
 
     // ── Episode list via AJAX ───────────────────────────────
 
@@ -413,17 +530,23 @@ public sealed partial class JkAnimeHttpClient
     [GeneratedRegex("""/genero/[^"]*">([^<]+)</a>""", RegexOptions.IgnoreCase)]
     private static partial Regex GenreRegex();
 
+    /// <summary>Matches the hidden metadata card: &lt;div class="card...anime_data mov..."&gt;...&lt;/div&gt;&lt;/div&gt;</summary>
+    [GeneratedRegex("""<div[^>]*class="[^"]*anime_data\s+mov[^"]*"[^>]*>.*?</ul>\s*</div>\s*</div>""", RegexOptions.Singleline | RegexOptions.IgnoreCase)]
+    private static partial Regex MovCardRegex();
+
+    /// <summary>Type from card: &lt;li rel="tipo"&gt;&lt;span&gt;Tipo:&lt;/span&gt; Serie&lt;/li&gt;</summary>
+    [GeneratedRegex("""<li[^>]*rel="tipo"[^>]*>\s*<span[^>]*>[^<]*</span>\s*([^<]+)</li>""", RegexOptions.IgnoreCase)]
+    private static partial Regex CardTipoRegex();
+
+    /// <summary>Status class from card: &lt;div class="enemision finished"&gt;</summary>
     [GeneratedRegex("""<div[^>]*class="[^"]*enemision\s+([^"]+)"[^>]*>""", RegexOptions.IgnoreCase)]
-    private static partial Regex StatusClassRegex();
-
-    [GeneratedRegex("""Estado[:\s]*</?\w[^>]*>?\s*([^<]+)""", RegexOptions.IgnoreCase)]
-    private static partial Regex EstadoTextRegex();
-
-    [GeneratedRegex("""<li[^>]*rel="tipo"[^>]*>([^<]+)</li>""", RegexOptions.IgnoreCase)]
-    private static partial Regex TipoRegex();
+    private static partial Regex CardStatusClassRegex();
 
     [GeneratedRegex("""\b(19|20)\d{2}\b""")]
     private static partial Regex YearRegex();
+
+    [GeneratedRegex("""\d+""")]
+    private static partial Regex NumberRegex();
 
     [GeneratedRegex("""ajax/(?:personajes|votado|search_episode|episodes)\??\/?(\d+)""")]
     private static partial Regex AnimeIdRegex();
@@ -468,4 +591,14 @@ public sealed record SeriesDetailResult(
     string? Type,
     short? Year,
     IReadOnlyList<string>? Genres,
-    int? AnimeId);
+    int? AnimeId,
+    string? TitleEnglish = null,
+    string? TitleJapanese = null,
+    string? Studio = null,
+    string? Season = null,
+    string? Demographics = null,
+    string? Language = null,
+    short? DurationMinutes = null,
+    string? AiredDate = null,
+    string? Quality = null,
+    short? EpisodeCount = null);

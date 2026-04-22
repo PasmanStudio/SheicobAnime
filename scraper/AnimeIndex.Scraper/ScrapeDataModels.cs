@@ -13,7 +13,14 @@ public record SeriesScrapedData(
     decimal? Score = null,
     short? Year = null,
     short? EpisodeCount = null,
-    IReadOnlyList<string>? Genres = null);
+    IReadOnlyList<string>? Genres = null,
+    string? Studio = null,
+    string? Season = null,
+    string? Demographics = null,
+    string? Language = null,
+    short? DurationMinutes = null,
+    string? AiredDate = null,
+    string? Quality = null);
 
 public record EpisodeScrapedData(
     Guid SeriesId,

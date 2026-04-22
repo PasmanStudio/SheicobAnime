@@ -14,6 +14,13 @@ public record SeriesDto(
     string? Type,
     decimal? Score,
     short? EpisodeCount,
+    string? Studio,
+    string? Season,
+    string? Demographics,
+    string? Language,
+    short? DurationMinutes,
+    string? AiredDate,
+    string? Quality,
     GenreDto[] Genres,
     DateTime CreatedAt,
     DateTime UpdatedAt);

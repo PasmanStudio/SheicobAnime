@@ -15,6 +15,13 @@ public class Series
     public string? Type { get; set; } // tv, movie, ova, ona, special
     public decimal? Score { get; set; }
     public short? EpisodeCount { get; set; }
+    public string? Studio { get; set; }
+    public string? Season { get; set; }
+    public string? Demographics { get; set; }
+    public string? Language { get; set; }
+    public short? DurationMinutes { get; set; }
+    public string? AiredDate { get; set; }
+    public string? Quality { get; set; }
     public string Metadata { get; set; } = "{}"; // JSONB
     public DateTime? LastScrapedAt { get; set; }
     public DateTime CreatedAt { get; set; }
