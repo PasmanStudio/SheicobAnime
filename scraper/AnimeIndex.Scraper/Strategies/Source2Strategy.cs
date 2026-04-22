@@ -73,18 +73,39 @@ public sealed class Source2Strategy(
                 continue;
             }
 
-            // ── Skip completed series that already have episodes ──
-            // If a series is marked "completed" and we already have episodes indexed,
-            // there's no need to re-scrape its detail + episode pages — saves huge time.
+            // ── Smart skip logic ────────────────────────────────
+            // Query: what do we already have for this series?
             var existing = await db.Series
                 .Where(s => s.Slug == series.Slug)
-                .Select(s => new { s.Id, s.Status, EpisodeCount = s.Episodes.Count })
+                .Select(s => new
+                {
+                    s.Id,
+                    s.Status,
+                    DbEpisodeCount = s.Episodes.Count,
+                    // Episodes that have at least 1 active mirror
+                    EpisodesWithMirrors = s.Episodes.Count(e =>
+                        e.Mirrors.Any(m => m.IsActive)),
+                })
                 .FirstOrDefaultAsync(ct);
 
-            if (existing is { Status: "completed", EpisodeCount: > 0 })
+            // Skip if:
+            //  - Directory OR DB says "completed"
+            //  - Has at least 1 episode
+            //  - Every episode has at least 1 active mirror
+            //  - If directory gives a total episode count, we have all of them
+            var isCompleted = series.Status == "completed"
+                              || existing is { Status: "completed" };
+            var hasAllEps = existing is { DbEpisodeCount: > 0 }
+                            && existing.EpisodesWithMirrors == existing.DbEpisodeCount;
+            var matchesExpected = series.EpisodeCount is null
+                                 || (existing is not null
+                                     && existing.DbEpisodeCount >= series.EpisodeCount);
+
+            if (isCompleted && hasAllEps && matchesExpected)
             {
-                logger.LogDebug("Skipping completed series {Slug} — already has {Count} episodes",
-                    series.Slug, existing.EpisodeCount);
+                logger.LogDebug(
+                    "Skipping fully-indexed completed series {Slug} — {Eps} episodes, all with mirrors",
+                    series.Slug, existing!.DbEpisodeCount);
                 seriesCount++;
                 continue;
             }
@@ -99,12 +120,28 @@ public sealed class Source2Strategy(
             // ── Discover episodes from detail page ────────────
             var episodes = await ScrapeEpisodesFromDetailAsync(baseUrl, series.Slug, seriesId, delayMs, ct);
 
+            // Pre-load episode numbers that already have active mirrors → skip those
+            var episodesWithMirrors = existing is not null
+                ? await db.Episodes
+                    .Where(e => e.SeriesId == seriesId && e.Mirrors.Any(m => m.IsActive))
+                    .Select(e => e.EpisodeNumber)
+                    .ToHashSetAsync(ct)
+                : new HashSet<short>();
+
             foreach (var ep in episodes)
             {
                 if (ct.IsCancellationRequested) break;
 
                 var episodeId = await upsert.UpsertEpisodeAsync(ep, ct);
                 episodeCount++;
+
+                // Skip mirror scraping for episodes that already have active mirrors
+                if (episodesWithMirrors.Contains(ep.EpisodeNumber))
+                {
+                    logger.LogDebug("Episode {Slug} ep{Num}: already has mirrors — skipping",
+                        series.Slug, ep.EpisodeNumber);
+                    continue;
+                }
 
                 // Navigate to episode page to extract Desu player mirrors
                 var epUrl = $"{baseUrl.TrimEnd('/')}/{series.Slug}/{ep.EpisodeNumber}/";
@@ -133,6 +170,11 @@ public sealed class Source2Strategy(
         logger.LogInformation(
             "JKAnimeStrategy complete — series={S} episodes={E} mirrors={M}",
             seriesCount, episodeCount, mirrorCount);
+
+        // Fail if we discovered nothing — likely blocked or site down
+        if (seriesCount == 0 && episodeCount == 0)
+            return new ScrapeResult(false,
+                "Zero series and episodes indexed — JKAnime may be unreachable or has changed structure.");
 
         return new ScrapeResult(true,
             SeriesIndexed: seriesCount,
@@ -210,13 +252,18 @@ public sealed class Source2Strategy(
                     _ => "tv"
                 };
 
+                // Parse episode count from directory (may be a number string)
+                short? epCount = short.TryParse(item.Episodes, out var parsedEpCount) && parsedEpCount > 0
+                    ? parsedEpCount : null;
+
                 result.Add(new SeriesScrapedData(
                     Slug: item.Slug.Trim(),
                     Title: item.Title.Trim(),
                     CoverUrl: item.Image,
                     Status: status,
                     Type: type,
-                    Synopsis: string.IsNullOrWhiteSpace(item.Synopsis) ? null : item.Synopsis.Trim()));
+                    Synopsis: string.IsNullOrWhiteSpace(item.Synopsis) ? null : item.Synopsis.Trim(),
+                    EpisodeCount: epCount));
             }
 
             logger.LogDebug("Page {Page}: discovered {Count} series", page, animesPage.Data.Count);
@@ -237,7 +284,8 @@ public sealed class Source2Strategy(
         [property: System.Text.Json.Serialization.JsonPropertyName("synopsis")] string? Synopsis,
         [property: System.Text.Json.Serialization.JsonPropertyName("image")] string? Image,
         [property: System.Text.Json.Serialization.JsonPropertyName("type")] string? Type,
-        [property: System.Text.Json.Serialization.JsonPropertyName("status")] string? Status);
+        [property: System.Text.Json.Serialization.JsonPropertyName("status")] string? Status,
+        [property: System.Text.Json.Serialization.JsonPropertyName("episodes")] string? Episodes);
 
     // ── Series detail page (/{slug}/) ───────────────────────
 
@@ -564,12 +612,13 @@ public sealed class Source2Strategy(
                 var h when h.Contains("vidlox") => "vidlox",
                 var h when h.Contains("mixdrop") => "mixdrop",
                 var h when h.Contains("filemoon") => "filemoon",
-                var h when h.Contains("streamwish") || h.Contains("fastwish") || h.Contains("swish") => "streamwish",
+                var h when h.Contains("streamwish") || h.Contains("fastwish") || h.Contains("swish") || h.Contains("bysekoze") => "streamwish",
                 var h when h.Contains("voe") => "voe",
                 var h when h.Contains("desu") || h.Contains("playmudos") => "desu",
                 var h when h.Contains("nozomi") => "nozomi",
                 var h when h.Contains("mega") => "mega",
-                var h when h.Contains("vidhide") => "vidhide",
+                var h when h.Contains("vidhide") || h.Contains("dsvplay") => "vidhide",
+                var h when h.Contains("mxdrop") => "mixdrop",
                 _ => host.Split('.')[0]
             };
         }

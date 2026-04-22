@@ -83,7 +83,7 @@ try
     builder.Services.AddScoped<DeadLetterAlerter>();
 
     // ─── Scrape strategies (all IScrapeStrategy impls) ────
-    builder.Services.AddScoped<IScrapeStrategy, Source1Strategy>();
+    // Source1 (AnimeFlv) removed — consistently blocked by Cloudflare, 0 data indexed.
     builder.Services.AddScoped<IScrapeStrategy, Source2Strategy>();
 
     // ─── Hangfire job classes ─────────────────────────────
@@ -91,6 +91,7 @@ try
     builder.Services.AddScoped<ScrapeSchedulerJob>();
     builder.Services.AddScoped<BackfillJob>();
     builder.Services.AddScoped<WatchProgressCleanupJob>();
+    builder.Services.AddScoped<MirrorHealthCheckJob>();
 
     var app = builder.Build();
 
@@ -98,23 +99,18 @@ try
     using (var scope = app.Services.CreateScope())
     {
         var recurring = scope.ServiceProvider.GetRequiredService<IRecurringJobManager>();
-        var cron = builder.Configuration["Hangfire:SchedulerCron"] ?? Cron.Hourly();
 
+        // Single scheduler for source2 (JKAnime) — runs every 2 hours
+        var scraperCron = builder.Configuration["Hangfire:SchedulerCron"] ?? "0 */2 * * *";
         recurring.AddOrUpdate<ScrapeSchedulerJob>(
             "scrape-scheduler",
             "scraper",
             job => job.RunAsync(CancellationToken.None),
-            cron,
+            scraperCron,
             new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc });
 
-        // Source2 (JKAnime) runs on a separate schedule — every 2 hours by default
-        var source2Cron = builder.Configuration["Hangfire:Source2Cron"] ?? "0 */2 * * *";
-        recurring.AddOrUpdate<ScrapeSchedulerJob>(
-            "scrape-scheduler-source2",
-            "scraper",
-            job => job.RunAsync(CancellationToken.None),
-            source2Cron,
-            new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc });
+        // Remove legacy source1 scheduler if it exists
+        recurring.RemoveIfExists("scrape-scheduler-source2");
 
         // Daily cleanup of anonymous watch_progress rows (180-day retention)
         recurring.AddOrUpdate<WatchProgressCleanupJob>(
@@ -124,18 +120,20 @@ try
             "0 3 * * *", // 03:00 UTC daily
             new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc });
 
+        // Daily mirror health check — probes 500 oldest-checked mirrors
+        recurring.AddOrUpdate<MirrorHealthCheckJob>(
+            "mirror-health-check",
+            "scraper",
+            job => job.RunAsync(CancellationToken.None),
+            "0 4 * * *", // 04:00 UTC daily
+            new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc });
+
         // Auto-create initial scrape jobs if none exist (first deployment bootstrap)
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var hasJobs = await db.ScrapeJobs.AnyAsync(j => j.Status == "pending" || j.Status == "running");
         if (!hasJobs)
         {
-            Log.Information("No pending/running scrape jobs found — creating initial jobs for source1 + source2");
-            db.ScrapeJobs.Add(new AnimeIndex.Api.Data.Entities.ScrapeJob
-            {
-                JobType = "scrape:source1",
-                Status = "pending",
-                ScheduledAt = DateTime.UtcNow
-            });
+            Log.Information("No pending/running scrape jobs found — creating initial job for source2");
             db.ScrapeJobs.Add(new AnimeIndex.Api.Data.Entities.ScrapeJob
             {
                 JobType = "scrape:source2",

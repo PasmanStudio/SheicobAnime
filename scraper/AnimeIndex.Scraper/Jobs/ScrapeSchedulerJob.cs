@@ -18,7 +18,7 @@ public class ScrapeSchedulerJob(
     ILogger<ScrapeSchedulerJob> logger)
 {
     // Sources that should always have a recurring scrape cycle
-    private static readonly string[] _autoSources = ["source1", "source2"];
+    private static readonly string[] _autoSources = ["source2"];
 
     // Minimum hours between auto-created scrape cycles per source
     private const int AutoRescheduleHours = 4;
