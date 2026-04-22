@@ -41,6 +41,7 @@ const PREROLL_SECONDS = 5;
 interface EpisodePlayerProps {
   mirrors: Mirror[];
   episodeTitle: string;
+  seriesTitle?: string;
   episodeId: string;
   posterUrl?: string;
 }
@@ -56,6 +57,7 @@ interface EpisodePlayerProps {
 export default function EpisodePlayer({
   mirrors,
   episodeTitle,
+  seriesTitle,
   episodeId,
   posterUrl,
 }: EpisodePlayerProps) {
@@ -276,9 +278,9 @@ export default function EpisodePlayer({
     : false;
 
   return (
-    <div className="space-y-3">
-      {/* Player area */}
-      <div className="aspect-video w-full bg-black rounded-lg overflow-hidden shadow-2xl relative">
+    <div>
+      {/* ── Player area (rounded top only) ── */}
+      <div className="aspect-video w-full bg-black rounded-t-lg overflow-hidden shadow-2xl relative">
         {state.kind === "preroll" && VAST_URL && !vastNoFill && (
           <VastPreroll vastUrl={VAST_URL} onComplete={handleSkipPreroll} onNoFill={handleVastNoFill} />
         )}
@@ -356,10 +358,7 @@ export default function EpisodePlayer({
           </div>
         )}
 
-        {/* Resume prompt ("Un momento!") — shown during preroll OR resolving.
-            Appears on top of the ad video (z-30 > z-10) so the viewer decides
-            while the preroll plays underneath. Once decided, the ad continues
-            (or has already finished) and playback starts with the right offset. */}
+        {/* Resume prompt */}
         {canResume &&
           resumeDecision === "pending" &&
           progress &&
@@ -372,9 +371,41 @@ export default function EpisodePlayer({
           )}
       </div>
 
-      {/* Mirror selector — single "Sheicob" button for all resolvable mirrors (auto-failover) */}
-      <div className="space-y-2">
-        <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-1.5">
+      {/* ── Title bar + action icons (JKAnime-style) ── */}
+      <div className="bg-neutral-900 border-x border-neutral-700/50 px-4 py-2.5 flex items-center gap-3">
+        <h2 className="text-sm md:text-base font-bold text-white uppercase truncate flex-1">
+          <span className="text-orange-400">{episodeTitle}</span>
+          {seriesTitle && (
+            <span className="text-neutral-400 font-normal lowercase">
+              {" "}— {seriesTitle}
+            </span>
+          )}
+        </h2>
+
+        {/* Action icons */}
+        <div className="flex items-center gap-1 shrink-0">
+          {/* Report broken link */}
+          <button
+            onClick={handleReport}
+            disabled={currentReported || !activeUnderlyingMirror}
+            title={currentReported ? "Enlace reportado" : "Reportar enlace roto"}
+            className={`p-2 rounded-lg transition-colors ${
+              currentReported
+                ? "text-green-400 cursor-default"
+                : "text-neutral-500 hover:text-red-400 hover:bg-neutral-800"
+            } disabled:opacity-40`}
+          >
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M3 3l1.664 1.664M21 21l-1.5-1.5m-5.533-1.467a2.625 2.625 0 01-3.513 0l-4.456-4.456a2.625 2.625 0 010-3.513l.793-.793" />
+              <path strokeLinecap="round" strokeLinejoin="round" d="M14.121 14.121L7.05 7.05m7.071 7.071l2.829 2.829M7.05 7.05L4.222 4.222M7.05 7.05l3.535-3.536a2.625 2.625 0 013.514 0l3.435 3.435a2.625 2.625 0 010 3.514L14.12 14.12" />
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      {/* ── Mirror selector grid (JKAnime table-style) ── */}
+      <div className="bg-neutral-900/80 rounded-b-lg border border-t-0 border-neutral-700/50 overflow-hidden">
+        <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5">
           {displayEntries.map((entry, i) => {
             const isSheicob = entry.kind === "sheicob";
             const selected = i === currentDisplayIdx;
@@ -388,29 +419,25 @@ export default function EpisodePlayer({
                 key={key}
                 onClick={() => handleEntrySelect(i)}
                 aria-pressed={selected}
-                className={`relative px-3 py-2.5 text-sm font-medium rounded transition-colors text-center ${
+                className={`px-3 py-3 text-sm font-medium transition-colors text-center border-b border-r border-neutral-700/40 ${
                   selected
                     ? isSheicob
-                      ? "bg-gradient-to-br from-amber-400 to-orange-500 text-black shadow-md"
-                      : "bg-orange-500 text-white shadow-md"
+                      ? "bg-gradient-to-br from-amber-500 to-orange-600 text-black"
+                      : "bg-orange-600 text-white"
                     : isSheicob
-                    ? "bg-amber-950/40 text-amber-300 border border-amber-700/50 hover:bg-amber-900/50"
-                    : "bg-neutral-800 text-neutral-300 hover:bg-neutral-700 hover:text-white"
+                    ? "bg-amber-950/30 text-amber-300 hover:bg-amber-900/40"
+                    : "bg-neutral-800/50 text-neutral-300 hover:bg-neutral-700/60 hover:text-white"
                 }`}
               >
-                <span className={isSheicob ? "font-bold tracking-wide" : undefined}>
+                <span className={`block ${isSheicob ? "font-bold tracking-wide" : "capitalize"}`}>
                   {label}
                 </span>
                 {quality > 0 && (
                   <span
                     className={`block text-[10px] mt-0.5 ${
                       selected
-                        ? isSheicob
-                          ? "text-black/70"
-                          : "text-orange-200"
-                        : isSheicob
-                        ? "text-amber-400/70"
-                        : "text-neutral-500"
+                        ? isSheicob ? "text-black/60" : "text-orange-200"
+                        : isSheicob ? "text-amber-400/60" : "text-neutral-500"
                     }`}
                   >
                     {quality}p
@@ -419,17 +446,6 @@ export default function EpisodePlayer({
               </button>
             );
           })}
-        </div>
-
-        {/* Report button */}
-        <div className="flex justify-end">
-          <button
-            onClick={handleReport}
-            disabled={currentReported || !activeUnderlyingMirror}
-            className="text-xs text-neutral-600 hover:text-red-400 disabled:text-neutral-700 transition-colors"
-          >
-            {currentReported ? "Reportado ✓" : "Reportar enlace roto"}
-          </button>
         </div>
       </div>
     </div>

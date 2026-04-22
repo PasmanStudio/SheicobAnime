@@ -67,11 +67,12 @@ export default async function EpisodePage({ params }: Readonly<Props>) {
   const pageUrl = `${siteUrl}/series/${params.slug}/${episode.episodeNumber}`;
 
   return (
-    <div className="container mx-auto px-4 py-6 space-y-6 max-w-4xl">
+    <div className="container mx-auto px-4 py-6 max-w-6xl">
       <NavigationAdTrigger />
+
       {/* Breadcrumb */}
       {episode.series && (
-        <nav className="text-sm text-neutral-500 flex items-center gap-2">
+        <nav className="text-sm text-neutral-500 flex items-center gap-2 mb-4">
           <Link href="/" className="hover:text-white transition-colors">
             Inicio
           </Link>
@@ -87,48 +88,104 @@ export default async function EpisodePage({ params }: Readonly<Props>) {
         </nav>
       )}
 
-      {/* Title */}
-      <h1 className="text-xl md:text-2xl font-bold text-white">
-        {episodeTitle}
-      </h1>
-
       <AdSlot placement="episode_top" />
 
-      {/* Player — rendered inside a same-origin iframe to isolate the player
-          DOM/JS runtime from the host page. See /app/embed/[episodeId]/. */}
-      <EmbeddedPlayerFrame episodeId={episode.id} episodeTitle={episodeTitle} />
+      {/* ── 2-column layout: player area + sidebar ── */}
+      <div className="flex flex-col lg:flex-row gap-4 mt-4">
+        {/* Left: Player + title + mirrors (inside iframe) */}
+        <div className="flex-1 min-w-0">
+          <EmbeddedPlayerFrame episodeId={episode.id} episodeTitle={episodeTitle} />
 
-      <AdSlot placement="episode_mid" />
+          <AdSlot placement="episode_mid" />
 
-      {/* Episode sidebar navigator */}
-      <EpisodeSidebar
-        episodes={allEpisodes}
-        currentEpisodeNumber={episodeNumber}
-        seriesSlug={params.slug}
-        seriesTitle={episode.series?.title ?? "Serie"}
-        seriesCoverUrl={episode.series?.coverUrl}
-      />
+          {/* Series info card */}
+          {episode.series && (
+            <div className="mt-4 flex items-start gap-4 bg-neutral-900/60 rounded-lg p-4 border border-neutral-800">
+              {episode.series.coverUrl && (
+                <img
+                  src={episode.series.coverUrl}
+                  alt={episode.series.title}
+                  className="w-14 h-20 object-cover rounded shrink-0"
+                />
+              )}
+              <div className="min-w-0">
+                <Link
+                  href={`/series/${episode.series.slug}`}
+                  className="text-base font-semibold text-white hover:text-orange-400 transition-colors"
+                >
+                  {episode.series.title}
+                </Link>
+                {episode.series && (
+                  <p className="text-sm text-neutral-500 mt-0.5">
+                    {allEpisodes.length} episodios
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
 
-      {/* Episode metadata */}
-      <div className="flex flex-wrap gap-4 text-sm text-neutral-400">
-        {episode.durationSecs !== null && (
-          <span>
-            Duración: {Math.floor(episode.durationSecs / 60)}m{" "}
-            {episode.durationSecs % 60}s
-          </span>
-        )}
-        {episode.airedAt && (
-          <span>Emitido: {new Date(episode.airedAt).toLocaleDateString()}</span>
-        )}
+          {/* Episode metadata */}
+          {(episode.durationSecs !== null || episode.airedAt) && (
+            <div className="flex flex-wrap gap-4 text-sm text-neutral-400 mt-4">
+              {episode.durationSecs !== null && (
+                <span>
+                  Duración: {Math.floor(episode.durationSecs / 60)}m{" "}
+                  {episode.durationSecs % 60}s
+                </span>
+              )}
+              {episode.airedAt && (
+                <span>
+                  Emitido: {new Date(episode.airedAt).toLocaleDateString()}
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* Prev / Next navigation */}
+          <div className="flex items-center justify-between mt-4">
+            {episodeNumber > 1 ? (
+              <Link
+                href={`/series/${params.slug}/${episodeNumber - 1}`}
+                className="px-4 py-2 bg-neutral-800 hover:bg-neutral-700 text-sm text-neutral-300 hover:text-white rounded-lg transition-colors"
+              >
+                ‹ Anterior
+              </Link>
+            ) : (
+              <span />
+            )}
+            {allEpisodes.some((ep) => ep.episodeNumber === episodeNumber + 1) && (
+              <Link
+                href={`/series/${params.slug}/${episodeNumber + 1}`}
+                className="px-4 py-2 bg-neutral-800 hover:bg-neutral-700 text-sm text-neutral-300 hover:text-white rounded-lg transition-colors"
+              >
+                Siguiente ›
+              </Link>
+            )}
+          </div>
+
+          {/* Comments */}
+          <section className="mt-6">
+            <h2 className="text-lg font-semibold text-white mb-3">Comentarios</h2>
+            <CommentSection
+              pageId={`${params.slug}-ep${episode.episodeNumber}`}
+              pageUrl={pageUrl}
+            />
+          </section>
+
+          <AdSlot placement="episode_bottom" />
+        </div>
+
+        {/* Right: Episode sidebar (always visible on desktop) */}
+        <div className="lg:w-72 xl:w-80 shrink-0">
+          <EpisodeSidebar
+            episodes={allEpisodes}
+            currentEpisodeNumber={episodeNumber}
+            seriesSlug={params.slug}
+            seriesTitle={episode.series?.title ?? "Serie"}
+            seriesCoverUrl={episode.series?.coverUrl}
+          />
+        </div>
       </div>
-
-      {/* Comments */}
-      <section>
-        <h2 className="text-lg font-semibold text-white mb-3">Comentarios</h2>
-        <CommentSection pageId={`${params.slug}-ep${episode.episodeNumber}`} pageUrl={pageUrl} />
-      </section>
-
-      <AdSlot placement="episode_bottom" />
     </div>
   );
 }

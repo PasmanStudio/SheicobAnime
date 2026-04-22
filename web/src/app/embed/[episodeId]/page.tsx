@@ -39,6 +39,7 @@ export default async function EmbedPlayerPage({ params }: Readonly<Props>) {
       <EpisodePlayer
         mirrors={mirrors}
         episodeTitle={episodeTitle}
+        seriesTitle={episode.series?.title ?? undefined}
         episodeId={episode.id}
         posterUrl={episode.thumbnailUrl ?? undefined}
       />
