@@ -42,7 +42,8 @@ public static class AdminEndpoints
         if (!validation.IsValid)
             return Results.Json(
                 new ErrorResponse("Validation failed", "VALIDATION_ERROR",
-                    validation.Errors.ToDictionary(e => e.PropertyName, e => e.ErrorMessage)),
+                    validation.Errors.GroupBy(e => e.PropertyName)
+                        .ToDictionary(g => g.Key, g => string.Join("; ", g.Select(e => e.ErrorMessage)))),
                 statusCode: 422);
 
         var job = new ScrapeJob
@@ -131,7 +132,8 @@ public static class AdminEndpoints
         if (!validation.IsValid)
             return Results.Json(
                 new ErrorResponse("Validation failed", "VALIDATION_ERROR",
-                    validation.Errors.ToDictionary(e => e.PropertyName, e => e.ErrorMessage)),
+                    validation.Errors.GroupBy(e => e.PropertyName)
+                        .ToDictionary(g => g.Key, g => string.Join("; ", g.Select(e => e.ErrorMessage)))),
                 statusCode: 422);
 
         var exists = await db.BlockedSlugs.AnyAsync(b => b.Slug == request.Slug, ct);
@@ -190,7 +192,8 @@ public static class AdminEndpoints
         if (!validation.IsValid)
             return Results.Json(
                 new ErrorResponse("Validation failed", "VALIDATION_ERROR",
-                    validation.Errors.ToDictionary(e => e.PropertyName, e => e.ErrorMessage)),
+                    validation.Errors.GroupBy(e => e.PropertyName)
+                        .ToDictionary(g => g.Key, g => string.Join("; ", g.Select(e => e.ErrorMessage)))),
                 statusCode: 422);
 
         // Prevent duplicate running backfills for the same source
