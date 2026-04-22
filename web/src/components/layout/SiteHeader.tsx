@@ -1,4 +1,5 @@
 import Link from "next/link";
+import Image from "next/image";
 import SearchBar from "./SearchBar";
 
 const NAV_LINKS = [
@@ -12,11 +13,15 @@ export default function SiteHeader() {
     <header className="sticky top-0 z-40 bg-neutral-900/95 backdrop-blur border-b border-neutral-800">
       <div className="container mx-auto flex items-center gap-4 h-14 px-4">
         {/* Logo */}
-        <Link
-          href="/"
-          className="text-lg font-bold text-white hover:text-indigo-400 transition-colors shrink-0"
-        >
-          SheicobAnime
+        <Link href="/" className="shrink-0">
+          <Image
+            src="/logo.png"
+            alt="SheicobAnime"
+            width={160}
+            height={36}
+            priority
+            className="h-9 w-auto"
+          />
         </Link>
 
         {/* Desktop nav */}
