@@ -1,47 +1,36 @@
 import Link from "next/link";
 import Image from "next/image";
 import SearchBar from "./SearchBar";
-
-const NAV_LINKS = [
-  { href: "/", label: "Inicio" },
-  { href: "/directory", label: "Directorio" },
-  { href: "/genres", label: "Géneros" },
-] as const;
+import NavMenu from "./NavMenu";
 
 export default function SiteHeader() {
   return (
-    <header className="sticky top-0 z-40 bg-neutral-900/95 backdrop-blur border-b border-neutral-800">
-      <div className="container mx-auto flex items-center gap-4 h-14 px-4">
+    <header className="sticky top-0 z-40 bg-neutral-950/95 backdrop-blur-md border-b border-neutral-800/60">
+      <div className="container mx-auto flex items-center gap-3 h-16 px-4 relative">
         {/* Logo */}
-        <Link href="/" className="shrink-0">
+        <Link href="/" className="shrink-0 flex items-center">
           <Image
             src="/logo.png"
             alt="SheicobAnime"
-            width={160}
-            height={36}
+            width={180}
+            height={40}
             priority
-            className="h-9 w-auto"
+            className="h-10 w-auto"
+            style={{ mixBlendMode: "screen" }}
           />
         </Link>
 
-        {/* Desktop nav */}
-        <nav className="hidden md:flex items-center gap-5 text-sm text-neutral-400">
-          {NAV_LINKS.map(({ href, label }) => (
-            <Link
-              key={href}
-              href={href}
-              className="hover:text-white transition-colors"
-            >
-              {label}
-            </Link>
-          ))}
-        </nav>
+        {/* Nav (desktop + mobile hamburger) */}
+        <NavMenu />
 
         {/* Search — pushed to the right */}
         <div className="flex-1 flex justify-end">
           <SearchBar />
         </div>
       </div>
+
+      {/* Accent line */}
+      <div className="h-px bg-gradient-to-r from-transparent via-cyan-500/40 to-transparent" />
     </header>
   );
 }
