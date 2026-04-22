@@ -102,8 +102,8 @@ try
     {
         var recurring = scope.ServiceProvider.GetRequiredService<IRecurringJobManager>();
 
-        // Single scheduler for source2 (JKAnime) — runs every 2 hours
-        var scraperCron = builder.Configuration["Hangfire:SchedulerCron"] ?? "0 */2 * * *";
+        // Single scheduler — runs daily at 02:00 UTC (23:00 Argentina)
+        var scraperCron = builder.Configuration["Hangfire:SchedulerCron"] ?? "0 2 * * *";
         recurring.AddOrUpdate<ScrapeSchedulerJob>(
             "scrape-scheduler",
             "scraper",

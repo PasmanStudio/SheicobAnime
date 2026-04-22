@@ -30,6 +30,8 @@ public sealed class Source2Strategy(
         var seriesCount = 0;
         var episodeCount = 0;
         var mirrorCount = 0;
+        var skippedCount = 0;
+        var noEpisodesCount = 0;
 
         // ── Check blocked_slugs for this job's series ────────
         var job = await db.ScrapeJobs
@@ -53,8 +55,32 @@ public sealed class Source2Strategy(
 
         logger.LogInformation("JKAnimeStrategy starting (HTTP mode) — baseUrl={BaseUrl}, maxPages={MaxPages}", baseUrl, maxPages);
 
+        // Helper: write heartbeat + progress to the scrape_jobs row so admins
+        // can see live progress, and the scheduler can distinguish alive vs stuck.
+        const int HeartbeatInterval = 10; // every N series
+        var totalDiscovered = 0;
+        async Task WriteHeartbeatAsync()
+        {
+            try
+            {
+                // Use raw SQL to avoid EF change tracker conflicts
+                var msg = $"series:{seriesCount}/{totalDiscovered} eps:{episodeCount} mirrors:{mirrorCount} skipped:{skippedCount} noEps:{noEpisodesCount}";
+                await db.Database.ExecuteSqlRawAsync(
+                    """UPDATE scrape_jobs SET progress_message = {0}, last_heartbeat = now() WHERE id = {1}""",
+                    msg, scrapeJobId);
+            }
+            catch (Exception ex)
+            {
+                logger.LogDebug(ex, "Failed to write heartbeat for job {JobId}", scrapeJobId);
+            }
+        }
+
+        // Initialize heartbeat
+        await WriteHeartbeatAsync();
+
         // ── Discover series from /directorio ──────────────────
         var discovered = await DiscoverSeriesAsync(baseUrl, maxPages, delayMs, ct);
+        totalDiscovered = discovered.Count;
 
         foreach (var (series, animeId) in discovered)
         {
@@ -94,6 +120,9 @@ public sealed class Source2Strategy(
                     "Skipping fully-indexed completed series {Slug} — {Eps} episodes, all with mirrors",
                     series.Slug, existing!.DbEpisodeCount);
                 seriesCount++;
+                skippedCount++;
+                if (seriesCount % HeartbeatInterval == 0)
+                    await WriteHeartbeatAsync();
                 continue;
             }
 
@@ -119,12 +148,23 @@ public sealed class Source2Strategy(
             var effectiveAnimeId = detail?.AnimeId ?? animeId;
             if (effectiveAnimeId is null)
             {
-                logger.LogDebug("No anime ID for {Slug} — skipping episode discovery", series.Slug);
+                logger.LogWarning("No anime ID for {Slug} — skipping episode discovery (detail={DetailNull})",
+                    series.Slug, detail is null ? "null" : "ok");
+                noEpisodesCount++;
+                if (seriesCount % HeartbeatInterval == 0)
+                    await WriteHeartbeatAsync();
                 await JkAnimeHttpClient.JitterDelayAsync(delayMs, ct);
                 continue;
             }
 
             var episodes = await http.GetAllEpisodesAsync(baseUrl, effectiveAnimeId.Value, series.Slug, ct);
+
+            if (episodes.Count == 0)
+            {
+                logger.LogWarning("Zero episodes returned for {Slug} (animeId={AnimeId}) — AJAX may have failed",
+                    series.Slug, effectiveAnimeId.Value);
+                noEpisodesCount++;
+            }
 
             // Pre-load episode numbers that already have active mirrors → skip those
             var episodesWithMirrors = existing is not null
@@ -192,11 +232,18 @@ public sealed class Source2Strategy(
 
             // Sync episode count from actual DB records
             await upsert.SyncEpisodeCountAsync(seriesId, ct);
+
+            // Periodic heartbeat
+            if (seriesCount % HeartbeatInterval == 0)
+                await WriteHeartbeatAsync();
         }
 
         logger.LogInformation(
-            "JKAnimeStrategy complete (HTTP mode) — series={S} episodes={E} mirrors={M}",
-            seriesCount, episodeCount, mirrorCount);
+            "JKAnimeStrategy complete (HTTP mode) — series={S} episodes={E} mirrors={M} skipped={K} noEps={N}",
+            seriesCount, episodeCount, mirrorCount, skippedCount, noEpisodesCount);
+
+        // Final heartbeat
+        await WriteHeartbeatAsync();
 
         if (seriesCount == 0 && episodeCount == 0)
             return new ScrapeResult(false,

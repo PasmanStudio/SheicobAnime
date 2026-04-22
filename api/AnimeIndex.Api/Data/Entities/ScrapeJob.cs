@@ -8,8 +8,10 @@ public class ScrapeJob
     public string Status { get; set; } = "pending"; // pending, running, completed, failed, dead_letter
     public short AttemptCount { get; set; }
     public string? ErrorMessage { get; set; }
+    public string? ProgressMessage { get; set; }
     public DateTime ScheduledAt { get; set; }
     public DateTime? CompletedAt { get; set; }
+    public DateTime? LastHeartbeat { get; set; }
 
     // Navigation
     public Series? Series { get; set; }

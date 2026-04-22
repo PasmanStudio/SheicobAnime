@@ -33,6 +33,7 @@ public class ScrapeOrchestratorJob(
         if (job is not null)
         {
             job.Status = "running";
+            job.LastHeartbeat = DateTime.UtcNow;
             await db.SaveChangesAsync(ct);
         }
 

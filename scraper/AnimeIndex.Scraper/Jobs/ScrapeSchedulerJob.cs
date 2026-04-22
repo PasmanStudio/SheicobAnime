@@ -21,7 +21,7 @@ public class ScrapeSchedulerJob(
     private static readonly string[] _autoSources = ["source2"];
 
     // Minimum hours between auto-created scrape cycles per source
-    private const int AutoRescheduleHours = 4;
+    private const int AutoRescheduleHours = 24;
 
     public async Task RunAsync(CancellationToken ct = default)
     {
@@ -62,20 +62,24 @@ public class ScrapeSchedulerJob(
 
         await db.SaveChangesAsync(ct);
 
-        // ── Stuck-job recovery: reset "running" jobs older than 2h to "failed"
-        //    so auto-reschedule can re-queue them on the next tick.
-        const int StuckJobTimeoutHours = 2;
-        var stuckCutoff = now.AddHours(-StuckJobTimeoutHours);
+        // ── Stuck-job recovery: reset "running" jobs that haven't sent a
+        //    heartbeat in over 1 hour — they're likely dead.
+        const int StuckHeartbeatTimeoutMinutes = 60;
+        var heartbeatCutoff = now.AddMinutes(-StuckHeartbeatTimeoutMinutes);
         var stuckJobs = await db.ScrapeJobs
-            .Where(j => j.Status == "running" && j.ScheduledAt <= stuckCutoff)
+            .Where(j => j.Status == "running" &&
+                        (j.LastHeartbeat != null ? j.LastHeartbeat <= heartbeatCutoff
+                                                 : j.ScheduledAt <= heartbeatCutoff))
             .ToListAsync(ct);
 
         foreach (var stuck in stuckJobs)
         {
             stuck.Status = "failed";
-            stuck.ErrorMessage = $"Timed out after {StuckJobTimeoutHours}h in running state — reset by scheduler";
+            stuck.ErrorMessage = $"No heartbeat for {StuckHeartbeatTimeoutMinutes} min — reset by scheduler";
+            stuck.CompletedAt = now;
             logger.LogWarning(
-                "ScrapeSchedulerJob: reset stuck job {JobId} ({JobType}) to failed", stuck.Id, stuck.JobType);
+                "ScrapeSchedulerJob: reset stuck job {JobId} ({JobType}) — last heartbeat {Heartbeat}",
+                stuck.Id, stuck.JobType, stuck.LastHeartbeat?.ToString("o") ?? "never");
         }
 
         if (stuckJobs.Count > 0)

@@ -29,6 +29,7 @@ public static class AdminEndpoints
         group.MapGet("/backfill/{id:guid}/progress", GetBackfillProgress);
         group.MapDelete("/mirrors/purge-invalid", PurgeInvalidMirrors);
         group.MapPost("/scrape-jobs/{id:guid}/cancel", CancelScrapeJob);
+        group.MapPost("/reset-all-data", ResetAllData);
     }
 
     private static async Task<IResult> CreateScrapeJob(
@@ -91,8 +92,10 @@ public static class AdminEndpoints
                 j.Status,
                 j.AttemptCount,
                 j.ErrorMessage,
+                j.ProgressMessage,
                 j.ScheduledAt,
-                j.CompletedAt
+                j.CompletedAt,
+                j.LastHeartbeat
             }).ToArray<object>(),
             total, page, pageSize));
     }
@@ -284,5 +287,37 @@ public static class AdminEndpoints
         await db.SaveChangesAsync(ct);
 
         return Results.Ok(new { job.Id, job.Status, message = "Job cancelled." });
+    }
+
+    /// <summary>
+    /// Truncates all content tables (mirrors, episodes, series, genres, scrape_jobs, watch_progress)
+    /// so the scraper can rebuild from scratch. blocked_slugs are preserved.
+    /// </summary>
+    private static async Task<IResult> ResetAllData(
+        AppDbContext db,
+        CancellationToken ct = default)
+    {
+        // TRUNCATE CASCADE removes child rows automatically
+        await db.Database.ExecuteSqlRawAsync(
+            """
+            TRUNCATE TABLE mirrors, episodes, series_genres, series, genres,
+                          scrape_jobs, watch_progress
+            CASCADE
+            """, ct);
+
+        // Create an initial scrape job so the scheduler picks it up immediately
+        db.ScrapeJobs.Add(new ScrapeJob
+        {
+            JobType = "scrape:source2",
+            Status = "pending",
+            ScheduledAt = DateTime.UtcNow
+        });
+        await db.SaveChangesAsync(ct);
+
+        return Results.Ok(new
+        {
+            message = "All data tables truncated. A fresh scrape:source2 job has been queued.",
+            preservedTables = new[] { "blocked_slugs" }
+        });
     }
 }

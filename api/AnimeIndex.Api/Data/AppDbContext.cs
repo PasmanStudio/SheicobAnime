@@ -138,6 +138,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.Property(j => j.Status).HasDefaultValue("pending");
             e.Property(j => j.AttemptCount).HasDefaultValue((short)0);
             e.Property(j => j.ScheduledAt).HasDefaultValueSql("now()");
+            e.Property(j => j.ProgressMessage).HasMaxLength(500);
 
             e.ToTable(t => t.HasCheckConstraint("CK_scrape_jobs_status",
                 "status IN ('pending','running','completed','failed','dead_letter')"));
