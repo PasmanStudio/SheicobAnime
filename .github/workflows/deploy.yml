@@ -23,6 +23,26 @@ concurrency:
   cancel-in-progress: false  # Never cancel a deploy mid-flight
 
 jobs:
+  # ─── Detect which paths changed ───────────────────────
+  # deploy-scraper only runs when scraper/ files are modified,
+  # so a running scrape job is not interrupted by API/web-only pushes.
+  check-changes:
+    name: Detect changed paths
+    runs-on: ubuntu-latest
+    outputs:
+      scraper: ${{ steps.diff.outputs.scraper }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          fetch-depth: 2
+      - id: diff
+        run: |
+          if git diff --name-only HEAD~1 HEAD | grep -q '^scraper/'; then
+            echo "scraper=true" >> $GITHUB_OUTPUT
+          else
+            echo "scraper=false" >> $GITHUB_OUTPUT
+          fi
+
   # ─── CI gate: verify code is green before deploying ───
   ci-api:
     name: CI — API build + test
@@ -208,7 +228,8 @@ jobs:
 
   deploy-scraper:
     name: Deploy Scraper to Railway
-    needs: migrate
+    needs: [migrate, check-changes]
+    if: needs.check-changes.outputs.scraper == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Trigger Railway redeploy
