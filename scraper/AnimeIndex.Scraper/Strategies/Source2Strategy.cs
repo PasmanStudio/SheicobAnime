@@ -99,26 +99,40 @@ public sealed class Source2Strategy(
                 {
                     s.Id,
                     s.Status,
+                    s.EpisodeCount,       // expected count stored in DB from last scrape
                     DbEpisodeCount = s.Episodes.Count,
                     EpisodesWithMirrors = s.Episodes.Count(e =>
                         e.Mirrors.Any(m => m.IsActive)),
                 })
                 .FirstOrDefaultAsync(ct);
 
-            var isCompleted = series.Status == "completed"
-                              || existing is { Status: "completed" };
-            var hasAllEps = existing is { DbEpisodeCount: > 0 }
-                            && existing.EpisodesWithMirrors == existing.DbEpisodeCount;
-
-            if (isCompleted && hasAllEps)
+            if (existing is not null && existing.DbEpisodeCount > 0
+                && existing.EpisodesWithMirrors == existing.DbEpisodeCount)
             {
-                logger.LogDebug(
-                    "Skipping fully-indexed completed series {Slug} — {Eps} episodes, all with mirrors",
-                    series.Slug, existing!.DbEpisodeCount);
-                seriesCount++;
-                skippedCount++;
-                await UpdateHeartbeatAsync();
-                continue;
+                // All episodes we know about already have mirrors.
+                // Decide whether to trust that count:
+                //   • series says it has N eps AND we have exactly N → fully indexed → skip
+                //   • series is "completed" AND count matches → also skip
+                //   • series is "ongoing" and source count > DB count → do NOT skip (new eps may exist)
+                var sourceEpCount = series.EpisodeCount ?? existing.EpisodeCount;
+                var isCompleted = series.Status == "completed"
+                                  || existing.Status == "completed";
+
+                var countsMatch = sourceEpCount.HasValue
+                    && existing.DbEpisodeCount == sourceEpCount.Value;
+
+                // Skip when: completed (any count), OR ongoing but counts match exactly
+                if (isCompleted || countsMatch)
+                {
+                    logger.LogDebug(
+                        "Skipping fully-indexed series {Slug} — {Db}/{Expected} eps all with mirrors (status={Status})",
+                        series.Slug, existing.DbEpisodeCount, sourceEpCount?.ToString() ?? "?",
+                        existing.Status);
+                    seriesCount++;
+                    skippedCount++;
+                    await UpdateHeartbeatAsync();
+                    continue;
+                }
             }
 
             // Navigate to series detail page for enrichment
