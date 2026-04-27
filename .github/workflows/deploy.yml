@@ -254,6 +254,7 @@ jobs:
           printf 'https://api-production-1f24.up.railway.app' | vercel env add NEXT_PUBLIC_API_URL production --force --token=${{ secrets.VERCEL_TOKEN }}
           printf 'adsterra' | vercel env add NEXT_PUBLIC_AD_PROVIDER production --force --token=${{ secrets.VERCEL_TOKEN }}
           printf 'disqus' | vercel env add NEXT_PUBLIC_COMMENT_PROVIDER production --force --token=${{ secrets.VERCEL_TOKEN }}
+          printf 'sheicobanime-vercel-app' | vercel env add NEXT_PUBLIC_DISQUS_SHORTNAME production --force --token=${{ secrets.VERCEL_TOKEN }}
         env:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
