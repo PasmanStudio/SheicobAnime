@@ -12,7 +12,6 @@ namespace AnimeIndex.Scraper.Strategies;
 /// </summary>
 public sealed class Source2Strategy(
     AppDbContext db,
-    MirrorProbeService probe,
     UpsertPipelineService upsert,
     JkAnimeHttpClient http,
     IConfiguration config,
@@ -57,13 +56,13 @@ public sealed class Source2Strategy(
 
         // Helper: write heartbeat + progress to the scrape_jobs row so admins
         // can see live progress, and the scheduler can distinguish alive vs stuck.
-        const int HeartbeatInterval = 10; // every N series
         var totalDiscovered = 0;
-        async Task WriteHeartbeatAsync()
+
+        // Initialize heartbeat
+        async Task UpdateHeartbeatAsync()
         {
             try
             {
-                // Use raw SQL to avoid EF change tracker conflicts
                 var msg = $"series:{seriesCount}/{totalDiscovered} eps:{episodeCount} mirrors:{mirrorCount} skipped:{skippedCount} noEps:{noEpisodesCount}";
                 await db.Database.ExecuteSqlRawAsync(
                     """UPDATE scrape_jobs SET progress_message = {0}, last_heartbeat = now() WHERE id = {1}""",
@@ -74,9 +73,6 @@ public sealed class Source2Strategy(
                 logger.LogDebug(ex, "Failed to write heartbeat for job {JobId}", scrapeJobId);
             }
         }
-
-        // Initialize heartbeat
-        await WriteHeartbeatAsync();
 
         // ── Discover series from /directorio ──────────────────
         var discovered = await DiscoverSeriesAsync(baseUrl, maxPages, delayMs, scrapeJobId, ct);
@@ -121,8 +117,7 @@ public sealed class Source2Strategy(
                     series.Slug, existing!.DbEpisodeCount);
                 seriesCount++;
                 skippedCount++;
-                if (seriesCount % HeartbeatInterval == 0)
-                    await WriteHeartbeatAsync();
+                await UpdateHeartbeatAsync();
                 continue;
             }
 
@@ -161,8 +156,7 @@ public sealed class Source2Strategy(
                 logger.LogWarning("No anime ID for {Slug} — skipping episode discovery (detail={DetailNull})",
                     series.Slug, detail is null ? "null" : "ok");
                 noEpisodesCount++;
-                if (seriesCount % HeartbeatInterval == 0)
-                    await WriteHeartbeatAsync();
+                await UpdateHeartbeatAsync();
                 await JkAnimeHttpClient.JitterDelayAsync(delayMs, ct);
                 continue;
             }
@@ -219,13 +213,8 @@ public sealed class Source2Strategy(
                     var providerName = ExtractProviderName(url);
                     if (BlockedProviders.Contains(providerName)) continue;
 
-                    var embeddable = await probe.IsEmbeddableAsync(url, ct);
-                    if (!embeddable)
-                    {
-                        logger.LogDebug("Mirror {Url} not embeddable — skipped", url);
-                        continue;
-                    }
-
+                    // Save mirror without blocking probe — embed providers block cloud IPs.
+                    // MirrorHealthCheckJob handles async deactivation of dead mirrors.
                     var mirror = new MirrorScrapedData(
                         EpisodeId: episodeId,
                         ProviderName: providerName,
@@ -237,15 +226,14 @@ public sealed class Source2Strategy(
                     mirrorCount++;
                 }
 
+                // Heartbeat after every episode to prevent stuck-job detection
+                // killing active jobs that have many episodes.
+                await UpdateHeartbeatAsync();
                 await JkAnimeHttpClient.JitterDelayAsync(delayMs, ct);
             }
 
             // Sync episode count from actual DB records
             await upsert.SyncEpisodeCountAsync(seriesId, ct);
-
-            // Periodic heartbeat
-            if (seriesCount % HeartbeatInterval == 0)
-                await WriteHeartbeatAsync();
         }
 
         logger.LogInformation(
@@ -253,7 +241,7 @@ public sealed class Source2Strategy(
             seriesCount, episodeCount, mirrorCount, skippedCount, noEpisodesCount);
 
         // Final heartbeat
-        await WriteHeartbeatAsync();
+        await UpdateHeartbeatAsync();
 
         if (seriesCount == 0 && episodeCount == 0)
             return new ScrapeResult(false,
@@ -325,6 +313,19 @@ public sealed class Source2Strategy(
                     Type: type,
                     Synopsis: string.IsNullOrWhiteSpace(item.Synopsis) ? null : item.Synopsis.Trim()),
                     item.Id > 0 ? item.Id : null));
+
+                // Upsert immediately so series survive a job restart mid-enrichment.
+                var isBlocked = await db.BlockedSlugs.AnyAsync(b => b.Slug == item.Slug.Trim(), ct);
+                if (!isBlocked)
+                {
+                    await upsert.UpsertSeriesAsync(new SeriesScrapedData(
+                        Slug: item.Slug.Trim(),
+                        Title: item.Title.Trim(),
+                        CoverUrl: item.Image,
+                        Status: status,
+                        Type: type,
+                        Synopsis: string.IsNullOrWhiteSpace(item.Synopsis) ? null : item.Synopsis.Trim()), ct);
+                }
             }
 
             logger.LogDebug("Page {Page}: discovered {Count} series", page, directoryPage.Data.Count);

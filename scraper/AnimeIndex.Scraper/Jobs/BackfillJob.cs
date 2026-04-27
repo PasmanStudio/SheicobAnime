@@ -17,7 +17,6 @@ namespace AnimeIndex.Scraper.Jobs;
 /// </summary>
 public class BackfillJob(
     AppDbContext db,
-    MirrorProbeService probe,
     UpsertPipelineService upsert,
     JkAnimeHttpClient http,
     DeadLetterAlerter alerter,
@@ -238,9 +237,8 @@ public class BackfillJob(
                             var providerName = Source2Strategy.ExtractProviderName(url);
                             if (BlockedProviders.Contains(providerName)) continue;
 
-                            var embeddable = await probe.IsEmbeddableAsync(url, ct);
-                            if (!embeddable) continue;
-
+                            // Save mirror without probe — embed providers block cloud IPs.
+                            // MirrorHealthCheckJob handles async deactivation of dead mirrors.
                             await upsert.UpsertMirrorAsync(new MirrorScrapedData(
                                 EpisodeId: episodeId,
                                 ProviderName: providerName,
@@ -250,6 +248,10 @@ public class BackfillJob(
                             mirrorTotal++;
                         }
 
+                        // Update progress after each episode to prevent stuck-job detection.
+                        await UpdateProgressAsync(job,
+                            $"pass2:enriched:{enrichedCount}/{seriesToEnrich.Count},episodes:{episodeTotal},mirrors:{mirrorTotal},failed:{failedCount}",
+                            ct);
                         await JkAnimeHttpClient.JitterDelayAsync(delayMs, ct);
                     }
 

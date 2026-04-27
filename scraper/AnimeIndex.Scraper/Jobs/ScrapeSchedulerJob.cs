@@ -63,8 +63,9 @@ public class ScrapeSchedulerJob(
         await db.SaveChangesAsync(ct);
 
         // ── Stuck-job recovery: reset "running" jobs that haven't sent a
-        //    heartbeat in over 1 hour — they're likely dead.
-        const int StuckHeartbeatTimeoutMinutes = 60;
+        //    heartbeat in over 6 hours — they may be processing a very long series
+        //    (hundreds of episodes) without being truly dead.
+        const int StuckHeartbeatTimeoutMinutes = 360;
         var heartbeatCutoff = now.AddMinutes(-StuckHeartbeatTimeoutMinutes);
         var stuckJobs = await db.ScrapeJobs
             .Where(j => j.Status == "running" &&

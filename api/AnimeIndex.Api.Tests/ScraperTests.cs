@@ -36,7 +36,7 @@ public class ScraperTests
         var probe = new MirrorProbeService(new StubHttpClientFactory());
         var upsert = new UpsertPipelineService(db);
         var http = CreateHttpClient();
-        var strategy = new Source2Strategy(db, probe, upsert, http, config, NullLogger<Source2Strategy>.Instance);
+        var strategy = new Source2Strategy(db, upsert, http, config, NullLogger<Source2Strategy>.Instance);
 
         Assert.Equal("source2", strategy.SourceKey);
     }
@@ -50,7 +50,7 @@ public class ScraperTests
         var upsert = new UpsertPipelineService(db);
         var http = CreateHttpClient();
 
-        IScrapeStrategy s2 = new Source2Strategy(db, probe, upsert, http, config, NullLogger<Source2Strategy>.Instance);
+        IScrapeStrategy s2 = new Source2Strategy(db, upsert, http, config, NullLogger<Source2Strategy>.Instance);
 
         Assert.Equal("source2", s2.SourceKey);
     }
@@ -79,7 +79,7 @@ public class ScraperTests
         var probe = new MirrorProbeService(new StubHttpClientFactory());
         var upsert = new UpsertPipelineService(db);
         var http = CreateHttpClient();
-        var strategy = new Source2Strategy(db, probe, upsert, http, config, NullLogger<Source2Strategy>.Instance);
+        var strategy = new Source2Strategy(db, upsert, http, config, NullLogger<Source2Strategy>.Instance);
 
         var result = await strategy.ScrapeAsync(job.Id);
 
@@ -87,7 +87,7 @@ public class ScraperTests
         Assert.Contains("blocked_slugs", result.ErrorMessage);
     }
 
-    // ── Missing job guard ──────────────────────────────────
+    // ── Missing job guard ───────────────────────
 
     [Fact]
     public async Task Source2_ReturnsFailure_WhenJobNotFound()
@@ -97,7 +97,7 @@ public class ScraperTests
         var probe = new MirrorProbeService(new StubHttpClientFactory());
         var upsert = new UpsertPipelineService(db);
         var http = CreateHttpClient();
-        var strategy = new Source2Strategy(db, probe, upsert, http, config, NullLogger<Source2Strategy>.Instance);
+        var strategy = new Source2Strategy(db, upsert, http, config, NullLogger<Source2Strategy>.Instance);
 
         var result = await strategy.ScrapeAsync(Guid.NewGuid());
 
