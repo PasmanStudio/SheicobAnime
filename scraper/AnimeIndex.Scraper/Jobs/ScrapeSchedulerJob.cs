@@ -39,7 +39,7 @@ public class ScrapeSchedulerJob(
             {
                 var lastCompleted = await db.ScrapeJobs
                     .Where(j => j.JobType == jobType && j.Status == "completed")
-                    .MaxAsync(j => (DateTime?)j.ScheduledAt, ct);
+                    .MaxAsync(j => (DateTime?)j.CompletedAt, ct);
 
                 var hoursSinceLast = lastCompleted.HasValue
                     ? (now - lastCompleted.Value).TotalHours
