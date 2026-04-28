@@ -21,6 +21,7 @@ public static class AdminEndpoints
 
         group.MapPost("/scrape-jobs", CreateScrapeJob);
         group.MapGet("/scrape-jobs", ListScrapeJobs);
+        group.MapGet("/stats", GetStats);
         group.MapDelete("/series/{id:guid}", DeleteSeries);
         group.MapPost("/blocked-slugs", CreateBlockedSlug);
         group.MapGet("/blocked-slugs", ListBlockedSlugs);
@@ -290,6 +291,56 @@ public static class AdminEndpoints
         await db.SaveChangesAsync(ct);
 
         return Results.Ok(new { job.Id, job.Status, message = "Job cancelled." });
+    }
+
+    private static async Task<IResult> GetStats(
+        AppDbContext db,
+        CancellationToken ct = default)
+    {
+        var totalSeries   = await db.Series.CountAsync(ct);
+        var totalEpisodes = await db.Episodes.CountAsync(ct);
+        var totalMirrors  = await db.Mirrors.CountAsync(m => m.IsActive, ct);
+
+        var seriesNoEpisodes = await db.Series
+            .CountAsync(s => !s.Episodes.Any(), ct);
+
+        var seriesIncomplete = await db.Series
+            .CountAsync(s =>
+                s.Episodes.Any() &&
+                (s.EpisodeCount == null
+                 || s.Episodes.Count < s.EpisodeCount
+                 || s.Episodes.Any(e => !e.Mirrors.Any(m => m.IsActive))), ct);
+
+        var seriesCompleted  = await db.Series.CountAsync(s => s.Status == "completed", ct);
+        var seriesOngoing    = await db.Series.CountAsync(s => s.Status == "ongoing", ct);
+
+        var currentJob = await db.ScrapeJobs
+            .Where(j => j.Status == "running")
+            .Select(j => new { j.Status, j.ProgressMessage, j.LastHeartbeat, j.ScheduledAt })
+            .FirstOrDefaultAsync(ct);
+
+        return Results.Ok(new
+        {
+            series = new
+            {
+                total        = totalSeries,
+                noEpisodes   = seriesNoEpisodes,
+                incomplete   = seriesIncomplete,
+                completed    = seriesCompleted,
+                ongoing      = seriesOngoing,
+            },
+            episodes = totalEpisodes,
+            mirrors  = totalMirrors,
+            scraper  = currentJob is null
+                ? (object)new { status = "idle" }
+                : new
+                {
+                    status    = currentJob.Status,
+                    progress  = currentJob.ProgressMessage,
+                    heartbeat = currentJob.LastHeartbeat,
+                    since     = currentJob.ScheduledAt,
+                }
+        });
     }
 
     /// <summary>
