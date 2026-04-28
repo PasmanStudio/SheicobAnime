@@ -1,6 +1,7 @@
 using AnimeIndex.Api.Data;
 using AnimeIndex.Api.Infrastructure.Scraping;
 using AnimeIndex.Scraper.Infrastructure;
+using Hangfire;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
@@ -10,7 +11,10 @@ namespace AnimeIndex.Scraper.Jobs;
 /// Hangfire job: picks up a single pending ScrapeJob by ID, dispatches to the
 /// matching IScrapeStrategy, and updates status via DeadLetterAlerter.
 /// Enqueued by ScrapeSchedulerJob or directly from the admin API.
+/// Retries disabled — scrape jobs are long-running; the ScrapeSchedulerJob
+/// handles recovery by detecting stuck/failed jobs and re-enqueuing.
 /// </summary>
+[AutomaticRetry(Attempts = 0)]
 public class ScrapeOrchestratorJob(
     IEnumerable<IScrapeStrategy> strategies,
     AppDbContext db,

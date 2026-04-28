@@ -3,6 +3,7 @@ using AnimeIndex.Api.Data.Entities;
 using AnimeIndex.Api.Infrastructure.Scraping;
 using AnimeIndex.Scraper.Infrastructure;
 using AnimeIndex.Scraper.Strategies;
+using Hangfire;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using System.Text.Json;
@@ -11,10 +12,12 @@ namespace AnimeIndex.Scraper.Jobs;
 
 /// <summary>
 /// Two-pass backfill job for full historical scrape — pure HTTP, no Playwright.
+/// Retries disabled — long-running job; ScrapeSchedulerJob handles recovery.
 /// Pass 1: Crawl all directory pages to discover every series slug.
 /// Pass 2: For each series needing enrichment, scrape detail + episodes + mirrors.
 /// Supports resume from last progress on restart.
 /// </summary>
+[AutomaticRetry(Attempts = 0)]
 public class BackfillJob(
     AppDbContext db,
     UpsertPipelineService upsert,
