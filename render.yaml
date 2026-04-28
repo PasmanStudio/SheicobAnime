@@ -1,0 +1,65 @@
+---
+# SheicobAnime — Render Blueprint
+# Deploys two services from the same repo:
+#   1. sheicobanime-api    → Web Service  (ASP.NET Core Minimal API)
+#   2. sheicobanime-scraper → Background Worker (.NET Hangfire worker)
+#
+# To use: Connect this repo to Render → New → Blueprint → select render.yaml
+# Then set the secret env vars in the Render dashboard (marked sync: false below).
+
+services:
+  # ── API ────────────────────────────────────────────────────────────────────
+  - type: web
+    name: sheicobanime-api
+    runtime: docker
+    dockerfilePath: ./api/Dockerfile
+    dockerContext: ./api
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      # Render routes to port 10000 on free tier — override ASP.NET default (8080)
+      - key: ASPNETCORE_URLS
+        value: http://+:10000
+      - key: ASPNETCORE_ENVIRONMENT
+        value: Production
+      # ── secrets: set in Render dashboard → Environment tab ──
+      - key: DATABASE_URL
+        sync: false
+      - key: DATABASE_URL_DIRECT
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: ADMIN_API_KEY
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+      - key: HANGFIRE_DASHBOARD_PASSWORD
+        sync: false
+      # optional
+      - key: RESEND_API_KEY
+        sync: false
+      - key: SENTRY_DSN
+        sync: false
+
+  # ── Scraper ────────────────────────────────────────────────────────────────
+  # Background Worker: never sleeps, no HTTP routing — perfect for Hangfire.
+  # NOTE: Docker context is repo root because scraper/Dockerfile copies from
+  # both api/ and scraper/ directories.
+  - type: worker
+    name: sheicobanime-scraper
+    runtime: docker
+    dockerfilePath: ./scraper/Dockerfile
+    dockerContext: .
+    plan: free
+    envVars:
+      - key: ASPNETCORE_ENVIRONMENT
+        value: Production
+      # ── secrets: set in Render dashboard → Environment tab ──
+      - key: DATABASE_URL
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: HANGFIRE_DASHBOARD_PASSWORD
+        sync: false
+      - key: SENTRY_DSN
+        sync: false
