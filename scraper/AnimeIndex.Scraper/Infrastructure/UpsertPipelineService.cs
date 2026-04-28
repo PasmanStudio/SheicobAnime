@@ -24,7 +24,10 @@ public class UpsertPipelineService(AppDbContext db)
                 title_native    = COALESCE(EXCLUDED.title_native, series.title_native),
                 synopsis        = COALESCE(EXCLUDED.synopsis, series.synopsis),
                 cover_url       = COALESCE(EXCLUDED.cover_url, series.cover_url),
-                status          = COALESCE(EXCLUDED.status, series.status),
+                status          = CASE
+                                    WHEN series.status = 'completed' THEN 'completed'
+                                    ELSE COALESCE(EXCLUDED.status, series.status)
+                                  END,
                 type            = COALESCE(EXCLUDED.type, series.type),
                 score           = COALESCE(EXCLUDED.score, series.score),
                 year            = COALESCE(EXCLUDED.year, series.year),
