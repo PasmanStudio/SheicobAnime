@@ -47,7 +47,7 @@ public sealed partial class JkAnimeHttpClient
 
         _http = new HttpClient(handler)
         {
-            Timeout = TimeSpan.FromSeconds(30),
+            Timeout = TimeSpan.FromSeconds(60),
         };
         _http.DefaultRequestHeaders.Add("User-Agent", UserAgents[Random.Shared.Next(UserAgents.Length)]);
         _http.DefaultRequestHeaders.Add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
@@ -93,6 +93,13 @@ public sealed partial class JkAnimeHttpClient
 
             return html;
         }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            // HttpClient internal timeout fired (not user cancellation) — treat as transient failure
+            _consecutiveFailures++;
+            _logger.LogWarning("Timeout (>60s) on GET {Url} — treating as transient", url);
+            return null;
+        }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _consecutiveFailures++;
@@ -128,6 +135,12 @@ public sealed partial class JkAnimeHttpClient
 
             _consecutiveFailures = 0;
             return await response.Content.ReadAsStringAsync(ct);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            _consecutiveFailures++;
+            _logger.LogWarning("Timeout (>60s) on POST {Url} — treating as transient", url);
+            return null;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
