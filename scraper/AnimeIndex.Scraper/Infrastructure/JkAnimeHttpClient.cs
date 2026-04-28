@@ -450,9 +450,19 @@ public sealed partial class JkAnimeHttpClient
         var html = await GetPageAsync(episodeUrl, ct);
         if (html is null) return [];
 
+        // Detect Cloudflare JS challenge (200 OK but no real page content)
+        if (html.Contains("Just a moment", StringComparison.OrdinalIgnoreCase) ||
+            html.Contains("challenge-running", StringComparison.OrdinalIgnoreCase) ||
+            html.Contains("cf-challenge", StringComparison.OrdinalIgnoreCase))
+        {
+            _consecutiveFailures++;
+            _logger.LogWarning("CF challenge detected on episode page {Url} — skipping mirrors", episodeUrl);
+            return [];
+        }
+
         var urls = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        // 1. Extract from `var servers = [{ remote: "base64", ... }]`
+        // 1. Extract from `var/let/const servers = [{ remote: "base64", ... }]`
         var serversMatch = VarServersRegex().Match(html);
         if (serversMatch.Success)
         {
@@ -487,6 +497,14 @@ public sealed partial class JkAnimeHttpClient
         var okruMatch = OkruIdRegex().Match(html);
         if (okruMatch.Success)
             urls.Add($"https://ok.ru/videoembed/{okruMatch.Groups[1].Value}");
+
+        if (urls.Count == 0 && !VarServersRegex().IsMatch(html))
+        {
+            // No servers variable at all — log a snippet to help diagnose (e.g. bot-detection page)
+            var snippet = html[..Math.Min(300, html.Length)].Replace('\n', ' ').Replace('\r', ' ');
+            _logger.LogWarning("No mirror patterns found on {Url} (len={Len}) — possible bot block. Head: {Snippet}",
+                episodeUrl, html.Length, snippet);
+        }
 
         _logger.LogDebug("Episode {Url}: extracted {Count} mirror URLs via HTTP",
             episodeUrl, urls.Count);
@@ -528,7 +546,7 @@ public sealed partial class JkAnimeHttpClient
     [GeneratedRegex("""var\s+animes\s*=\s*(\{.+?\})\s*;""", RegexOptions.Singleline)]
     private static partial Regex VarAnimesRegex();
 
-    [GeneratedRegex("""var\s+servers\s*=\s*(\[.+?\])\s*;""", RegexOptions.Singleline)]
+    [GeneratedRegex("""(?:var|let|const)\s+servers\s*=\s*(\[.+?\])\s*;""", RegexOptions.Singleline)]
     private static partial Regex VarServersRegex();
 
     [GeneratedRegex("""jkokru\.php\?u=(\d+)""")]

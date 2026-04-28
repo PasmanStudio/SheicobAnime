@@ -29,7 +29,6 @@ public sealed class Source2Strategy(
         var seriesCount = 0;
         var episodeCount = 0;
         var mirrorCount = 0;
-        var skippedCount = 0;
         var noEpisodesCount = 0;
 
         // ── Check blocked_slugs for this job's series ────────
@@ -57,13 +56,14 @@ public sealed class Source2Strategy(
         // Helper: write heartbeat + progress to the scrape_jobs row so admins
         // can see live progress, and the scheduler can distinguish alive vs stuck.
         var totalDiscovered = 0;
+        var totalNeedingWork = 0;
 
         // Initialize heartbeat
         async Task UpdateHeartbeatAsync()
         {
             try
             {
-                var msg = $"series:{seriesCount}/{totalDiscovered} eps:{episodeCount} mirrors:{mirrorCount} skipped:{skippedCount} noEps:{noEpisodesCount}";
+                var msg = $"p2:{seriesCount}/{totalNeedingWork} eps:{episodeCount} mirrors:{mirrorCount} noEps:{noEpisodesCount} [discovered:{totalDiscovered}]";
                 await db.Database.ExecuteSqlRawAsync(
                     """UPDATE scrape_jobs SET progress_message = {0}, last_heartbeat = now() WHERE id = {1}""",
                     msg, scrapeJobId);
@@ -74,123 +74,83 @@ public sealed class Source2Strategy(
             }
         }
 
-        // ── Discover series from /directorio ──────────────────
-        var discovered = await DiscoverSeriesAsync(baseUrl, maxPages, delayMs, scrapeJobId, ct);
-        totalDiscovered = discovered.Count;
+        // ── Phase 1: Discover and upsert all series to DB ─────
+        // Returns only the count — in-memory list discarded after upsert.
+        totalDiscovered = await DiscoverSeriesAsync(baseUrl, maxPages, delayMs, scrapeJobId, ct);
 
-        foreach (var (series, animeId) in discovered)
+        // ── Phase 2: Enrich from DB (resumable on container restart) ──
+        // Query series that still need episodes or mirrors, 0-episode series first.
+        // Because this reads from DB, a container restart re-runs Phase 1 (fast re-upsert)
+        // and then picks up Phase 2 exactly where processing left off.
+        var slugsNeedingWork = await GetSeriesNeedingEnrichmentAsync(ct);
+        totalNeedingWork = slugsNeedingWork.Count;
+
+        logger.LogInformation("Phase 2: {Count} series need enrichment", totalNeedingWork);
+
+        foreach (var (slug, existingStatus) in slugsNeedingWork)
         {
             if (ct.IsCancellationRequested) break;
 
             if (await http.CheckCircuitBreakerAsync(ct))
                 logger.LogWarning("Circuit breaker tripped — paused 10 min");
 
-            var blocked = await db.BlockedSlugs.AnyAsync(b => b.Slug == series.Slug, ct);
-            if (blocked)
-            {
-                logger.LogDebug("Skipping blocked slug {Slug}", series.Slug);
-                continue;
-            }
-
-            // ── Smart skip logic ────────────────────────────────
-            var existing = await db.Series
-                .Where(s => s.Slug == series.Slug)
-                .Select(s => new
-                {
-                    s.Id,
-                    s.Status,
-                    s.EpisodeCount,       // expected count stored in DB from last scrape
-                    DbEpisodeCount = s.Episodes.Count,
-                    EpisodesWithMirrors = s.Episodes.Count(e =>
-                        e.Mirrors.Any(m => m.IsActive)),
-                })
-                .FirstOrDefaultAsync(ct);
-
-            if (existing is not null && existing.DbEpisodeCount > 0
-                && existing.EpisodesWithMirrors == existing.DbEpisodeCount)
-            {
-                // All episodes we know about already have mirrors.
-                // Decide whether to trust that count:
-                //   • series says it has N eps AND we have exactly N → fully indexed → skip
-                //   • series is "completed" AND count matches → also skip
-                //   • series is "ongoing" and source count > DB count → do NOT skip (new eps may exist)
-                var sourceEpCount = series.EpisodeCount ?? existing.EpisodeCount;
-                var isCompleted = series.Status == "completed"
-                                  || existing.Status == "completed";
-
-                var countsMatch = sourceEpCount.HasValue
-                    && existing.DbEpisodeCount == sourceEpCount.Value;
-
-                // Skip when: completed (any count), OR ongoing but counts match exactly
-                if (isCompleted || countsMatch)
-                {
-                    logger.LogDebug(
-                        "Skipping fully-indexed series {Slug} — {Db}/{Expected} eps all with mirrors (status={Status})",
-                        series.Slug, existing.DbEpisodeCount, sourceEpCount?.ToString() ?? "?",
-                        existing.Status);
-                    seriesCount++;
-                    skippedCount++;
-                    await UpdateHeartbeatAsync();
-                    continue;
-                }
-            }
-
-            // Navigate to series detail page for enrichment
-            var detail = await http.GetSeriesDetailAsync(baseUrl, series.Slug, ct);
+            // Navigate to series detail page for enrichment + AnimeId
+            var detail = await http.GetSeriesDetailAsync(baseUrl, slug, ct);
             var enriched = detail is not null
-                ? series with
-                {
-                    Title = detail.Title,
-                    Synopsis = detail.Synopsis ?? series.Synopsis,
-                    CoverUrl = detail.CoverUrl ?? series.CoverUrl,
-                    Status = detail.Status ?? series.Status,
-                    Type = detail.Type ?? series.Type,
-                    Year = detail.Year,
-                    Genres = detail.Genres ?? series.Genres,
-                    TitleRomaji = detail.TitleEnglish,
-                    TitleNative = detail.TitleJapanese,
-                    EpisodeCount = detail.EpisodeCount ?? series.EpisodeCount,
-                    Studio = detail.Studio,
-                    Season = detail.Season,
-                    Demographics = detail.Demographics,
-                    Language = detail.Language,
-                    DurationMinutes = detail.DurationMinutes,
-                    AiredDate = detail.AiredDate,
-                    Quality = detail.Quality,
-                }
-                : series;
+                ? new SeriesScrapedData(
+                    Slug: slug,
+                    Title: detail.Title,
+                    Synopsis: detail.Synopsis,
+                    CoverUrl: detail.CoverUrl,
+                    Status: detail.Status ?? existingStatus,
+                    Type: detail.Type ?? "tv",
+                    TitleRomaji: detail.TitleEnglish,
+                    TitleNative: detail.TitleJapanese,
+                    Year: detail.Year,
+                    Genres: detail.Genres,
+                    EpisodeCount: detail.EpisodeCount,
+                    Studio: detail.Studio,
+                    Season: detail.Season,
+                    Demographics: detail.Demographics,
+                    Language: detail.Language,
+                    DurationMinutes: detail.DurationMinutes,
+                    AiredDate: detail.AiredDate,
+                    Quality: detail.Quality)
+                : new SeriesScrapedData(
+                    Slug: slug,
+                    Title: slug,
+                    CoverUrl: null,
+                    Status: existingStatus,
+                    Type: "tv");
 
             var seriesId = await upsert.UpsertSeriesAsync(enriched, ct);
             seriesCount++;
 
             // ── Discover episodes ─────────────────────────────
-            var effectiveAnimeId = detail?.AnimeId ?? animeId;
-            if (effectiveAnimeId is null)
+            if (detail?.AnimeId is null)
             {
                 logger.LogWarning("No anime ID for {Slug} — skipping episode discovery (detail={DetailNull})",
-                    series.Slug, detail is null ? "null" : "ok");
+                    slug, detail is null ? "null" : "ok");
                 noEpisodesCount++;
                 await UpdateHeartbeatAsync();
                 await JkAnimeHttpClient.JitterDelayAsync(delayMs, ct);
                 continue;
             }
 
-            var episodes = await http.GetAllEpisodesAsync(baseUrl, effectiveAnimeId.Value, series.Slug, ct);
+            var episodes = await http.GetAllEpisodesAsync(baseUrl, detail.AnimeId.Value, slug, ct);
 
             if (episodes.Count == 0)
             {
                 logger.LogWarning("Zero episodes returned for {Slug} (animeId={AnimeId}) — AJAX may have failed",
-                    series.Slug, effectiveAnimeId.Value);
+                    slug, detail.AnimeId.Value);
                 noEpisodesCount++;
             }
 
             // Pre-load episode numbers that already have active mirrors → skip those
-            var episodesWithMirrors = existing is not null
-                ? await db.Episodes
-                    .Where(e => e.SeriesId == seriesId && e.Mirrors.Any(m => m.IsActive))
-                    .Select(e => e.EpisodeNumber)
-                    .ToHashSetAsync(ct)
-                : new HashSet<short>();
+            var episodesWithMirrors = await db.Episodes
+                .Where(e => e.SeriesId == seriesId && e.Mirrors.Any(m => m.IsActive))
+                .Select(e => e.EpisodeNumber)
+                .ToHashSetAsync(ct);
 
             foreach (var ep in episodes)
             {
@@ -212,12 +172,12 @@ public sealed class Source2Strategy(
                 if (episodesWithMirrors.Contains(epNum))
                 {
                     logger.LogDebug("Episode {Slug} ep{Num}: already has mirrors — skipping",
-                        series.Slug, epNum);
+                        slug, epNum);
                     continue;
                 }
 
                 // Fetch episode page for mirror extraction
-                var epUrl = $"{baseUrl.TrimEnd('/')}/{series.Slug}/{epNum}/";
+                var epUrl = $"{baseUrl.TrimEnd('/')}/{slug}/{epNum}/";
                 var mirrorUrls = await http.GetEpisodeMirrorUrlsAsync(epUrl, ct);
 
                 foreach (var url in mirrorUrls)
@@ -251,8 +211,8 @@ public sealed class Source2Strategy(
         }
 
         logger.LogInformation(
-            "JKAnimeStrategy complete (HTTP mode) — series={S} episodes={E} mirrors={M} skipped={K} noEps={N}",
-            seriesCount, episodeCount, mirrorCount, skippedCount, noEpisodesCount);
+            "JKAnimeStrategy complete — series={S} episodes={E} mirrors={M} noEps={N}",
+            seriesCount, episodeCount, mirrorCount, noEpisodesCount);
 
         // Final heartbeat
         await UpdateHeartbeatAsync();
@@ -269,10 +229,14 @@ public sealed class Source2Strategy(
 
     // ── Directory browsing ──────────────────────────────────
 
-    private async Task<IReadOnlyList<(SeriesScrapedData Series, int? AnimeId)>> DiscoverSeriesAsync(
+    /// <summary>
+    /// Browses /directorio pages and upserts each series immediately.
+    /// Returns the total count of discovered series — does NOT keep them in memory.
+    /// </summary>
+    private async Task<int> DiscoverSeriesAsync(
         string baseUrl, int maxPages, int delayMs, Guid scrapeJobId, CancellationToken ct)
     {
-        var result = new List<(SeriesScrapedData, int?)>();
+        var discovered = 0;
 
         for (var page = 1; page <= maxPages; page++)
         {
@@ -284,7 +248,7 @@ public sealed class Source2Strategy(
             {
                 try
                 {
-                    var msg = $"discovering page {page}/{maxPages} ({result.Count} series so far)";
+                    var msg = $"p1:discovering page {page}/{maxPages} ({discovered} series so far)";
                     await db.Database.ExecuteSqlRawAsync(
                         """UPDATE scrape_jobs SET progress_message = {0}, last_heartbeat = now() WHERE id = {1}""",
                         msg, scrapeJobId);
@@ -319,16 +283,7 @@ public sealed class Source2Strategy(
                     _ => "tv"
                 };
 
-                result.Add((new SeriesScrapedData(
-                    Slug: item.Slug.Trim(),
-                    Title: item.Title.Trim(),
-                    CoverUrl: item.Image,
-                    Status: status,
-                    Type: type,
-                    Synopsis: string.IsNullOrWhiteSpace(item.Synopsis) ? null : item.Synopsis.Trim()),
-                    item.Id > 0 ? item.Id : null));
-
-                // Upsert immediately so series survive a job restart mid-enrichment.
+                // Upsert immediately so series are in DB for Phase 2 to pick up.
                 var isBlocked = await db.BlockedSlugs.AnyAsync(b => b.Slug == item.Slug.Trim(), ct);
                 if (!isBlocked)
                 {
@@ -339,6 +294,7 @@ public sealed class Source2Strategy(
                         Status: status,
                         Type: type,
                         Synopsis: string.IsNullOrWhiteSpace(item.Synopsis) ? null : item.Synopsis.Trim()), ct);
+                    discovered++;
                 }
             }
 
@@ -346,7 +302,47 @@ public sealed class Source2Strategy(
             await JkAnimeHttpClient.JitterDelayAsync(delayMs, ct);
         }
 
-        return result;
+        return discovered;
+    }
+
+    // ── DB query for Phase 2 ────────────────────────────────
+
+    private record SlugStatus(string Slug, string? Status);
+
+    /// <summary>
+    /// Returns slugs that need enrichment: series with no episodes, series with
+    /// episodes still missing active mirrors, or ongoing series.
+    /// 0-episode series come first so the most-needed work runs earliest.
+    /// Phase 2 reads from DB so a container restart is safe — already-processed
+    /// series have episodes+mirrors and won't be returned by this query again.
+    /// </summary>
+    private async Task<IReadOnlyList<(string Slug, string? Status)>> GetSeriesNeedingEnrichmentAsync(
+        CancellationToken ct)
+    {
+        var rows = await db.Database.SqlQuery<SlugStatus>(
+            $"""
+            SELECT s.slug AS "Slug", s.status AS "Status"
+            FROM series s
+            WHERE NOT EXISTS (SELECT 1 FROM blocked_slugs b WHERE b.slug = s.slug)
+            AND (
+                NOT EXISTS (SELECT 1 FROM episodes e WHERE e.series_id = s.id)
+                OR s.status = 'ongoing'
+                OR EXISTS (
+                    SELECT 1 FROM episodes e
+                    WHERE e.series_id = s.id
+                    AND NOT EXISTS (
+                        SELECT 1 FROM mirrors m WHERE m.episode_id = e.id AND m.is_active = true
+                    )
+                )
+            )
+            ORDER BY
+                CASE WHEN NOT EXISTS (SELECT 1 FROM episodes e WHERE e.series_id = s.id)
+                     THEN 0 ELSE 1 END,
+                s.updated_at ASC
+            """)
+            .ToListAsync(ct);
+
+        return rows.Select(r => (r.Slug, r.Status)).ToList();
     }
 
     // ── Provider helpers ────────────────────────────────────
