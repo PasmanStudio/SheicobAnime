@@ -132,6 +132,28 @@ jobs:
             echo "::warning::Production secrets not configured — skipping deploy"
           fi
 
+  # ─── Deploy scraper image to Fly.io (only when scraper/ changed) ───
+  deploy-scraper:
+    name: Deploy scraper to Fly.io
+    needs: [migrate, check-changes, check-secrets]
+    if: |
+      needs.check-secrets.outputs.ready == 'true' &&
+      needs.check-changes.outputs.scraper == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - name: Deploy scraper to Fly.io
+        run: |
+          flyctl deploy \
+            --config scraper/fly.toml \
+            --dockerfile scraper/Dockerfile \
+            --app sheicobanime-scraper \
+            --remote-only \
+            --wait-timeout 300
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+
   # ─── Database migration (runs after CI passes) ───
   migrate:
     name: Run DB migrations
@@ -239,7 +261,7 @@ jobs:
   # ─── Post-deploy notification ───
   notify:
     name: Deployment status
-    needs: [migrate, deploy-api, deploy-web]
+    needs: [migrate, deploy-api, deploy-scraper, deploy-web]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -251,8 +273,8 @@ jobs:
           echo "|---------|--------|" >> $GITHUB_STEP_SUMMARY
           echo "| Migration | ${{ needs.migrate.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| API (Render) | ${{ needs.deploy-api.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Scraper (Fly.io) | ${{ needs.deploy-scraper.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Frontend (Vercel) | ${{ needs.deploy-web.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Scraper | GHA cron — see scraper-cron workflow |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "Commit: \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
 
@@ -261,6 +283,7 @@ jobs:
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "⚠️ **Rollback instructions:**" >> $GITHUB_STEP_SUMMARY
             echo "- Render: Dashboard → Manual deploy → previous commit" >> $GITHUB_STEP_SUMMARY
+            echo "- Fly.io: flyctl releases list --app sheicobanime-scraper; flyctl deploy --image <previous>" >> $GITHUB_STEP_SUMMARY
             echo "- Vercel: Dashboard → Promote previous deployment" >> $GITHUB_STEP_SUMMARY
             echo "- DB: Restore from backup (no auto-rollback)" >> $GITHUB_STEP_SUMMARY
           fi

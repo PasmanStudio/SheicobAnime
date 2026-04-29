@@ -1,0 +1,28 @@
+# Build outputs — must be excluded so the Docker Linux build can do a clean
+# dotnet restore without hitting Windows-specific NuGet fallback folder paths
+# baked into project.assets.json / nuget.g.targets when built locally.
+**/bin/
+**/obj/
+
+# Node / Next.js
+web/node_modules/
+web/.next/
+
+# Git / IDE
+.git/
+.github/
+.vscode/
+
+# Test + coverage outputs
+**/TestResults/
+**/coverage/
+
+# Env files (never bake secrets into the image)
+**/.env
+**/.env.*
+!**/.env.example
+
+# Local tools
+*.user
+*.suo
+.DS_Store

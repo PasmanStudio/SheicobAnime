@@ -1,0 +1,30 @@
+# Fly.io config for the SheicobAnime scraper worker.
+#
+# DEPLOY from the REPO ROOT with --dockerfile flag:
+#   fly deploy --config scraper/fly.toml --dockerfile scraper/Dockerfile
+#
+# The --dockerfile CLI flag makes Fly use the CWD (repo root) as build context,
+# which allows the Dockerfile to COPY from both api/ and scraper/ directories.
+# Setting dockerfile inside [build] instead would use scraper/ as the context,
+# making api/ unreachable.
+#
+app = "sheicobanime-scraper"
+primary_region = "iad"
+
+[build]
+  # dockerfile NOT specified here — must be passed via --dockerfile CLI flag
+  # so that CWD (repo root) is used as the Docker build context.
+
+[env]
+  ASPNETCORE_ENVIRONMENT       = "Production"
+  DOTNET_RUNNING_IN_CONTAINER  = "true"
+  # Check for pending jobs every minute (the 24h AutoRescheduleHours guard
+  # prevents re-runs more than once per day even with this high frequency).
+  Hangfire__SchedulerCron      = "* * * * *"
+
+# No [http_service] — pure background worker, no inbound traffic.
+
+[[vm]]
+  memory   = "256mb"   # scraper uses ~50MB idle, ~100MB active (no Playwright)
+  cpu_kind = "shared"
+  cpus     = 1
