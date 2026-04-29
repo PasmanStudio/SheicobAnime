@@ -3,6 +3,7 @@ using AnimeIndex.Api.Infrastructure.Scraping;
 using AnimeIndex.Scraper.Infrastructure;
 using Hangfire;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
 namespace AnimeIndex.Scraper.Jobs;
@@ -19,6 +20,7 @@ public class ScrapeOrchestratorJob(
     IEnumerable<IScrapeStrategy> strategies,
     AppDbContext db,
     DeadLetterAlerter alerter,
+    IServiceScopeFactory scopeFactory,
     ILogger<ScrapeOrchestratorJob> logger)
 {
     public async Task ExecuteAsync(Guid scrapeJobId, string sourceKey, CancellationToken ct = default)
@@ -61,23 +63,34 @@ public class ScrapeOrchestratorJob(
                     scrapeJobId, result.ErrorMessage ?? "Unknown error", ct);
             }
         }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        catch (OperationCanceledException)
         {
-            // Process is shutting down (GHA timeout / SIGTERM).
-            // Mark as "pending" so the next cron run resumes Phase 2 from DB
-            // instead of restarting Phase 1 from scratch.
+            // Process is shutting down (GHA timeout / SIGTERM) OR an internal
+            // timeout fired. Mark as "pending" so the scheduler re-enqueues it
+            // and resumes Phase 2 from DB instead of restarting Phase 1.
+            //
+            // Use a FRESH scope — the injected `db` may already be disposed
+            // by the time SIGTERM tears down the DI scope.
             logger.LogWarning(
-                "Job {JobId} cancelled by host shutdown — marking pending for next run",
+                "Job {JobId} cancelled — marking pending for resume",
                 scrapeJobId);
-            var cancelled = await db.ScrapeJobs.FindAsync([scrapeJobId]);
-            if (cancelled is not null)
+            try
             {
-                cancelled.Status = "pending";
-                cancelled.ErrorMessage = "Paused by host shutdown — will resume on next cron run";
-                await db.SaveChangesAsync(CancellationToken.None);
+                using var scope = scopeFactory.CreateScope();
+                var freshDb = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                var cancelled = await freshDb.ScrapeJobs.FindAsync([scrapeJobId]);
+                if (cancelled is not null)
+                {
+                    cancelled.Status = "pending";
+                    cancelled.ErrorMessage = "Paused by cancellation — will resume on next run";
+                    await freshDb.SaveChangesAsync(CancellationToken.None);
+                }
             }
-            // Do NOT re-throw — Hangfire will see the job as succeeded, which
-            // is fine because the DB record is now "pending" for next pickup.
+            catch (Exception dbEx)
+            {
+                logger.LogError(dbEx, "Failed to mark job {JobId} as pending after cancellation", scrapeJobId);
+            }
+            // Do NOT re-throw — Hangfire sees success; DB record is "pending" for next pickup.
         }
         catch (Exception ex)
         {

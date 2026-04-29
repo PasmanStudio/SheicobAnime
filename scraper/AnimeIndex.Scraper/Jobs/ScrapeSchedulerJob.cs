@@ -62,10 +62,11 @@ public class ScrapeSchedulerJob(
 
         await db.SaveChangesAsync(ct);
 
-        // ── Stuck-job recovery: reset "running" jobs that haven't sent a
-        //    heartbeat in over 6 hours — they may be processing a very long series
-        //    (hundreds of episodes) without being truly dead.
-        const int StuckHeartbeatTimeoutMinutes = 360;
+        // ── Stuck-job recovery: running jobs whose Hangfire worker was killed
+        //    (GHA cancel / SIGTERM) without updating heartbeat.
+        //    Reset to "pending" after 20 min so the active worker re-enqueues
+        //    and resumes Phase 2 directly — no Phase 1 restart from a new job.
+        const int StuckHeartbeatTimeoutMinutes = 20;
         var heartbeatCutoff = now.AddMinutes(-StuckHeartbeatTimeoutMinutes);
         var stuckJobs = await db.ScrapeJobs
             .Where(j => j.Status == "running" &&
@@ -75,11 +76,12 @@ public class ScrapeSchedulerJob(
 
         foreach (var stuck in stuckJobs)
         {
-            stuck.Status = "failed";
-            stuck.ErrorMessage = $"No heartbeat for {StuckHeartbeatTimeoutMinutes} min — reset by scheduler";
-            stuck.CompletedAt = now;
+            // Reset to "pending" (not "failed") so the scheduler re-enqueues
+            // the existing job rather than creating a new one that restarts Phase 1.
+            stuck.Status = "pending";
+            stuck.ErrorMessage = $"No heartbeat for {StuckHeartbeatTimeoutMinutes} min — re-queued by scheduler";
             logger.LogWarning(
-                "ScrapeSchedulerJob: reset stuck job {JobId} ({JobType}) — last heartbeat {Heartbeat}",
+                "ScrapeSchedulerJob: stuck job {JobId} ({JobType}) reset to pending — last heartbeat {Heartbeat}",
                 stuck.Id, stuck.JobType, stuck.LastHeartbeat?.ToString("o") ?? "never");
         }
 
