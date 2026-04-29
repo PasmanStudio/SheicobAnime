@@ -125,7 +125,7 @@ jobs:
     steps:
       - id: check
         run: |
-          if [ -n "${{ secrets.SUPABASE_DB_URL_DIRECT }}" ] && [ -n "${{ secrets.RAILWAY_TOKEN }}" ]; then
+          if [ -n "${{ secrets.DATABASE_URL }}" ] && [ -n "${{ secrets.RENDER_API_KEY }}" ]; then
             echo "ready=true" >> $GITHUB_OUTPUT
           else
             echo "ready=false" >> $GITHUB_OUTPUT
@@ -194,71 +194,22 @@ jobs:
 
   # ─── Deploy services (after migration succeeds) ───
   deploy-api:
-    name: Deploy API to Railway
+    name: Deploy API to Render
     needs: migrate
     runs-on: ubuntu-latest
     steps:
-      - name: Trigger Railway redeploy
+      - name: Trigger Render redeploy
         run: |
-          # Get latest deployment for the API service
-          DEPLOY_ID=$(curl -sf https://backboard.railway.app/graphql/v2 \
-            -H "Authorization: Bearer $RAILWAY_TOKEN" \
+          RESULT=$(curl -sf -X POST \
+            "https://api.render.com/v1/services/${SERVICE_ID}/deploys" \
+            -H "Authorization: Bearer ${RENDER_API_KEY}" \
             -H "Content-Type: application/json" \
-            -d '{"query": "{ deployments(input: {serviceId: \"'"$SERVICE_ID"'\"}, first: 1) { edges { node { id } } } }"}' \
-            | jq -r '.data.deployments.edges[0].node.id')
-
-          if [ -z "$DEPLOY_ID" ] || [ "$DEPLOY_ID" = "null" ]; then
-            echo "::error::No existing deployment found for API service"
-            exit 1
-          fi
-          echo "Latest deployment: $DEPLOY_ID"
-
-          # Trigger redeploy from latest commit
-          RESULT=$(curl -sf https://backboard.railway.app/graphql/v2 \
-            -H "Authorization: Bearer $RAILWAY_TOKEN" \
-            -H "Content-Type: application/json" \
-            -d '{"query": "mutation { deploymentRedeploy(id: \"'"$DEPLOY_ID"'\") { id status } }"}')
-
-          NEW_ID=$(echo "$RESULT" | jq -r '.data.deploymentRedeploy.id')
-          STATUS=$(echo "$RESULT" | jq -r '.data.deploymentRedeploy.status')
-          echo "Redeploy triggered: $NEW_ID ($STATUS)"
+            -d '{"clearCache": "do_not_clear"}')
+          DEPLOY_ID=$(echo "$RESULT" | jq -r '.id // .deploy.id')
+          echo "Render deploy triggered: $DEPLOY_ID"
         env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
-          SERVICE_ID: ${{ secrets.RAILWAY_SERVICE_ID }}
-
-  deploy-scraper:
-    name: Deploy Scraper to Railway
-    needs: [migrate, check-changes]
-    if: needs.check-changes.outputs.scraper == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Trigger Railway redeploy
-        run: |
-          # Get latest deployment for the scraper service
-          DEPLOY_ID=$(curl -sf https://backboard.railway.app/graphql/v2 \
-            -H "Authorization: Bearer $RAILWAY_TOKEN" \
-            -H "Content-Type: application/json" \
-            -d '{"query": "{ deployments(input: {serviceId: \"'"$SERVICE_ID"'\"}, first: 1) { edges { node { id } } } }"}' \
-            | jq -r '.data.deployments.edges[0].node.id')
-
-          if [ -z "$DEPLOY_ID" ] || [ "$DEPLOY_ID" = "null" ]; then
-            echo "::error::No existing deployment found for scraper service"
-            exit 1
-          fi
-          echo "Latest deployment: $DEPLOY_ID"
-
-          # Trigger redeploy from latest commit
-          RESULT=$(curl -sf https://backboard.railway.app/graphql/v2 \
-            -H "Authorization: Bearer $RAILWAY_TOKEN" \
-            -H "Content-Type: application/json" \
-            -d '{"query": "mutation { deploymentRedeploy(id: \"'"$DEPLOY_ID"'\") { id status } }"}')
-
-          NEW_ID=$(echo "$RESULT" | jq -r '.data.deploymentRedeploy.id')
-          STATUS=$(echo "$RESULT" | jq -r '.data.deploymentRedeploy.status')
-          echo "Redeploy triggered: $NEW_ID ($STATUS)"
-        env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
-          SERVICE_ID: ${{ secrets.RAILWAY_SCRAPER_SERVICE_ID }}
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          SERVICE_ID: ${{ secrets.RENDER_API_SERVICE_ID }}
 
   deploy-web:
     name: Deploy frontend to Vercel
@@ -272,7 +223,7 @@ jobs:
       - name: Ensure Vercel env vars are set
         run: |
           # Add NEXT_PUBLIC_API_URL if not already set (idempotent via add --force)
-          printf 'https://api-production-1f24.up.railway.app' | vercel env add NEXT_PUBLIC_API_URL production --force --token=${{ secrets.VERCEL_TOKEN }}
+          printf 'https://sheicobanime-api.onrender.com' | vercel env add NEXT_PUBLIC_API_URL production --force --token=${{ secrets.VERCEL_TOKEN }}
           printf 'adsterra' | vercel env add NEXT_PUBLIC_AD_PROVIDER production --force --token=${{ secrets.VERCEL_TOKEN }}
           printf 'disqus' | vercel env add NEXT_PUBLIC_COMMENT_PROVIDER production --force --token=${{ secrets.VERCEL_TOKEN }}
           printf 'sheicobanime-vercel-app' | vercel env add NEXT_PUBLIC_DISQUS_SHORTNAME production --force --token=${{ secrets.VERCEL_TOKEN }}
@@ -288,7 +239,7 @@ jobs:
   # ─── Post-deploy notification ───
   notify:
     name: Deployment status
-    needs: [migrate, deploy-api, deploy-scraper, deploy-web]
+    needs: [migrate, deploy-api, deploy-web]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -299,18 +250,17 @@ jobs:
           echo "| Service | Status |" >> $GITHUB_STEP_SUMMARY
           echo "|---------|--------|" >> $GITHUB_STEP_SUMMARY
           echo "| Migration | ${{ needs.migrate.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| API | ${{ needs.deploy-api.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Scraper | ${{ needs.deploy-scraper.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Frontend | ${{ needs.deploy-web.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| API (Render) | ${{ needs.deploy-api.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Frontend (Vercel) | ${{ needs.deploy-web.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Scraper | GHA cron — see scraper-cron workflow |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "Commit: \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
 
           if [ "${{ needs.deploy-api.result }}" != "success" ] || \
-             [ "${{ needs.deploy-scraper.result }}" != "success" ] || \
              [ "${{ needs.deploy-web.result }}" != "success" ]; then
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "⚠️ **Rollback instructions:**" >> $GITHUB_STEP_SUMMARY
-            echo "- Railway: Dashboard → Rollback on failed deployment" >> $GITHUB_STEP_SUMMARY
+            echo "- Render: Dashboard → Manual deploy → previous commit" >> $GITHUB_STEP_SUMMARY
             echo "- Vercel: Dashboard → Promote previous deployment" >> $GITHUB_STEP_SUMMARY
             echo "- DB: Restore from backup (no auto-rollback)" >> $GITHUB_STEP_SUMMARY
           fi

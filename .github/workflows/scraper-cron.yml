@@ -1,0 +1,58 @@
+name: Scraper — Daily cron
+
+# Runs the scraper once per day (02:00 UTC).
+# Also triggerable manually from the Actions tab.
+# Max runtime: 6 hours (GitHub Actions limit for free tier).
+#
+# Required secrets (Settings → Secrets → Actions):
+#   DATABASE_URL          — Supabase connection string (Transaction/Session pooler)
+#   REDIS_URL             — Upstash Redis URL (rediss://...)
+#   HANGFIRE_DASHBOARD_PASSWORD — any password
+
+on:
+  schedule:
+    - cron: '0 2 * * *'   # 02:00 UTC daily
+  workflow_dispatch:        # allow manual runs
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  scrape:
+    name: Run scraper
+    runs-on: ubuntu-latest
+    timeout-minutes: 360   # 6h — GitHub Actions absolute maximum
+
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: '9.x'
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-scraper-${{ hashFiles('scraper/**/*.csproj', 'api/AnimeIndex.Api/AnimeIndex.Api.csproj') }}
+          restore-keys: nuget-scraper-
+
+      - name: Restore
+        run: dotnet restore scraper/AnimeIndex.Scraper/AnimeIndex.Scraper.csproj
+
+      - name: Build
+        run: dotnet build scraper/AnimeIndex.Scraper/AnimeIndex.Scraper.csproj --no-restore -c Release
+
+      - name: Run scraper (up to 6h)
+        run: dotnet run --project scraper/AnimeIndex.Scraper/AnimeIndex.Scraper.csproj --no-build -c Release
+        env:
+          ASPNETCORE_ENVIRONMENT: Production
+          DATABASE_URL:  ${{ secrets.DATABASE_URL }}
+          REDIS_URL:     ${{ secrets.REDIS_URL }}
+          HANGFIRE_DASHBOARD_PASSWORD: ${{ secrets.HANGFIRE_DASHBOARD_PASSWORD }}
+          # Speed up scheduler: check every 30s (default is 15s but let's be explicit)
+          Source2__DelayMs: "2000"
+          Source2__MaxPages: "200"
+          # Force scheduler to fire immediately on startup (override 2am cron for GHA runs)
+          Hangfire__SchedulerCron: "* * * * *"
