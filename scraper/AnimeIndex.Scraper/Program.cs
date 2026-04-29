@@ -58,11 +58,20 @@ try
         .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
         .UseSimpleAssemblyNameTypeSerializer()
         .UseRecommendedSerializerSettings()
-        .UsePostgreSqlStorage(opts => opts.UseNpgsqlConnection(connectionString)));
+        .UsePostgreSqlStorage(opts =>
+        {
+            opts.UseNpgsqlConnection(connectionString);
+        },
+        new Hangfire.PostgreSql.PostgreSqlStorageOptions
+        {
+            // GHA runs up to 6 hours. Prevent a second Hangfire worker from
+            // re-queuing the same job after the default 30-min window.
+            InvisibilityTimeout = TimeSpan.FromHours(7),
+        }));
 
-    builder.Services.AddHangfireServer(options =>
+    builder.Services.AddHangfireServer((BackgroundJobServerOptions options) =>
     {
-        options.WorkerCount = 2;
+        options.WorkerCount = 1; // single worker — scrape jobs are long (hours)
         options.Queues = ["scraper", "default"];
     });
 
