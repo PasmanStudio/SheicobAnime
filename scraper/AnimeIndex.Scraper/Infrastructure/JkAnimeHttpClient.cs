@@ -438,6 +438,68 @@ public sealed partial class JkAnimeHttpClient
         return allEpisodes;
     }
 
+    /// <summary>
+    /// Fetches only episodes with <c>Number &gt; maxKnownEpisode</c>, iterating AJAX
+    /// pages from the last page backwards and stopping as soon as an entire page
+    /// contains only already-known episodes. For a long-running series like One Piece
+    /// (850+ eps, ~17 AJAX pages) this typically costs 1-2 HTTP requests instead of 17.
+    /// </summary>
+    public async Task<IReadOnlyList<JkEpisodeItem>> GetNewEpisodesAsync(
+        string baseUrl, int animeId, string slug, short maxKnownEpisode, CancellationToken ct)
+    {
+        var referer = $"{baseUrl.TrimEnd('/')}/{slug}/";
+
+        // Page 1 tells us LastPage. Its data is reused below if LastPage == 1.
+        var page1Url = $"{baseUrl.TrimEnd('/')}/ajax/episodes/{animeId}/1";
+        var page1Json = await PostAsync(page1Url, referer, ct);
+        if (page1Json is null) return [];
+
+        JkEpisodesPage? page1;
+        try { page1 = JsonSerializer.Deserialize<JkEpisodesPage>(page1Json); }
+        catch (JsonException ex)
+        {
+            _logger.LogWarning(ex, "Failed to parse episodes page 1 for anime {Id}", animeId);
+            return [];
+        }
+        if (page1 is null || page1.Data.Count == 0) return [];
+
+        var newEpisodes = new List<JkEpisodeItem>();
+
+        for (var p = page1.LastPage; p >= 1; p--)
+        {
+            if (ct.IsCancellationRequested) break;
+
+            string? json;
+            if (p == 1)
+            {
+                json = page1Json; // reuse — no extra HTTP request
+            }
+            else
+            {
+                var url = $"{baseUrl.TrimEnd('/')}/ajax/episodes/{animeId}/{p}";
+                json = await PostAsync(url, referer, ct);
+                if (json is null) break;
+            }
+
+            JkEpisodesPage? result;
+            try { result = JsonSerializer.Deserialize<JkEpisodesPage>(json); }
+            catch (JsonException ex)
+            {
+                _logger.LogWarning(ex, "Failed to parse episodes page {Page} for anime {Id}", p, animeId);
+                break;
+            }
+            if (result?.Data is null || result.Data.Count == 0) break;
+
+            var newOnThisPage = result.Data.Where(e => e.Number > maxKnownEpisode).ToList();
+            newEpisodes.AddRange(newOnThisPage);
+
+            // All episodes on this page are already known → every earlier page is too.
+            if (newOnThisPage.Count == 0) break;
+        }
+
+        return newEpisodes;
+    }
+
     // ── Episode mirrors ─────────────────────────────────────
 
     /// <summary>

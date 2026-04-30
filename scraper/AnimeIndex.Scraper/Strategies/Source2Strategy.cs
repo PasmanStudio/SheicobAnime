@@ -91,6 +91,10 @@ public sealed class Source2Strategy(
         {
             if (ct.IsCancellationRequested) break;
 
+            // Heartbeat at the start of every series so the stuck-job recovery
+            // never fires while a circuit-breaker hold (10 min) is in progress.
+            await UpdateHeartbeatAsync();
+
             if (await http.CheckCircuitBreakerAsync(ct))
                 logger.LogWarning("Circuit breaker tripped — paused 10 min");
 
@@ -137,7 +141,20 @@ public sealed class Source2Strategy(
                 continue;
             }
 
-            var episodes = await http.GetAllEpisodesAsync(baseUrl, detail.AnimeId.Value, slug, ct);
+            // Delta fetch: for series already seeded, only retrieve episodes newer
+            // than the highest episode number we already have in DB. For One Piece at
+            // ep 823 this fetches only the last 1-2 AJAX pages instead of all 17.
+            var maxKnownEp = await db.Episodes
+                .Where(e => e.SeriesId == seriesId)
+                .MaxAsync(e => (short?)e.EpisodeNumber, ct) ?? (short)0;
+
+            var episodes = maxKnownEp > 0
+                ? await http.GetNewEpisodesAsync(baseUrl, detail.AnimeId.Value, slug, maxKnownEp, ct)
+                : await http.GetAllEpisodesAsync(baseUrl, detail.AnimeId.Value, slug, ct);
+
+            if (maxKnownEp > 0)
+                logger.LogDebug("{Slug}: delta-fetch from ep {Max} — {Count} new episode(s)",
+                    slug, maxKnownEp, episodes.Count);
 
             if (episodes.Count == 0)
             {
@@ -298,7 +315,12 @@ public sealed class Source2Strategy(
                 }
             }
 
-            logger.LogDebug("Page {Page}: discovered {Count} series", page, directoryPage.Data.Count);
+            logger.LogDebug("Page {Page}/{LastPage}: discovered {Count} series",
+                page, directoryPage.LastPage, directoryPage.Data.Count);
+
+            // Stop when JKAnime says there are no more pages.
+            if (page >= directoryPage.LastPage) break;
+
             await JkAnimeHttpClient.JitterDelayAsync(delayMs, ct);
         }
 
@@ -310,11 +332,11 @@ public sealed class Source2Strategy(
     private record SlugStatus(string Slug, string? Status);
 
     /// <summary>
-    /// Returns slugs that need enrichment: series with no episodes, series with
-    /// episodes still missing active mirrors, or ongoing series.
-    /// 0-episode series come first so the most-needed work runs earliest.
-    /// Phase 2 reads from DB so a container restart is safe — already-processed
-    /// series have episodes+mirrors and won't be returned by this query again.
+    /// Returns slugs that need enrichment: only series with status = 'ongoing'.
+    /// Initial full-scrape is complete; daily runs focus on airing series only
+    /// (~84 series vs the previous 223) to keep each cycle under ~15 minutes.
+    /// Blocked slugs are excluded. Ordered by updated_at ASC so least-recently
+    /// scraped series are processed first.
     /// </summary>
     private async Task<IReadOnlyList<(string Slug, string? Status)>> GetSeriesNeedingEnrichmentAsync(
         CancellationToken ct)
@@ -324,21 +346,8 @@ public sealed class Source2Strategy(
             SELECT s.slug AS "Slug", s.status AS "Status"
             FROM series s
             WHERE NOT EXISTS (SELECT 1 FROM blocked_slugs b WHERE b.slug = s.slug)
-            AND (
-                NOT EXISTS (SELECT 1 FROM episodes e WHERE e.series_id = s.id)
-                OR s.status = 'ongoing'
-                OR EXISTS (
-                    SELECT 1 FROM episodes e
-                    WHERE e.series_id = s.id
-                    AND NOT EXISTS (
-                        SELECT 1 FROM mirrors m WHERE m.episode_id = e.id AND m.is_active = true
-                    )
-                )
-            )
-            ORDER BY
-                CASE WHEN NOT EXISTS (SELECT 1 FROM episodes e WHERE e.series_id = s.id)
-                     THEN 0 ELSE 1 END,
-                s.updated_at ASC
+            AND s.status = 'ongoing'
+            ORDER BY s.updated_at ASC
             """)
             .ToListAsync(ct);
 
