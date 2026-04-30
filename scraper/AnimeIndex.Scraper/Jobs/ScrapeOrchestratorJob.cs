@@ -4,6 +4,7 @@ using AnimeIndex.Scraper.Infrastructure;
 using Hangfire;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
 namespace AnimeIndex.Scraper.Jobs;
@@ -14,6 +15,8 @@ namespace AnimeIndex.Scraper.Jobs;
 /// Enqueued by ScrapeSchedulerJob or directly from the admin API.
 /// Retries disabled — scrape jobs are long-running; the ScrapeSchedulerJob
 /// handles recovery by detecting stuck/failed jobs and re-enqueuing.
+/// After completion (success or failure), stops the host so the GHA step
+/// exits immediately instead of waiting for the 6-hour timeout.
 /// </summary>
 [AutomaticRetry(Attempts = 0)]
 public class ScrapeOrchestratorJob(
@@ -21,6 +24,7 @@ public class ScrapeOrchestratorJob(
     AppDbContext db,
     DeadLetterAlerter alerter,
     IServiceScopeFactory scopeFactory,
+    IHostApplicationLifetime lifetime,
     ILogger<ScrapeOrchestratorJob> logger)
 {
     public async Task ExecuteAsync(Guid scrapeJobId, string sourceKey, CancellationToken ct = default)
@@ -62,6 +66,11 @@ public class ScrapeOrchestratorJob(
                 await alerter.HandleFailureAsync(
                     scrapeJobId, result.ErrorMessage ?? "Unknown error", ct);
             }
+
+            // Signal the host to stop: the GHA runner only needs one scrape cycle.
+            // Without this the Hangfire server runs until the 6-hour GHA timeout.
+            logger.LogInformation("Job {JobId} finished — requesting host shutdown", scrapeJobId);
+            lifetime.StopApplication();
         }
         catch (OperationCanceledException)
         {

@@ -53,6 +53,5 @@ jobs:
           HANGFIRE_DASHBOARD_PASSWORD: ${{ secrets.HANGFIRE_DASHBOARD_PASSWORD }}
           # Speed up scheduler: check every 30s (default is 15s but let's be explicit)
           Source2__DelayMs: "2000"
-          Source2__MaxPages: "200"
           # Force scheduler to fire immediately on startup (override 2am cron for GHA runs)
           Hangfire__SchedulerCron: "* * * * *"

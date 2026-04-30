@@ -158,9 +158,18 @@ public sealed class Source2Strategy(
 
             if (episodes.Count == 0)
             {
-                logger.LogWarning("Zero episodes returned for {Slug} (animeId={AnimeId}) — AJAX may have failed",
-                    slug, detail.AnimeId.Value);
-                noEpisodesCount++;
+                if (maxKnownEp == 0)
+                {
+                    // First-time fetch returned nothing — genuine AJAX failure.
+                    logger.LogWarning("Zero episodes returned for {Slug} (animeId={AnimeId}) — AJAX may have failed",
+                        slug, detail.AnimeId.Value);
+                    noEpisodesCount++;
+                }
+                else
+                {
+                    // Delta-fetch found no new episodes since ep {maxKnownEp} — normal.
+                    logger.LogDebug("{Slug}: up to date at ep {Max} — no new episodes", slug, maxKnownEp);
+                }
             }
 
             // Pre-load episode numbers that already have active mirrors → skip those
