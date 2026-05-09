@@ -103,6 +103,16 @@ public sealed class SeekStreamingUploadService
                     "Episode {EpisodeId}: resolved {Provider} → {Format} {ResolvedUrl}",
                     episodeId, provider, resolved.Format, resolved.Url[..Math.Min(80, resolved.Url.Length)]);
 
+                // Reject known test/placeholder video domains — they are served by some
+                // providers (e.g. VOE) as geo-block fallbacks and must never be uploaded.
+                if (IsTestVideoUrl(resolved.Url))
+                {
+                    _logger.LogDebug(
+                        "Episode {EpisodeId}: skipping {Provider} — resolved to test-video placeholder URL ({Url})",
+                        episodeId, provider, resolved.Url[..Math.Min(80, resolved.Url.Length)]);
+                    continue;
+                }
+
                 var seekEmbedUrl = await _seekStreaming.UploadFromUrlAsync(resolved.Url, ct: ct);
                 if (seekEmbedUrl is null) continue;
 
@@ -141,5 +151,22 @@ public sealed class SeekStreamingUploadService
             "Episode {EpisodeId}: all {Count} resolver attempts failed — keeping external mirrors only",
             episodeId, sorted.Count);
         return false;
+    }
+
+    // Domains known to serve BigBuckBunny or other placeholder content as geo-block fallbacks.
+    private static readonly string[] TestVideoDomains =
+    [
+        "test-videos.co.uk",
+        "commondatastorage.googleapis.com",
+        "download.blender.org",
+        "upload.wikimedia.org",
+    ];
+
+    private static bool IsTestVideoUrl(string url)
+    {
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)) return false;
+        return Array.Exists(TestVideoDomains, d =>
+            uri.Host.Equals(d, StringComparison.OrdinalIgnoreCase) ||
+            uri.Host.EndsWith("." + d, StringComparison.OrdinalIgnoreCase));
     }
 }
