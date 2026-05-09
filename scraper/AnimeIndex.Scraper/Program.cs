@@ -85,12 +85,35 @@ try
         c.BaseAddress = new Uri("https://api.resend.com");
         c.Timeout = TimeSpan.FromSeconds(15);
     });
+    builder.Services.AddHttpClient("resolver", c =>
+    {
+        c.Timeout = TimeSpan.FromSeconds(30);
+        c.DefaultRequestHeaders.TryAddWithoutValidation(
+            "User-Agent",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36");
+    });
+    builder.Services.AddHttpClient("seekstreaming", c =>
+    {
+        c.Timeout = TimeSpan.FromSeconds(30);
+    });
 
     // ─── Scraper services ─────────────────────────────────
     builder.Services.AddScoped<MirrorProbeService>();
     builder.Services.AddScoped<UpsertPipelineService>();
     builder.Services.AddScoped<DeadLetterAlerter>();
     builder.Services.AddScoped<JkAnimeHttpClient>();
+
+    // ─── Hoster resolvers (reuse same impls as API) ───────
+    builder.Services.AddSingleton<AnimeIndex.Api.Infrastructure.Resolvers.IHosterResolver, AnimeIndex.Api.Infrastructure.Resolvers.VoeResolver>();
+    builder.Services.AddSingleton<AnimeIndex.Api.Infrastructure.Resolvers.IHosterResolver, AnimeIndex.Api.Infrastructure.Resolvers.Mp4UploadResolver>();
+    builder.Services.AddSingleton<AnimeIndex.Api.Infrastructure.Resolvers.IHosterResolver, AnimeIndex.Api.Infrastructure.Resolvers.OkruResolver>();
+    builder.Services.AddSingleton<AnimeIndex.Api.Infrastructure.Resolvers.IHosterResolver, AnimeIndex.Api.Infrastructure.Resolvers.StreamwishResolver>();
+    builder.Services.AddSingleton<AnimeIndex.Api.Infrastructure.Resolvers.IHosterResolver, AnimeIndex.Api.Infrastructure.Resolvers.VidhideResolver>();
+    builder.Services.AddSingleton<AnimeIndex.Api.Infrastructure.Resolvers.ResolverRegistry>();
+
+    // ─── SeekStreaming upload pipeline ────────────────────
+    builder.Services.AddSingleton<SeekStreamingClient>();
+    builder.Services.AddScoped<SeekStreamingUploadService>();
 
     // ─── Scrape strategies (all IScrapeStrategy impls) ────
     // Source1 (AnimeFlv) removed — consistently blocked by Cloudflare, 0 data indexed.

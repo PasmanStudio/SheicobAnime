@@ -11,10 +11,11 @@ using System.Text.Json;
 namespace AnimeIndex.Scraper.Jobs;
 
 /// <summary>
-/// Two-pass backfill job for full historical scrape — pure HTTP, no Playwright.
+/// Three-pass backfill job for full historical scrape — pure HTTP, no Playwright.
 /// Retries disabled — long-running job; ScrapeSchedulerJob handles recovery.
 /// Pass 1: Crawl all directory pages to discover every series slug.
 /// Pass 2: For each series needing enrichment, scrape detail + episodes + mirrors.
+/// Pass 3: Upload episodes without a SeekStreaming mirror to SeekStreaming (own embed URL).
 /// Supports resume from last progress on restart.
 /// </summary>
 [AutomaticRetry(Attempts = 0)]
@@ -23,6 +24,7 @@ public class BackfillJob(
     UpsertPipelineService upsert,
     JkAnimeHttpClient http,
     DeadLetterAlerter alerter,
+    SeekStreamingUploadService seekStreaming,
     IConfiguration config,
     ILogger<BackfillJob> logger)
 {
@@ -286,6 +288,11 @@ public class BackfillJob(
                 "Backfill complete — new={S}, enriched={E}, episodes={Ep}, mirrors={M}, skipped={Sk}, failed={F}",
                 newSeriesCount, enrichedCount, episodeTotal, mirrorTotal, skippedCount, failedCount);
 
+            // ═══════════════════════════════════════════════
+            // PASS 3: Upload episodes without a SeekStreaming mirror
+            // ═══════════════════════════════════════════════
+            await RunPass3Async(job, ct);
+
             await alerter.HandleSuccessAsync(scrapeJobId, ct);
         }
         catch (Exception ex)
@@ -346,9 +353,10 @@ public class BackfillJob(
 
     private static bool IsJkAnimeDomain(string url) =>
         url.Contains("jkanime.net", StringComparison.OrdinalIgnoreCase) ||
-        url.Contains("jkdesa.com", StringComparison.OrdinalIgnoreCase);
+        url.Contains("jkdesa.com", StringComparison.OrdinalIgnoreCase) ||
+        url.Contains("jkplayers.com", StringComparison.OrdinalIgnoreCase);
 
-    private static readonly HashSet<string> BlockedProviders = new(StringComparer.OrdinalIgnoreCase) { "mega", "mediafire" };
+    private static readonly HashSet<string> BlockedProviders = new(StringComparer.OrdinalIgnoreCase) { "mega", "mediafire", "desu" };
 
     private static readonly Dictionary<string, short> ProviderPriorities = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -374,4 +382,74 @@ public class BackfillJob(
         "tv" => "tv", "movie" => "movie", "ova" => "ova",
         "ona" => "ona", "special" => "special", _ => "tv"
     };
+
+    // ── Pass 3: SeekStreaming upload ─────────────────────────
+
+    /// <summary>
+    /// Finds episodes that have external mirrors but no 'seekstreaming' mirror,
+    /// then attempts to upload each one to SeekStreaming.
+    /// Processes in batches of 50 with a 2s delay to avoid API rate limiting.
+    /// </summary>
+    private async Task RunPass3Async(ScrapeJob job, CancellationToken ct)
+    {
+        // Query episodes with at least one active external mirror but no SeekStreaming mirror yet.
+        var episodeIds = await db.Database
+            .SqlQueryRaw<Guid>("""
+                SELECT DISTINCT e.id
+                FROM episodes e
+                WHERE EXISTS (
+                    SELECT 1 FROM mirrors m
+                    WHERE m.episode_id = e.id AND m.is_active = true
+                )
+                AND NOT EXISTS (
+                    SELECT 1 FROM mirrors sk
+                    WHERE sk.episode_id = e.id AND sk.provider_name = 'seekstreaming'
+                )
+                ORDER BY e.id
+                """)
+            .ToListAsync(ct);
+
+        if (episodeIds.Count == 0)
+        {
+            logger.LogInformation("Pass 3: no episodes need SeekStreaming upload — skipping");
+            return;
+        }
+
+        logger.LogInformation("Pass 3: {Count} episodes to upload to SeekStreaming", episodeIds.Count);
+        await UpdateProgressAsync(job, $"pass3:0/{episodeIds.Count}", ct);
+
+        const int batchSize = 50;
+        const int delayMs = 2_000;
+        var uploaded = 0;
+        var failed = 0;
+
+        for (var i = 0; i < episodeIds.Count; i++)
+        {
+            if (ct.IsCancellationRequested) break;
+
+            var episodeId = episodeIds[i];
+
+            // Load embed URLs for this episode, ordered by priority.
+            var embedUrls = await db.Mirrors
+                .AsNoTracking()
+                .Where(m => m.EpisodeId == episodeId && m.IsActive)
+                .OrderBy(m => m.Priority)
+                .Select(m => m.EmbedUrl)
+                .ToListAsync(ct);
+
+            var success = await seekStreaming.TryUploadEpisodeAsync(episodeId, embedUrls, ct);
+            if (success) uploaded++; else failed++;
+
+            if ((i + 1) % 10 == 0)
+                await UpdateProgressAsync(job, $"pass3:{i + 1}/{episodeIds.Count},uploaded:{uploaded},failed:{failed}", ct);
+
+            if ((i + 1) % batchSize != 0 && i < episodeIds.Count - 1)
+                await Task.Delay(delayMs, ct);
+        }
+
+        logger.LogInformation(
+            "Pass 3 complete — uploaded={Uploaded}, failed={Failed}, total={Total}",
+            uploaded, failed, episodeIds.Count);
+        await UpdateProgressAsync(job, $"pass3:done:uploaded:{uploaded},failed:{failed}", ct);
+    }
 }

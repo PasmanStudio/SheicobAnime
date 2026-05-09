@@ -71,6 +71,8 @@ export default function EpisodePlayer({
 
   const [resolvableSet, setResolvableSet] = useState<Map<string, ResolvableMirror> | null>(null);
   const [reported, setReported] = useState<Set<string>>(new Set());
+  // When a SeekStreaming mirror exists, collapse external servers by default.
+  const [showAllServers, setShowAllServers] = useState(false);
 
   // Watch progress + resume prompt
   const { initial: progress, canResume, reportProgress, flush } = useWatchProgress(episodeId);
@@ -404,50 +406,84 @@ export default function EpisodePlayer({
       </div>
 
       {/* ── Mirror selector grid (JKAnime table-style) ── */}
-      <div className="bg-neutral-900/80 rounded-b-lg border border-t-0 border-neutral-700/50 overflow-hidden">
-        <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5">
-          {displayEntries.map((entry, i) => {
-            const isSheicob = entry.kind === "sheicob";
-            const selected = i === currentDisplayIdx;
-            const label = isSheicob ? "Sheicob" : entry.mirror.providerName;
-            const quality = isSheicob
-              ? resolvableMirrors[0]?.qualityLabel ?? 0
-              : entry.mirror.qualityLabel;
-            const key = isSheicob ? "sheicob" : entry.mirror.id;
-            return (
-              <button
-                key={key}
-                onClick={() => handleEntrySelect(i)}
-                aria-pressed={selected}
-                className={`px-3 py-3 text-sm font-medium transition-colors text-center border-b border-r border-neutral-700/40 ${
-                  selected
-                    ? isSheicob
-                      ? "bg-gradient-to-br from-amber-500 to-orange-600 text-black"
-                      : "bg-orange-600 text-white"
-                    : isSheicob
-                    ? "bg-amber-950/30 text-amber-300 hover:bg-amber-900/40"
-                    : "bg-neutral-800/50 text-neutral-300 hover:bg-neutral-700/60 hover:text-white"
-                }`}
-              >
-                <span className={`block ${isSheicob ? "font-bold tracking-wide" : "capitalize"}`}>
-                  {label}
-                </span>
-                {quality > 0 && (
-                  <span
-                    className={`block text-[10px] mt-0.5 ${
+      {(() => {
+        const hasSeekStreaming = activeMirrors.some(
+          (m) => m.providerName === "seekstreaming"
+        );
+        // When SeekStreaming is present, show only it until the user expands.
+        const visibleEntries =
+          hasSeekStreaming && !showAllServers
+            ? displayEntries.filter(
+                (e) => e.kind === "sheicob" || (e.kind === "iframe" && e.mirror.providerName === "seekstreaming")
+              )
+            : displayEntries;
+
+        return (
+          <div className="bg-neutral-900/80 rounded-b-lg border border-t-0 border-neutral-700/50 overflow-hidden">
+            <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5">
+              {visibleEntries.map((entry) => {
+                // Map back to the real displayEntries index so handleEntrySelect works correctly.
+                const i = displayEntries.indexOf(entry);
+                const isSheicob = entry.kind === "sheicob";
+                const selected = i === currentDisplayIdx;
+                const label = isSheicob ? "Sheicob" : entry.mirror.providerName;
+                const quality = isSheicob
+                  ? resolvableMirrors[0]?.qualityLabel ?? 0
+                  : entry.mirror.qualityLabel;
+                const key = isSheicob ? "sheicob" : entry.mirror.id;
+                return (
+                  <button
+                    key={key}
+                    onClick={() => handleEntrySelect(i)}
+                    aria-pressed={selected}
+                    className={`px-3 py-3 text-sm font-medium transition-colors text-center border-b border-r border-neutral-700/40 ${
                       selected
-                        ? isSheicob ? "text-black/60" : "text-orange-200"
-                        : isSheicob ? "text-amber-400/60" : "text-neutral-500"
+                        ? isSheicob
+                          ? "bg-gradient-to-br from-amber-500 to-orange-600 text-black"
+                          : "bg-orange-600 text-white"
+                        : isSheicob
+                        ? "bg-amber-950/30 text-amber-300 hover:bg-amber-900/40"
+                        : "bg-neutral-800/50 text-neutral-300 hover:bg-neutral-700/60 hover:text-white"
                     }`}
                   >
-                    {quality}p
-                  </span>
-                )}
+                    <span className={`block ${isSheicob ? "font-bold tracking-wide" : "capitalize"}`}>
+                      {label}
+                    </span>
+                    {quality > 0 && (
+                      <span
+                        className={`block text-[10px] mt-0.5 ${
+                          selected
+                            ? isSheicob ? "text-black/60" : "text-orange-200"
+                            : isSheicob ? "text-amber-400/60" : "text-neutral-500"
+                        }`}
+                      >
+                        {quality}p
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+            {/* Toggle: only show when SeekStreaming is present and there are other servers */}
+            {hasSeekStreaming && displayEntries.length > visibleEntries.length && (
+              <button
+                onClick={() => setShowAllServers(true)}
+                className="w-full py-2 text-xs text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/60 transition-colors border-t border-neutral-700/40"
+              >
+                Ver otros servidores ▼
               </button>
-            );
-          })}
-        </div>
-      </div>
+            )}
+            {hasSeekStreaming && showAllServers && displayEntries.length > 1 && (
+              <button
+                onClick={() => setShowAllServers(false)}
+                className="w-full py-2 text-xs text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/60 transition-colors border-t border-neutral-700/40"
+              >
+                Ocultar otros servidores ▲
+              </button>
+            )}
+          </div>
+        );
+      })()}
     </div>
   );
 }

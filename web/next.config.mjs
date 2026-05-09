@@ -3,12 +3,12 @@ import { withSentryConfig } from "@sentry/nextjs";
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   images: {
-    remotePatterns: [
-      {
-        protocol: "https",
-        hostname: "**",
-      },
-    ],
+    // Serve cover images directly from the source CDN (cdn.jkdesa.com, etc.)
+    // instead of proxying through Vercel's image optimization pipeline.
+    // This eliminates the Vercel → CDN → Vercel double-hop that adds 400-800ms
+    // of latency per image. WebP conversion is skipped but covers are already
+    // compressed JPEGs so the tradeoff is worth it.
+    unoptimized: true,
   },
 };
 

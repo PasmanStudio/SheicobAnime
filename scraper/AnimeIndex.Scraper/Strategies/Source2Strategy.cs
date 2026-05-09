@@ -14,6 +14,7 @@ public sealed class Source2Strategy(
     AppDbContext db,
     UpsertPipelineService upsert,
     JkAnimeHttpClient http,
+    SeekStreamingUploadService? seekStreaming,
     IConfiguration config,
     ILogger<Source2Strategy> logger) : IScrapeStrategy
 {
@@ -226,6 +227,10 @@ public sealed class Source2Strategy(
                     mirrorCount++;
                 }
 
+                // Upload to SeekStreaming (own mirror, priority=0) — non-blocking on failure.
+                if (mirrorUrls.Count > 0)
+                    await (seekStreaming?.TryUploadEpisodeAsync(episodeId, mirrorUrls, ct) ?? Task.FromResult(false));
+
                 // Heartbeat after every episode to prevent stuck-job detection
                 // killing active jobs that have many episodes.
                 await UpdateHeartbeatAsync();
@@ -367,11 +372,12 @@ public sealed class Source2Strategy(
 
     private static bool IsJkAnimeDomain(string url) =>
         url.Contains("jkanime.net", StringComparison.OrdinalIgnoreCase) ||
-        url.Contains("jkdesa.com", StringComparison.OrdinalIgnoreCase);
+        url.Contains("jkdesa.com", StringComparison.OrdinalIgnoreCase) ||
+        url.Contains("jkplayers.com", StringComparison.OrdinalIgnoreCase);
 
     private static readonly HashSet<string> BlockedProviders = new(StringComparer.OrdinalIgnoreCase)
     {
-        "mega", "mediafire",
+        "mega", "mediafire", "desu",
     };
 
     private static readonly Dictionary<string, short> ProviderPriorities = new(StringComparer.OrdinalIgnoreCase)

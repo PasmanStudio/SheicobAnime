@@ -221,6 +221,7 @@ try
     builder.Services.AddSingleton<IHosterResolver, VidhideResolver>();
     builder.Services.AddSingleton<IHosterResolver, OkruResolver>();
     builder.Services.AddSingleton<IHosterResolver, StreamwishResolver>();
+    builder.Services.AddSingleton<IHosterResolver, VoeResolver>();
     builder.Services.AddSingleton<ResolverRegistry>();
 
     // ─── Streaming proxy (signed HMAC) ──────────────────

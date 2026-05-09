@@ -51,6 +51,7 @@ jobs:
           DATABASE_URL:  ${{ secrets.DATABASE_URL }}
           REDIS_URL:     ${{ secrets.REDIS_URL }}
           HANGFIRE_DASHBOARD_PASSWORD: ${{ secrets.HANGFIRE_DASHBOARD_PASSWORD }}
+          SeekStreaming__ApiKey: ${{ secrets.SEEKSTREAMING_API_KEY }}
           # Speed up scheduler: check every 30s (default is 15s but let's be explicit)
           Source2__DelayMs: "2000"
           # Force scheduler to fire immediately on startup (override 2am cron for GHA runs)
