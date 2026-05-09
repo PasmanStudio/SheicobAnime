@@ -1,3 +1,4 @@
+using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.Logging;
@@ -5,18 +6,20 @@ using Microsoft.Extensions.Logging;
 namespace AnimeIndex.Scraper.Infrastructure;
 
 /// <summary>
-/// HTTP client for the SeekStreaming API.
-/// Supports remote URL upload: passes a direct video URL and SeekStreaming fetches it.
-/// API docs pattern: GET /api/upload/url?key=KEY&amp;url=VIDEO_URL → { status:200, result:{ filecode:"xxx" } }
-/// Embed URL: https://seekstreaming.com/e/{filecode}
+/// HTTP client for the SeekStreaming API v1.
+/// Auth: header "api-token: KEY"
 ///
-/// The API key is read from configuration key "SeekStreaming:ApiKey".
-/// NEVER hardcode the key — always inject via env var SEEKSTREAMING__APIKEY.
+/// Upload flow (async):
+///   1. POST /api/v1/video/advance-upload  { url, name } → { id: "task_id" }
+///   2. Poll GET /api/v1/video/advance-upload/{task_id} until status == "Completed"
+///   3. Task response contains videos[] with video IDs
+///   4. Embed URL: https://seekstreaming.com/e/{videoId}
+///
+/// Config key: "SeekStreaming:ApiKey"  (env var: SEEKSTREAMING__APIKEY)
 /// </summary>
 public sealed class SeekStreamingClient
 {
     private readonly HttpClient _http;
-    private readonly string _apiKey;
     private readonly string _baseUrl;
     private readonly ILogger<SeekStreamingClient> _logger;
 
@@ -31,100 +34,161 @@ public sealed class SeekStreamingClient
         ILogger<SeekStreamingClient> logger)
     {
         _logger = logger;
-        _http = httpFactory.CreateClient("seekstreaming");
 
-        _apiKey = config["SeekStreaming:ApiKey"]
+        var apiKey = config["SeekStreaming:ApiKey"]
             ?? throw new InvalidOperationException(
                 "SeekStreaming:ApiKey is not configured. Set env var SEEKSTREAMING__APIKEY.");
 
         _baseUrl = config["SeekStreaming:BaseUrl"]?.TrimEnd('/') ?? "https://seekstreaming.com";
+
+        _http = httpFactory.CreateClient("seekstreaming");
+        _http.DefaultRequestHeaders.TryAddWithoutValidation("api-token", apiKey);
     }
 
     /// <summary>
-    /// Initiates a remote URL upload. SeekStreaming fetches the video from <paramref name="videoUrl"/>.
-    /// Returns the filecode (e.g. "fb5asfuj2snh") on success, or null if the upload fails after retries.
-    /// The filecode is immediately available even while the video is still transcoding.
+    /// Submits a remote URL upload task and waits up to <paramref name="pollTimeoutMinutes"/> minutes
+    /// for transcoding to complete. Returns the embed URL on success, or null on failure/timeout.
     /// </summary>
-    public async Task<string?> UploadFromUrlAsync(string videoUrl, CancellationToken ct = default)
+    public async Task<string?> UploadFromUrlAsync(
+        string videoUrl,
+        string? name = null,
+        int pollTimeoutMinutes = 10,
+        CancellationToken ct = default)
+    {
+        // Step 1: submit the task
+        var taskId = await SubmitTaskAsync(videoUrl, name, ct);
+        if (taskId is null) return null;
+
+        _logger.LogInformation(
+            "SeekStreaming task submitted: taskId={TaskId} for {VideoUrl}", taskId, videoUrl);
+
+        // Step 2: poll until Completed or timeout
+        var videoId = await PollTaskAsync(taskId, pollTimeoutMinutes, ct);
+        if (videoId is null)
+        {
+            _logger.LogWarning(
+                "SeekStreaming task {TaskId} did not complete within {Timeout} minutes for {VideoUrl}",
+                taskId, pollTimeoutMinutes, videoUrl);
+            return null;
+        }
+
+        var embedUrl = GetEmbedUrl(videoId);
+        _logger.LogInformation(
+            "SeekStreaming upload complete: taskId={TaskId} videoId={VideoId} embedUrl={EmbedUrl}",
+            taskId, videoId, embedUrl);
+        return embedUrl;
+    }
+
+    private async Task<string?> SubmitTaskAsync(string videoUrl, string? name, CancellationToken ct)
     {
         const int maxAttempts = 3;
-        const int backoffMs = 3_000;
 
         for (var attempt = 1; attempt <= maxAttempts; attempt++)
         {
             try
             {
-                var url = $"{_baseUrl}/api/upload/url?key={Uri.EscapeDataString(_apiKey)}&url={Uri.EscapeDataString(videoUrl)}";
-
-                using var req = new HttpRequestMessage(HttpMethod.Get, url);
-                using var res = await _http.SendAsync(req, ct);
+                var body = new { url = videoUrl, name = name ?? videoUrl };
+                using var res = await _http.PostAsJsonAsync(
+                    $"{_baseUrl}/api/v1/video/advance-upload", body, ct);
 
                 if (!res.IsSuccessStatusCode)
                 {
+                    var err = await res.Content.ReadAsStringAsync(ct);
                     _logger.LogWarning(
-                        "SeekStreaming upload/url returned {Status} (attempt {Attempt}/{Max}) for {VideoUrl}",
-                        (int)res.StatusCode, attempt, maxAttempts, videoUrl);
+                        "SeekStreaming submit returned {Status} (attempt {Attempt}/{Max}): {Body}",
+                        (int)res.StatusCode, attempt, maxAttempts,
+                        err.Length > 200 ? err[..200] : err);
 
                     if (attempt < maxAttempts)
-                        await Task.Delay(backoffMs * attempt, ct);
-
+                        await Task.Delay(3_000 * attempt, ct);
                     continue;
                 }
 
-                var body = await res.Content.ReadAsStringAsync(ct);
-                var response = JsonSerializer.Deserialize<SeekStreamingUploadResponse>(body, JsonOpts);
+                var response = await res.Content.ReadFromJsonAsync<AdvanceUploadCreateResponse>(
+                    JsonOpts, ct);
 
-                if (response?.Status == 200 && !string.IsNullOrWhiteSpace(response.Result?.Filecode))
-                {
-                    _logger.LogInformation(
-                        "SeekStreaming upload succeeded: filecode={Filecode} for {VideoUrl}",
-                        response.Result.Filecode, videoUrl);
-                    return response.Result.Filecode;
-                }
+                if (!string.IsNullOrWhiteSpace(response?.Id))
+                    return response.Id;
 
-                _logger.LogWarning(
-                    "SeekStreaming upload/url unexpected response (attempt {Attempt}/{Max}): {Body}",
-                    attempt, maxAttempts, body.Length > 200 ? body[..200] : body);
+                _logger.LogWarning("SeekStreaming submit: no task id in response (attempt {Attempt})", attempt);
             }
             catch (TaskCanceledException) when (ct.IsCancellationRequested)
             {
-                return null; // job cancelled — stop quietly
+                return null;
             }
             catch (Exception ex)
             {
                 _logger.LogWarning(ex,
-                    "SeekStreaming upload attempt {Attempt}/{Max} threw for {VideoUrl}",
-                    attempt, maxAttempts, videoUrl);
+                    "SeekStreaming submit attempt {Attempt}/{Max} threw", attempt, maxAttempts);
             }
 
             if (attempt < maxAttempts)
-                await Task.Delay(backoffMs * attempt, ct);
+                await Task.Delay(3_000 * attempt, ct);
         }
 
-        _logger.LogError("SeekStreaming upload failed after {Max} attempts for {VideoUrl}", maxAttempts, videoUrl);
+        _logger.LogError("SeekStreaming submit failed after {Max} attempts for {VideoUrl}",
+            maxAttempts, videoUrl);
         return null;
     }
 
-    /// <summary>
-    /// Builds the embed URL from a filecode.
-    /// Example: filecode "fb5asfuj2snh" → "https://seekstreaming.com/e/fb5asfuj2snh"
-    /// </summary>
-    public string GetEmbedUrl(string filecode) => $"{_baseUrl}/e/{filecode}";
+    private async Task<string?> PollTaskAsync(string taskId, int timeoutMinutes, CancellationToken ct)
+    {
+        var deadline = DateTime.UtcNow.AddMinutes(timeoutMinutes);
+        const int pollIntervalMs = 30_000; // 30 seconds between polls
+
+        while (DateTime.UtcNow < deadline && !ct.IsCancellationRequested)
+        {
+            await Task.Delay(pollIntervalMs, ct);
+
+            try
+            {
+                using var res = await _http.GetAsync(
+                    $"{_baseUrl}/api/v1/video/advance-upload/{taskId}", ct);
+
+                if (!res.IsSuccessStatusCode)
+                {
+                    _logger.LogDebug("SeekStreaming poll {TaskId}: HTTP {Status}", taskId, (int)res.StatusCode);
+                    continue;
+                }
+
+                var task = await res.Content.ReadFromJsonAsync<AdvanceUploadTaskResponse>(JsonOpts, ct);
+                _logger.LogDebug("SeekStreaming poll {TaskId}: status={Status}", taskId, task?.Status);
+
+                if (task?.Status == "Completed" && task.Videos?.Length > 0)
+                    return task.Videos[0]; // use first video ID
+
+                if (task?.Status == "Failed" || task?.Status == "Canceled")
+                {
+                    _logger.LogWarning(
+                        "SeekStreaming task {TaskId} ended with status={Status} error={Error}",
+                        taskId, task.Status, task.Error);
+                    return null;
+                }
+            }
+            catch (TaskCanceledException) when (ct.IsCancellationRequested)
+            {
+                return null;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "SeekStreaming poll {TaskId} threw, will retry", taskId);
+            }
+        }
+
+        return null; // timeout
+    }
+
+    /// <summary>Builds the embed URL from a video ID.</summary>
+    public string GetEmbedUrl(string videoId) => $"{_baseUrl}/e/{videoId}";
 
     // ── JSON models ──────────────────────────────────────────────────────────
 
-    private sealed class SeekStreamingUploadResponse
-    {
-        [JsonPropertyName("status")]
-        public int Status { get; set; }
+    private sealed record AdvanceUploadCreateResponse(
+        [property: JsonPropertyName("id")] string? Id);
 
-        [JsonPropertyName("result")]
-        public SeekStreamingUploadResult? Result { get; set; }
-    }
-
-    private sealed class SeekStreamingUploadResult
-    {
-        [JsonPropertyName("filecode")]
-        public string? Filecode { get; set; }
-    }
+    private sealed record AdvanceUploadTaskResponse(
+        [property: JsonPropertyName("id")] string? Id,
+        [property: JsonPropertyName("status")] string? Status,
+        [property: JsonPropertyName("error")] string? Error,
+        [property: JsonPropertyName("videos")] string[]? Videos);
 }

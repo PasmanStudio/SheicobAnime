@@ -103,10 +103,8 @@ public sealed class SeekStreamingUploadService
                     "Episode {EpisodeId}: resolved {Provider} → {Format} {ResolvedUrl}",
                     episodeId, provider, resolved.Format, resolved.Url[..Math.Min(80, resolved.Url.Length)]);
 
-                var filecode = await _seekStreaming.UploadFromUrlAsync(resolved.Url, ct);
-                if (filecode is null) continue;
-
-                var seekEmbedUrl = _seekStreaming.GetEmbedUrl(filecode);
+                var seekEmbedUrl = await _seekStreaming.UploadFromUrlAsync(resolved.Url, ct: ct);
+                if (seekEmbedUrl is null) continue;
 
                 await _upsert.UpsertMirrorAsync(new MirrorScrapedData(
                     EpisodeId: episodeId,
@@ -116,8 +114,8 @@ public sealed class SeekStreamingUploadService
                     Priority: 0), ct);
 
                 _logger.LogInformation(
-                    "Episode {EpisodeId}: SeekStreaming mirror upserted (filecode={Filecode}, source={Provider})",
-                    episodeId, filecode, provider);
+                    "Episode {EpisodeId}: SeekStreaming mirror upserted (embedUrl={EmbedUrl}, source={Provider})",
+                    episodeId, seekEmbedUrl, provider);
 
                 return true;
             }
