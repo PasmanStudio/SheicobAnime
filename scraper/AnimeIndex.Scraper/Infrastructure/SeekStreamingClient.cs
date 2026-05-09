@@ -10,17 +10,25 @@ namespace AnimeIndex.Scraper.Infrastructure;
 /// HTTP client for the SeekStreaming API v1.
 /// Auth: header "api-token: KEY"
 ///
-/// Upload flow (async):
-///   1. POST /api/v1/video/advance-upload  { url, name } → { id: "task_id" }
-///   2. Poll GET /api/v1/video/advance-upload/{task_id} until status == "Completed"
-///   3. Task response contains videos[] with video IDs
- ///   4. Embed URL: https://sheicobanime.seekplayer.me/#{videoId}
+/// Upload flow (tus direct upload):
+///   1. GET /api/v1/video/upload          → { tusUrl, accessToken }
+///   2. HEAD sourceUrl                    → Content-Length (file size)
+///   3. POST tusUrl                       → 201 + Location header (upload slot)
+///   4. PATCH Location in 50 MB chunks   → 204 per chunk (stream download → upload)
+///   5. Poll GET /api/v1/video/manage    → find video by name, wait for status=="Active"
+///   6. Embed URL: https://sheicobanime.seekplayer.me/#{videoId}
+///
+/// Named HttpClients required:
+///   "seekstreaming"   — API calls (base URL + api-token header)
+///   "seek-download"   — Downloading source MP4 (User-Agent set, 60-min timeout)
+///   "seek-tus"        — tus PATCH uploads (60-min timeout)
 ///
 /// Config key: "SeekStreaming:ApiKey"  (env var: SEEKSTREAMING__APIKEY)
 /// </summary>
 public sealed class SeekStreamingClient
 {
     private readonly HttpClient _http;
+    private readonly IHttpClientFactory _httpFactory;
     private readonly string _baseUrl;
     private readonly ILogger<SeekStreamingClient> _logger;
 
@@ -35,6 +43,7 @@ public sealed class SeekStreamingClient
         ILogger<SeekStreamingClient> logger)
     {
         _logger = logger;
+        _httpFactory = httpFactory;
 
         var apiKey = config["SeekStreaming:ApiKey"]
             ?? throw new InvalidOperationException(
@@ -47,128 +56,193 @@ public sealed class SeekStreamingClient
     }
 
     /// <summary>
-    /// Submits a remote URL upload task and waits up to <paramref name="pollTimeoutMinutes"/> minutes
-    /// for transcoding to complete. Returns the embed URL on success, or null on failure/timeout.
+    /// Downloads <paramref name="directVideoUrl"/> and uploads it to SeekStreaming via tus protocol.
+    /// Our scraper fetches the bytes itself, bypassing SeekStreaming's remote-URL downloader
+    /// (which fails on port 183 and IP-bound HLS tokens).
+    /// Returns the embed URL on success, null on failure.
     /// </summary>
     public async Task<string?> UploadFromUrlAsync(
-        string videoUrl,
+        string directVideoUrl,
         string? name = null,
         int pollTimeoutMinutes = 10,
         CancellationToken ct = default)
     {
-        // Step 1: submit the task
-        var taskId = await SubmitTaskAsync(videoUrl, name, ct);
-        if (taskId is null) return null;
+        // ─── Step 1: get tus credentials ──────────────────────────
+        TusCredentials? creds;
+        try
+        {
+            using var credResp = await _http.GetAsync($"{_baseUrl}/api/v1/video/upload", ct);
+            credResp.EnsureSuccessStatusCode();
+            var credJson = await credResp.Content.ReadAsStringAsync(ct);
+            creds = JsonSerializer.Deserialize<TusCredentials>(credJson, JsonOpts);
+        }
+        catch (Exception ex) when (ex is not TaskCanceledException { CancellationToken.IsCancellationRequested: true })
+        {
+            _logger.LogWarning(ex, "SeekStreaming: failed to get tus credentials");
+            return null;
+        }
+
+        if (creds is null || string.IsNullOrEmpty(creds.TusUrl) || string.IsNullOrEmpty(creds.AccessToken))
+        {
+            _logger.LogWarning("SeekStreaming: invalid tus credentials response");
+            return null;
+        }
+
+        // ─── Step 2: HEAD the source URL → file size ──────────────
+        long fileSize;
+        using (var dlClient = _httpFactory.CreateClient("seek-download"))
+        {
+            try
+            {
+                using var headReq = new HttpRequestMessage(HttpMethod.Head, directVideoUrl);
+                using var headResp = await dlClient.SendAsync(headReq, ct);
+                headResp.EnsureSuccessStatusCode();
+                fileSize = headResp.Content.Headers.ContentLength
+                    ?? throw new InvalidOperationException($"No Content-Length from {directVideoUrl}");
+            }
+            catch (Exception ex) when (ex is not TaskCanceledException { CancellationToken.IsCancellationRequested: true })
+            {
+                _logger.LogWarning(ex, "SeekStreaming: HEAD failed for {Url}", directVideoUrl);
+                return null;
+            }
+        }
+
+        // ─── Step 3: create tus upload slot ───────────────────────
+        var filename = $"sa_{Guid.NewGuid().ToString("N")[..8]}_{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}.mp4";
+        string uploadUrl;
+        try
+        {
+            var metadata = BuildTusMetadata(creds.AccessToken, filename, "video/mp4");
+            using var tusClient = _httpFactory.CreateClient("seek-tus");
+            using var createReq = new HttpRequestMessage(HttpMethod.Post, creds.TusUrl);
+            createReq.Headers.TryAddWithoutValidation("Tus-Resumable", "1.0.0");
+            createReq.Headers.TryAddWithoutValidation("Upload-Length", fileSize.ToString());
+            createReq.Headers.TryAddWithoutValidation("Upload-Metadata", metadata);
+            createReq.Content = new ByteArrayContent([]);
+            createReq.Content.Headers.ContentLength = 0;
+
+            using var createResp = await tusClient.SendAsync(createReq, ct);
+            createResp.EnsureSuccessStatusCode();
+            uploadUrl = createResp.Headers.Location?.ToString()
+                ?? throw new InvalidOperationException("Tus create returned no Location header");
+        }
+        catch (Exception ex) when (ex is not TaskCanceledException { CancellationToken.IsCancellationRequested: true })
+        {
+            _logger.LogWarning(ex, "SeekStreaming: failed to create tus upload slot");
+            return null;
+        }
 
         _logger.LogInformation(
-            "SeekStreaming task submitted: taskId={TaskId} for {VideoUrl}", taskId, videoUrl);
+            "SeekStreaming tus upload started: filename={Filename} size={Size} url={Url}",
+            filename, fileSize, directVideoUrl);
 
-        // Step 2: poll until Completed or timeout
-        var videoId = await PollTaskAsync(taskId, pollTimeoutMinutes, ct);
+        // ─── Step 4: stream download → tus PATCH in 50 MB chunks ──
+        const long ChunkSize = 52_428_800L; // 50 MB — SeekStreaming recommended
+        try
+        {
+            using var dlClient = _httpFactory.CreateClient("seek-download");
+            using var tusClient = _httpFactory.CreateClient("seek-tus");
+
+            using var downloadResp = await dlClient.GetAsync(
+                directVideoUrl, HttpCompletionOption.ResponseHeadersRead, ct);
+            downloadResp.EnsureSuccessStatusCode();
+
+            await using var downloadStream = await downloadResp.Content.ReadAsStreamAsync(ct);
+            var buffer = new byte[ChunkSize];
+            long offset = 0;
+
+            while (offset < fileSize && !ct.IsCancellationRequested)
+            {
+                var toRead = (int)Math.Min(ChunkSize, fileSize - offset);
+                var bytesRead = 0;
+                while (bytesRead < toRead)
+                {
+                    var n = await downloadStream.ReadAsync(buffer.AsMemory(bytesRead, toRead - bytesRead), ct);
+                    if (n == 0) break; // unexpected EOF
+                    bytesRead += n;
+                }
+                if (bytesRead == 0) break;
+
+                using var patchReq = new HttpRequestMessage(HttpMethod.Patch, uploadUrl);
+                patchReq.Headers.TryAddWithoutValidation("Tus-Resumable", "1.0.0");
+                patchReq.Headers.TryAddWithoutValidation("Upload-Offset", offset.ToString());
+                patchReq.Content = new ByteArrayContent(buffer, 0, bytesRead);
+                patchReq.Content.Headers.ContentType =
+                    MediaTypeHeaderValue.Parse("application/offset+octet-stream");
+                patchReq.Content.Headers.ContentLength = bytesRead;
+
+                using var patchResp = await tusClient.SendAsync(patchReq, ct);
+                patchResp.EnsureSuccessStatusCode();
+                offset += bytesRead;
+
+                _logger.LogDebug(
+                    "SeekStreaming tus chunk: {Offset}/{Total} bytes ({Pct:F0}%)",
+                    offset, fileSize, 100.0 * offset / fileSize);
+            }
+        }
+        catch (TaskCanceledException) when (ct.IsCancellationRequested)
+        {
+            return null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "SeekStreaming: tus upload failed for {Url}", directVideoUrl);
+            return null;
+        }
+
+        _logger.LogInformation(
+            "SeekStreaming tus transfer complete ({Size} bytes) for {Url} — polling for transcoding",
+            fileSize, directVideoUrl);
+
+        // ─── Step 5: poll video/manage until Active ───────────────
+        var videoId = await PollForVideoAsync(filename, pollTimeoutMinutes, ct);
         if (videoId is null)
         {
             _logger.LogWarning(
-                "SeekStreaming task {TaskId} did not complete within {Timeout} minutes for {VideoUrl}",
-                taskId, pollTimeoutMinutes, videoUrl);
+                "SeekStreaming: video {Filename} not Active after {Timeout} min",
+                filename, pollTimeoutMinutes);
             return null;
         }
 
         var embedUrl = GetEmbedUrl(videoId);
         _logger.LogInformation(
-            "SeekStreaming upload complete: taskId={TaskId} videoId={VideoId} embedUrl={EmbedUrl}",
-            taskId, videoId, embedUrl);
+            "SeekStreaming upload complete: filename={Filename} videoId={VideoId} embed={EmbedUrl}",
+            filename, videoId, embedUrl);
         return embedUrl;
     }
 
-    private async Task<string?> SubmitTaskAsync(string videoUrl, string? name, CancellationToken ct)
-    {
-        const int maxAttempts = 3;
-
-        for (var attempt = 1; attempt <= maxAttempts; attempt++)
-        {
-            try
-            {
-                var bodyObj = new { url = videoUrl, name = name ?? videoUrl };
-                var json = JsonSerializer.Serialize(bodyObj);
-                // SeekStreaming rejects Content-Type: application/json; charset=utf-8
-                // (PostAsJsonAsync adds charset automatically) — use StringContent + explicit MediaType
-                using var content = new StringContent(json, Encoding.UTF8);
-                content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
-                using var res = await _http.PostAsync(
-                    $"{_baseUrl}/api/v1/video/advance-upload", content, ct);
-
-                if (!res.IsSuccessStatusCode)
-                {
-                    var err = await res.Content.ReadAsStringAsync(ct);
-                    _logger.LogWarning(
-                        "SeekStreaming submit returned {Status} (attempt {Attempt}/{Max}): {Body}",
-                        (int)res.StatusCode, attempt, maxAttempts,
-                        err.Length > 200 ? err[..200] : err);
-
-                    if (attempt < maxAttempts)
-                        await Task.Delay(3_000 * attempt, ct);
-                    continue;
-                }
-
-                var responseJson = await res.Content.ReadAsStringAsync(ct);
-                var response = JsonSerializer.Deserialize<AdvanceUploadCreateResponse>(responseJson, JsonOpts);
-
-                if (!string.IsNullOrWhiteSpace(response?.Id))
-                    return response.Id;
-
-                _logger.LogWarning("SeekStreaming submit: no task id in response (attempt {Attempt})", attempt);
-            }
-            catch (TaskCanceledException) when (ct.IsCancellationRequested)
-            {
-                return null;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex,
-                    "SeekStreaming submit attempt {Attempt}/{Max} threw", attempt, maxAttempts);
-            }
-
-            if (attempt < maxAttempts)
-                await Task.Delay(3_000 * attempt, ct);
-        }
-
-        _logger.LogError("SeekStreaming submit failed after {Max} attempts for {VideoUrl}",
-            maxAttempts, videoUrl);
-        return null;
-    }
-
-    private async Task<string?> PollTaskAsync(string taskId, int timeoutMinutes, CancellationToken ct)
+    private async Task<string?> PollForVideoAsync(string filename, int timeoutMinutes, CancellationToken ct)
     {
         var deadline = DateTime.UtcNow.AddMinutes(timeoutMinutes);
-        const int pollIntervalMs = 30_000; // 30 seconds between polls
+        const int PollIntervalMs = 15_000; // 15 s — transcoding is fast for most files
 
         while (DateTime.UtcNow < deadline && !ct.IsCancellationRequested)
         {
-            await Task.Delay(pollIntervalMs, ct);
-
+            await Task.Delay(PollIntervalMs, ct);
             try
             {
-                using var res = await _http.GetAsync(
-                    $"{_baseUrl}/api/v1/video/advance-upload/{taskId}", ct);
+                using var res = await _http.GetAsync($"{_baseUrl}/api/v1/video/manage?limit=20", ct);
+                if (!res.IsSuccessStatusCode) continue;
 
-                if (!res.IsSuccessStatusCode)
+                var json = await res.Content.ReadAsStringAsync(ct);
+                var list = JsonSerializer.Deserialize<VideoManageResponse>(json, JsonOpts);
+
+                var match = list?.Data?.FirstOrDefault(v =>
+                    filename.Equals(v.Name, StringComparison.OrdinalIgnoreCase));
+
+                if (match is null) continue;
+
+                _logger.LogDebug(
+                    "SeekStreaming poll: found {Name} id={Id} status={Status}",
+                    match.Name, match.Id, match.Status);
+
+                if (string.Equals(match.Status, "Active", StringComparison.OrdinalIgnoreCase))
+                    return match.Id;
+
+                // Treat terminal failure states as immediate exit
+                if (string.Equals(match.Status, "Deleted", StringComparison.OrdinalIgnoreCase))
                 {
-                    _logger.LogDebug("SeekStreaming poll {TaskId}: HTTP {Status}", taskId, (int)res.StatusCode);
-                    continue;
-                }
-
-                var taskJson = await res.Content.ReadAsStringAsync(ct);
-                var task = JsonSerializer.Deserialize<AdvanceUploadTaskResponse>(taskJson, JsonOpts);
-                _logger.LogDebug("SeekStreaming poll {TaskId}: status={Status}", taskId, task?.Status);
-
-                if (task?.Status == "Completed" && task.Videos?.Length > 0)
-                    return task.Videos[0]; // use first video ID
-
-                if (task?.Status == "Failed" || task?.Status == "Canceled")
-                {
-                    _logger.LogWarning(
-                        "SeekStreaming task {TaskId} ended with status={Status} error={Error}",
-                        taskId, task.Status, task.Error);
+                    _logger.LogWarning("SeekStreaming: video {Name} was Deleted during transcoding", filename);
                     return null;
                 }
             }
@@ -178,24 +252,33 @@ public sealed class SeekStreamingClient
             }
             catch (Exception ex)
             {
-                _logger.LogDebug(ex, "SeekStreaming poll {TaskId} threw, will retry", taskId);
+                _logger.LogDebug(ex, "SeekStreaming poll threw, will retry");
             }
         }
 
-        return null; // timeout
+        return null;
     }
 
     /// <summary>Builds the embed URL from a video ID.</summary>
     public string GetEmbedUrl(string videoId) => $"https://sheicobanime.seekplayer.me/#{videoId}";
 
+    private static string BuildTusMetadata(string accessToken, string filename, string mimeType)
+    {
+        static string B64(string s) => Convert.ToBase64String(Encoding.UTF8.GetBytes(s));
+        return $"accessToken {B64(accessToken)},filename {B64(filename)},filetype {B64(mimeType)}";
+    }
+
     // ── JSON models ──────────────────────────────────────────────────────────
 
-    private sealed record AdvanceUploadCreateResponse(
-        [property: JsonPropertyName("id")] string? Id);
+    private sealed record TusCredentials(
+        [property: JsonPropertyName("tusUrl")] string? TusUrl,
+        [property: JsonPropertyName("accessToken")] string? AccessToken);
 
-    private sealed record AdvanceUploadTaskResponse(
+    private sealed record VideoManageResponse(
+        [property: JsonPropertyName("data")] VideoManageItem[]? Data);
+
+    private sealed record VideoManageItem(
         [property: JsonPropertyName("id")] string? Id,
-        [property: JsonPropertyName("status")] string? Status,
-        [property: JsonPropertyName("error")] string? Error,
-        [property: JsonPropertyName("videos")] string[]? Videos);
+        [property: JsonPropertyName("name")] string? Name,
+        [property: JsonPropertyName("status")] string? Status);
 }

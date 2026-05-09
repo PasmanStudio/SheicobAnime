@@ -15,7 +15,7 @@ namespace AnimeIndex.Scraper.Jobs;
 /// Retries disabled — long-running job; ScrapeSchedulerJob handles recovery.
 /// Pass 1: Crawl all directory pages to discover every series slug.
 /// Pass 2: For each series needing enrichment, scrape detail + episodes + mirrors.
-/// Pass 3: Upload episodes without a SeekStreaming mirror to SeekStreaming (own embed URL).
+/// Pass 3: Upload episodes to SeekStreaming via tus direct upload (scraper fetches + streams bytes).
 /// Supports resume from last progress on restart.
 /// </summary>
 [AutomaticRetry(Attempts = 0)]
@@ -289,7 +289,7 @@ public class BackfillJob(
                 newSeriesCount, enrichedCount, episodeTotal, mirrorTotal, skippedCount, failedCount);
 
             // ═══════════════════════════════════════════════
-            // PASS 3: Upload episodes without a SeekStreaming mirror
+            // PASS 3: Upload to SeekStreaming via tus
             // ═══════════════════════════════════════════════
             await RunPass3Async(job, ct);
 

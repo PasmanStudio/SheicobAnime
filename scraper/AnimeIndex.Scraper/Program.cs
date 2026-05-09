@@ -92,9 +92,24 @@ try
             "User-Agent",
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36");
     });
+    // SeekStreaming API calls (api-token header added in SeekStreamingClient constructor)
     builder.Services.AddHttpClient("seekstreaming", c =>
     {
+        c.BaseAddress = new Uri("https://seekstreaming.com");
         c.Timeout = TimeSpan.FromSeconds(30);
+    });
+    // Large-file download client for tus upload pipeline (streams source MP4)
+    builder.Services.AddHttpClient("seek-download", c =>
+    {
+        c.Timeout = TimeSpan.FromMinutes(90);
+        c.DefaultRequestHeaders.TryAddWithoutValidation(
+            "User-Agent",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36");
+    });
+    // tus PATCH client — no base URL, generous timeout for large uploads
+    builder.Services.AddHttpClient("seek-tus", c =>
+    {
+        c.Timeout = TimeSpan.FromMinutes(90);
     });
 
     // ─── Scraper services ─────────────────────────────────
@@ -102,6 +117,8 @@ try
     builder.Services.AddScoped<UpsertPipelineService>();
     builder.Services.AddScoped<DeadLetterAlerter>();
     builder.Services.AddScoped<JkAnimeHttpClient>();
+    builder.Services.AddSingleton<SeekStreamingClient>();
+    builder.Services.AddScoped<SeekStreamingUploadService>();
 
     // ─── Hoster resolvers (reuse same impls as API) ───────
     builder.Services.AddSingleton<AnimeIndex.Api.Infrastructure.Resolvers.IHosterResolver, AnimeIndex.Api.Infrastructure.Resolvers.VoeResolver>();
@@ -110,10 +127,6 @@ try
     builder.Services.AddSingleton<AnimeIndex.Api.Infrastructure.Resolvers.IHosterResolver, AnimeIndex.Api.Infrastructure.Resolvers.StreamwishResolver>();
     builder.Services.AddSingleton<AnimeIndex.Api.Infrastructure.Resolvers.IHosterResolver, AnimeIndex.Api.Infrastructure.Resolvers.VidhideResolver>();
     builder.Services.AddSingleton<AnimeIndex.Api.Infrastructure.Resolvers.ResolverRegistry>();
-
-    // ─── SeekStreaming upload pipeline ────────────────────
-    builder.Services.AddSingleton<SeekStreamingClient>();
-    builder.Services.AddScoped<SeekStreamingUploadService>();
 
     // ─── Scrape strategies (all IScrapeStrategy impls) ────
     // Source1 (AnimeFlv) removed — consistently blocked by Cloudflare, 0 data indexed.
