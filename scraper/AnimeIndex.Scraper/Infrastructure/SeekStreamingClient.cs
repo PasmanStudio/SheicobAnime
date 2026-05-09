@@ -14,7 +14,7 @@ namespace AnimeIndex.Scraper.Infrastructure;
 ///   1. POST /api/v1/video/advance-upload  { url, name } → { id: "task_id" }
 ///   2. Poll GET /api/v1/video/advance-upload/{task_id} until status == "Completed"
 ///   3. Task response contains videos[] with video IDs
-///   4. Embed URL: https://seekstreaming.com/e/{videoId}
+ ///   4. Embed URL: https://sheicobanime.seekplayer.me/#{videoId}
 ///
 /// Config key: "SeekStreaming:ApiKey"  (env var: SEEKSTREAMING__APIKEY)
 /// </summary>
@@ -186,7 +186,7 @@ public sealed class SeekStreamingClient
     }
 
     /// <summary>Builds the embed URL from a video ID.</summary>
-    public string GetEmbedUrl(string videoId) => $"{_baseUrl}/e/{videoId}";
+    public string GetEmbedUrl(string videoId) => $"https://sheicobanime.seekplayer.me/#{videoId}";
 
     // ── JSON models ──────────────────────────────────────────────────────────
 
