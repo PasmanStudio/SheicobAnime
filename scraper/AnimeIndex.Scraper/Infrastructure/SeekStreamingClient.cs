@@ -1,4 +1,5 @@
-using System.Net.Http.Json;
+using System.Net.Http.Headers;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.Logging;
@@ -87,9 +88,14 @@ public sealed class SeekStreamingClient
         {
             try
             {
-                var body = new { url = videoUrl, name = name ?? videoUrl };
-                using var res = await _http.PostAsJsonAsync(
-                    $"{_baseUrl}/api/v1/video/advance-upload", body, ct);
+                var bodyObj = new { url = videoUrl, name = name ?? videoUrl };
+                var json = JsonSerializer.Serialize(bodyObj);
+                // SeekStreaming rejects Content-Type: application/json; charset=utf-8
+                // (PostAsJsonAsync adds charset automatically) — use StringContent + explicit MediaType
+                using var content = new StringContent(json, Encoding.UTF8);
+                content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
+                using var res = await _http.PostAsync(
+                    $"{_baseUrl}/api/v1/video/advance-upload", content, ct);
 
                 if (!res.IsSuccessStatusCode)
                 {
@@ -104,8 +110,8 @@ public sealed class SeekStreamingClient
                     continue;
                 }
 
-                var response = await res.Content.ReadFromJsonAsync<AdvanceUploadCreateResponse>(
-                    JsonOpts, ct);
+                var responseJson = await res.Content.ReadAsStringAsync(ct);
+                var response = JsonSerializer.Deserialize<AdvanceUploadCreateResponse>(responseJson, JsonOpts);
 
                 if (!string.IsNullOrWhiteSpace(response?.Id))
                     return response.Id;
@@ -151,7 +157,8 @@ public sealed class SeekStreamingClient
                     continue;
                 }
 
-                var task = await res.Content.ReadFromJsonAsync<AdvanceUploadTaskResponse>(JsonOpts, ct);
+                var taskJson = await res.Content.ReadAsStringAsync(ct);
+                var task = JsonSerializer.Deserialize<AdvanceUploadTaskResponse>(taskJson, JsonOpts);
                 _logger.LogDebug("SeekStreaming poll {TaskId}: status={Status}", taskId, task?.Status);
 
                 if (task?.Status == "Completed" && task.Videos?.Length > 0)
