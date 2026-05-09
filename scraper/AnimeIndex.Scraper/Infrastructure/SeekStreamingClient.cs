@@ -63,7 +63,7 @@ public sealed class SeekStreamingClient
     /// </summary>
     public async Task<string?> UploadFromUrlAsync(
         string directVideoUrl,
-        string? name = null,
+        string? referer = null,
         int pollTimeoutMinutes = 10,
         CancellationToken ct = default)
     {
@@ -94,7 +94,7 @@ public sealed class SeekStreamingClient
         long fileSize;
         using (var dlClient = _httpFactory.CreateClient("seek-download"))
         {
-            fileSize = await GetFileSizeAsync(dlClient, directVideoUrl, ct);
+            fileSize = await GetFileSizeAsync(dlClient, directVideoUrl, referer, ct);
             if (fileSize <= 0)
             {
                 _logger.LogWarning("SeekStreaming: could not determine file size for {Url}", directVideoUrl);
@@ -138,8 +138,11 @@ public sealed class SeekStreamingClient
             using var dlClient = _httpFactory.CreateClient("seek-download");
             using var tusClient = _httpFactory.CreateClient("seek-tus");
 
-            using var downloadResp = await dlClient.GetAsync(
-                directVideoUrl, HttpCompletionOption.ResponseHeadersRead, ct);
+            using var downloadReq = new HttpRequestMessage(HttpMethod.Get, directVideoUrl);
+            if (!string.IsNullOrEmpty(referer))
+                downloadReq.Headers.TryAddWithoutValidation("Referer", referer);
+            using var downloadResp = await dlClient.SendAsync(
+                downloadReq, HttpCompletionOption.ResponseHeadersRead, ct);
             downloadResp.EnsureSuccessStatusCode();
 
             await using var downloadStream = await downloadResp.Content.ReadAsStreamAsync(ct);
@@ -262,15 +265,15 @@ public sealed class SeekStreamingClient
     /// to GET Range:bytes=0-0 and reads the total size from Content-Range.
     /// Returns 0 if both strategies fail.
     /// </summary>
-    private async Task<long> GetFileSizeAsync(HttpClient client, string url, CancellationToken ct)
+    private async Task<long> GetFileSizeAsync(HttpClient client, string url, string? referer, CancellationToken ct)
     {
         // Strategy 1: HEAD
         try
         {
             using var req = new HttpRequestMessage(HttpMethod.Head, url);
-            // Some CDNs require a Referer that matches the embed page origin.
-            // Derive a plausible one from the URL host.
-            if (Uri.TryCreate(url, UriKind.Absolute, out var uri))
+            if (!string.IsNullOrEmpty(referer))
+                req.Headers.TryAddWithoutValidation("Referer", referer);
+            else if (Uri.TryCreate(url, UriKind.Absolute, out var uri))
                 req.Headers.TryAddWithoutValidation("Referer", $"{uri.Scheme}://{uri.Host}/");
             using var resp = await client.SendAsync(req, ct);
             if (resp.IsSuccessStatusCode && resp.Content.Headers.ContentLength is long len and > 0)
@@ -286,7 +289,9 @@ public sealed class SeekStreamingClient
         {
             using var req = new HttpRequestMessage(HttpMethod.Get, url);
             req.Headers.TryAddWithoutValidation("Range", "bytes=0-0");
-            if (Uri.TryCreate(url, UriKind.Absolute, out var uri))
+            if (!string.IsNullOrEmpty(referer))
+                req.Headers.TryAddWithoutValidation("Referer", referer);
+            else if (Uri.TryCreate(url, UriKind.Absolute, out var uri))
                 req.Headers.TryAddWithoutValidation("Referer", $"{uri.Scheme}://{uri.Host}/");
             using var resp = await client.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
 

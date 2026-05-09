@@ -124,7 +124,12 @@ public sealed class SeekStreamingUploadService
                     continue;
                 }
 
-                var seekEmbedUrl = await _seekStreaming.UploadFromUrlAsync(resolved.Url, ct: ct);
+                var seekEmbedUrl = await _seekStreaming.UploadFromUrlAsync(
+                    resolved.Url,
+                    referer: Uri.TryCreate(embedUrl, UriKind.Absolute, out var eu)
+                        ? $"{eu.Scheme}://{eu.Host}/"
+                        : null,
+                    ct: ct);
                 if (seekEmbedUrl is null) continue;
 
                 await _upsert.UpsertMirrorAsync(new MirrorScrapedData(
