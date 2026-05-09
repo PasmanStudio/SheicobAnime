@@ -27,10 +27,11 @@ public sealed class SeekStreamingUploadService
     private readonly UpsertPipelineService _upsert;
     private readonly ILogger<SeekStreamingUploadService> _logger;
 
-    // Resolvers that return direct mp4 (best for SeekStreaming remote upload).
-    // VOE first because it never uses expiring HLS tokens.
+    // Resolvers that return direct MP4 URLs (prioritised for tus upload).
+    // VOE excluded: always returns HLS (.m3u8) from cloud IPs — not downloadable as a single file.
+    // mp4upload first: highest quality, direct .mp4 link (port 183 accessible from GHA).
     private static readonly string[] Mp4FirstOrder =
-        ["voe", "mp4upload", "okru", "yourupload", "sendvid", "streamwish", "vidhide", "filemoon"];
+        ["mp4upload", "okru", "yourupload", "sendvid", "streamwish", "vidhide", "filemoon"];
 
     public SeekStreamingUploadService(
         SeekStreamingClient seekStreaming,
@@ -102,6 +103,16 @@ public sealed class SeekStreamingUploadService
                 _logger.LogDebug(
                     "Episode {EpisodeId}: resolved {Provider} → {Format} {ResolvedUrl}",
                     episodeId, provider, resolved.Format, resolved.Url[..Math.Min(80, resolved.Url.Length)]);
+
+                // Reject HLS manifests — cannot be downloaded as a single file without ffmpeg.
+                if (resolved.Url.Contains(".m3u8", StringComparison.OrdinalIgnoreCase) ||
+                    resolved.Format == AnimeIndex.Api.Infrastructure.Resolvers.SourceFormat.Hls)
+                {
+                    _logger.LogDebug(
+                        "Episode {EpisodeId}: skipping {Provider} — resolved to HLS manifest (not a single-file MP4)",
+                        episodeId, provider);
+                    continue;
+                }
 
                 // Reject known test/placeholder video domains — they are served by some
                 // providers (e.g. VOE) as geo-block fallbacks and must never be uploaded.

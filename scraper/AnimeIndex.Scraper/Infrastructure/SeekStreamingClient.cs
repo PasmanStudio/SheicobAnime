@@ -88,21 +88,16 @@ public sealed class SeekStreamingClient
             return null;
         }
 
-        // ─── Step 2: HEAD the source URL → file size ──────────────
+        // ─── Step 2: resolve file size (HEAD, fallback to GET Range:0-0) ──
+        // Some CDNs (mp4upload) block HEAD from cloud IPs → fall back to a
+        // 1-byte GET Range request to read Content-Range: bytes 0-0/TOTAL.
         long fileSize;
         using (var dlClient = _httpFactory.CreateClient("seek-download"))
         {
-            try
+            fileSize = await GetFileSizeAsync(dlClient, directVideoUrl, ct);
+            if (fileSize <= 0)
             {
-                using var headReq = new HttpRequestMessage(HttpMethod.Head, directVideoUrl);
-                using var headResp = await dlClient.SendAsync(headReq, ct);
-                headResp.EnsureSuccessStatusCode();
-                fileSize = headResp.Content.Headers.ContentLength
-                    ?? throw new InvalidOperationException($"No Content-Length from {directVideoUrl}");
-            }
-            catch (Exception ex) when (ex is not TaskCanceledException { CancellationToken.IsCancellationRequested: true })
-            {
-                _logger.LogWarning(ex, "SeekStreaming: HEAD failed for {Url}", directVideoUrl);
+                _logger.LogWarning("SeekStreaming: could not determine file size for {Url}", directVideoUrl);
                 return null;
             }
         }
@@ -261,6 +256,58 @@ public sealed class SeekStreamingClient
 
     /// <summary>Builds the embed URL from a video ID.</summary>
     public string GetEmbedUrl(string videoId) => $"https://sheicobanime.seekplayer.me/#{videoId}";
+
+    /// <summary>
+    /// Tries HEAD first (fast); if it fails or returns no Content-Length, falls back
+    /// to GET Range:bytes=0-0 and reads the total size from Content-Range.
+    /// Returns 0 if both strategies fail.
+    /// </summary>
+    private async Task<long> GetFileSizeAsync(HttpClient client, string url, CancellationToken ct)
+    {
+        // Strategy 1: HEAD
+        try
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Head, url);
+            // Some CDNs require a Referer that matches the embed page origin.
+            // Derive a plausible one from the URL host.
+            if (Uri.TryCreate(url, UriKind.Absolute, out var uri))
+                req.Headers.TryAddWithoutValidation("Referer", $"{uri.Scheme}://{uri.Host}/");
+            using var resp = await client.SendAsync(req, ct);
+            if (resp.IsSuccessStatusCode && resp.Content.Headers.ContentLength is long len and > 0)
+                return len;
+        }
+        catch (Exception ex) when (ex is not TaskCanceledException { CancellationToken.IsCancellationRequested: true })
+        {
+            _logger.LogDebug(ex, "SeekStreaming: HEAD failed for {Url}, trying Range GET", url);
+        }
+
+        // Strategy 2: GET Range:bytes=0-0 → read Content-Range: bytes 0-0/TOTAL
+        try
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Get, url);
+            req.Headers.TryAddWithoutValidation("Range", "bytes=0-0");
+            if (Uri.TryCreate(url, UriKind.Absolute, out var uri))
+                req.Headers.TryAddWithoutValidation("Referer", $"{uri.Scheme}://{uri.Host}/");
+            using var resp = await client.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
+
+            // 206 Partial Content: Content-Range header has the total
+            if (resp.StatusCode == System.Net.HttpStatusCode.PartialContent)
+            {
+                var cr = resp.Content.Headers.ContentRange;
+                if (cr?.Length is long total and > 0)
+                    return total;
+            }
+            // 200 OK (server ignores Range): Content-Length is the full file size
+            if (resp.IsSuccessStatusCode && resp.Content.Headers.ContentLength is long cl and > 0)
+                return cl;
+        }
+        catch (Exception ex) when (ex is not TaskCanceledException { CancellationToken.IsCancellationRequested: true })
+        {
+            _logger.LogDebug(ex, "SeekStreaming: Range GET also failed for {Url}", url);
+        }
+
+        return 0;
+    }
 
     private static string BuildTusMetadata(string accessToken, string filename, string mimeType)
     {
