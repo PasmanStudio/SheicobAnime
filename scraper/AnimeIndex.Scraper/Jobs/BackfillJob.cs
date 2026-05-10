@@ -5,6 +5,7 @@ using AnimeIndex.Scraper.Infrastructure;
 using AnimeIndex.Scraper.Strategies;
 using Hangfire;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using System.Text.Json;
 
@@ -25,6 +26,7 @@ public class BackfillJob(
     JkAnimeHttpClient http,
     DeadLetterAlerter alerter,
     SeekStreamingUploadService seekStreaming,
+    IServiceScopeFactory scopeFactory,
     IConfiguration config,
     ILogger<BackfillJob> logger)
 {
@@ -415,37 +417,50 @@ public class BackfillJob(
             return;
         }
 
-        logger.LogInformation("Pass 3: {Count} episodes to upload to SeekStreaming", episodeIds.Count);
+        logger.LogInformation("Pass 3: {Count} episodes — launching all simultaneously", episodeIds.Count);
         await UpdateProgressAsync(job, $"pass3:0/{episodeIds.Count}", ct);
 
-        const int batchSize = 50;
-        const int delayMs = 2_000;
         var uploaded = 0;
         var failed = 0;
+        var done = 0;
+        // Serialize progress writes — shared db context is not thread-safe.
+        var progressLock = new SemaphoreSlim(1, 1);
 
-        for (var i = 0; i < episodeIds.Count; i++)
+        var tasks = episodeIds.Select(async episodeId =>
         {
-            if (ct.IsCancellationRequested) break;
+            if (ct.IsCancellationRequested) return;
 
-            var episodeId = episodeIds[i];
+            // Each parallel task gets its own DI scope → isolated DbContext + SeekStreamingUploadService.
+            using var scope = scopeFactory.CreateScope();
+            var scopedDb = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var scopedSeekStreaming = scope.ServiceProvider.GetRequiredService<SeekStreamingUploadService>();
 
-            // Load embed URLs for this episode, ordered by priority.
-            var embedUrls = await db.Mirrors
+            var embedUrls = await scopedDb.Mirrors
                 .AsNoTracking()
                 .Where(m => m.EpisodeId == episodeId && m.IsActive)
                 .OrderBy(m => m.Priority)
                 .Select(m => m.EmbedUrl)
                 .ToListAsync(ct);
 
-            var success = await seekStreaming.TryUploadEpisodeAsync(episodeId, embedUrls, ct);
-            if (success) uploaded++; else failed++;
+            var success = await scopedSeekStreaming.TryUploadEpisodeAsync(episodeId, embedUrls, ct);
+            if (success) Interlocked.Increment(ref uploaded); else Interlocked.Increment(ref failed);
 
-            if ((i + 1) % 10 == 0)
-                await UpdateProgressAsync(job, $"pass3:{i + 1}/{episodeIds.Count},uploaded:{uploaded},failed:{failed}", ct);
+            var doneNow = Interlocked.Increment(ref done);
+            // Update progress every 3 completions or when all done.
+            if (doneNow % 3 == 0 || doneNow == episodeIds.Count)
+            {
+                await progressLock.WaitAsync(ct);
+                try
+                {
+                    await UpdateProgressAsync(job,
+                        $"pass3:{doneNow}/{episodeIds.Count},uploaded:{Volatile.Read(ref uploaded)},failed:{Volatile.Read(ref failed)}",
+                        ct);
+                }
+                finally { progressLock.Release(); }
+            }
+        });
 
-            if ((i + 1) % batchSize != 0 && i < episodeIds.Count - 1)
-                await Task.Delay(delayMs, ct);
-        }
+        await Task.WhenAll(tasks);
 
         logger.LogInformation(
             "Pass 3 complete — uploaded={Uploaded}, failed={Failed}, total={Total}",
