@@ -1,9 +1,9 @@
 import AdSlot from "@/components/ads/AdSlot";
 import NavigationAdTrigger from "@/components/ads/NavigationAdTrigger";
 import CommentSection from "@/components/comments/CommentSection";
-import EmbeddedPlayerFrame from "@/components/player/EmbeddedPlayerFrame";
+import DirectEpisodePlayer from "@/components/player/DirectEpisodePlayer";
 import EpisodeSidebar from "@/components/player/EpisodeSidebar";
-import { ApiError, getEpisodeBySlug, getSeriesEpisodes } from "@/lib/api";
+import { ApiError, getEpisodeBySlug, getEpisodeMirrorsBySlug, getSeriesEpisodes } from "@/lib/api";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -51,12 +51,17 @@ export default async function EpisodePage({ params }: Readonly<Props>) {
     throw err;
   }
 
-  // Episode sidebar list is non-critical — never let a slow/failed call 500 the page
+  // Non-critical parallel fetches — never let failures 500 the page
   let allEpisodes: Awaited<ReturnType<typeof getSeriesEpisodes>>["data"] = [];
+  let mirrors: Awaited<ReturnType<typeof getEpisodeMirrorsBySlug>> = [];
   try {
-    ({ data: allEpisodes } = await getSeriesEpisodes(params.slug, { pageSize: 500 }));
+    [{ data: allEpisodes }, mirrors] = await Promise.all([
+      getSeriesEpisodes(params.slug, { pageSize: 500 }),
+      getEpisodeMirrorsBySlug(params.slug, episodeNumber),
+    ]);
   } catch {
     allEpisodes = [];
+    mirrors = [];
   }
 
   const episodeTitle = episode.title
@@ -92,9 +97,13 @@ export default async function EpisodePage({ params }: Readonly<Props>) {
 
       {/* ── 2-column layout: player area + sidebar ── */}
       <div className="flex flex-col lg:flex-row gap-4 mt-4">
-        {/* Left: Player + title + mirrors (inside iframe) */}
+        {/* Left: Player + title + mirrors */}
         <div className="flex-1 min-w-0">
-          <EmbeddedPlayerFrame episodeId={episode.id} episodeTitle={episodeTitle} />
+          <DirectEpisodePlayer
+            mirrors={mirrors}
+            episodeTitle={episodeTitle}
+            seriesTitle={episode.series?.title}
+          />
 
           <AdSlot placement="episode_mid" />
 
@@ -175,8 +184,8 @@ export default async function EpisodePage({ params }: Readonly<Props>) {
           <AdSlot placement="episode_bottom" />
         </div>
 
-        {/* Right: Episode sidebar (always visible on desktop) */}
-        <div className="lg:w-72 xl:w-80 shrink-0">
+        {/* Right: Episode sidebar — fixed width on desktop, full width stacked on mobile */}
+        <div className="w-full lg:w-72 xl:w-80 shrink-0">
           <EpisodeSidebar
             episodes={allEpisodes}
             currentEpisodeNumber={episodeNumber}

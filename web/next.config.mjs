@@ -3,12 +3,19 @@ import { withSentryConfig } from "@sentry/nextjs";
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   images: {
-    // Serve cover images directly from the source CDN (cdn.jkdesa.com, etc.)
-    // instead of proxying through Vercel's image optimization pipeline.
-    // This eliminates the Vercel → CDN → Vercel double-hop that adds 400-800ms
-    // of latency per image. WebP conversion is skipped but covers are already
-    // compressed JPEGs so the tradeoff is worth it.
-    unoptimized: true,
+    // Allow images from JKAnime CDN domains and Supabase storage.
+    // Next.js will auto-convert to WebP and cache on Vercel's edge CDN,
+    // eliminating repeated fetches to the origin CDN.
+    remotePatterns: [
+      { protocol: "https", hostname: "cdn.jkdesa.com" },
+      { protocol: "https", hostname: "**.jkdesa.com" },
+      { protocol: "https", hostname: "**.jkanime.net" },
+      { protocol: "https", hostname: "**.supabase.co" },
+      { protocol: "https", hostname: "**.supabase.in" },
+      { protocol: "https", hostname: "asset.seekstreaming.info" },
+      // Catch-all for any other image origin already in the DB
+      { protocol: "https", hostname: "**" },
+    ],
   },
 };
 

@@ -21,7 +21,7 @@ export default function EpisodeSidebar({
   seriesTitle,
   seriesCoverUrl,
 }: EpisodeSidebarProps) {
-  const [isOpen, setIsOpen] = useState(false);
+  const [isOpen, setIsOpen] = useState(false); // collapsed by default on mobile
   const [filter, setFilter] = useState("");
   const [progressMap, setProgressMap] = useState<Map<string, RecentProgress>>(new Map());
 
@@ -86,8 +86,8 @@ export default function EpisodeSidebar({
           />
         </div>
 
-        {/* Episode list — scrollable, height matches player on desktop */}
-        <div className="max-h-80 lg:max-h-[480px] overflow-y-auto">
+        {/* Episode list — scrollable */}
+        <div className="max-h-60 sm:max-h-80 lg:max-h-[520px] overflow-y-auto overscroll-contain">
           {filtered.length === 0 ? (
             <p className="text-neutral-500 text-sm p-3 text-center">
               No se encontraron episodios.
