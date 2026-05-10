@@ -228,8 +228,12 @@ public sealed class Source2Strategy(
                 }
 
                 // Upload to SeekStreaming (own mirror, priority=0) — non-blocking on failure.
-                if (mirrorUrls.Count > 0)
-                    await (seekStreaming?.TryUploadEpisodeAsync(episodeId, mirrorUrls, ct) ?? Task.FromResult(false));
+                if (mirrorUrls.Count > 0 && seekStreaming is not null)
+                {
+                    var target = await seekStreaming.ResolveDirectUrlAsync(episodeId, mirrorUrls, ct);
+                    if (target is not null)
+                        await seekStreaming.UploadResolvedAsync(target, ct);
+                }
 
                 // Heartbeat after every episode to prevent stuck-job detection
                 // killing active jobs that have many episodes.

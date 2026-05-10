@@ -417,43 +417,78 @@ public class BackfillJob(
             return;
         }
 
-        logger.LogInformation("Pass 3: {Count} episodes — launching all simultaneously", episodeIds.Count);
-        await UpdateProgressAsync(job, $"pass3:0/{episodeIds.Count}", ct);
+        logger.LogInformation("Pass 3: {Count} episodes — resolving embed URLs first", episodeIds.Count);
+        await UpdateProgressAsync(job, $"pass3:resolving:0/{episodeIds.Count}", ct);
 
-        var uploaded = 0;
-        var failed = 0;
-        var done = 0;
-        // Serialize progress writes — shared db context is not thread-safe.
-        var progressLock = new SemaphoreSlim(1, 1);
+        // ── Phase A: Resolve all embed URLs sequentially ──────────────────────
+        // Fast HTTP-only probing — finds the first downloadable direct MP4 per episode.
+        // Done sequentially to avoid hammering embed providers simultaneously.
+        var resolvedTargets = new List<ResolvedUploadTarget>(episodeIds.Count);
+        var resolveSkipped = 0;
 
-        var tasks = episodeIds.Select(async episodeId =>
+        for (var i = 0; i < episodeIds.Count; i++)
         {
-            if (ct.IsCancellationRequested) return;
+            if (ct.IsCancellationRequested) break;
 
-            // Each parallel task gets its own DI scope → isolated DbContext + SeekStreamingUploadService.
-            using var scope = scopeFactory.CreateScope();
-            var scopedDb = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-            var scopedSeekStreaming = scope.ServiceProvider.GetRequiredService<SeekStreamingUploadService>();
+            var episodeId = episodeIds[i];
 
-            var embedUrls = await scopedDb.Mirrors
+            var embedUrls = await db.Mirrors
                 .AsNoTracking()
                 .Where(m => m.EpisodeId == episodeId && m.IsActive)
                 .OrderBy(m => m.Priority)
                 .Select(m => m.EmbedUrl)
                 .ToListAsync(ct);
 
-            var success = await scopedSeekStreaming.TryUploadEpisodeAsync(episodeId, embedUrls, ct);
-            if (success) Interlocked.Increment(ref uploaded); else Interlocked.Increment(ref failed);
+            var target = await seekStreaming.ResolveDirectUrlAsync(episodeId, embedUrls, ct);
+
+            if (target is not null)
+                resolvedTargets.Add(target);
+            else
+                resolveSkipped++;
+
+            if ((i + 1) % 5 == 0 || i == episodeIds.Count - 1)
+                await UpdateProgressAsync(job,
+                    $"pass3:resolving:{i + 1}/{episodeIds.Count},found:{resolvedTargets.Count},skipped:{resolveSkipped}",
+                    ct);
+        }
+
+        logger.LogInformation(
+            "Pass 3 resolve complete — {Found} resolvable, {Skipped} unresolvable — launching {Found} parallel uploads",
+            resolvedTargets.Count, resolveSkipped, resolvedTargets.Count);
+
+        if (resolvedTargets.Count == 0)
+        {
+            await UpdateProgressAsync(job, $"pass3:done:uploaded:0,failed:0,unresolvable:{resolveSkipped}", ct);
+            return;
+        }
+
+        await UpdateProgressAsync(job, $"pass3:uploading:0/{resolvedTargets.Count}", ct);
+
+        // ── Phase B: Upload all resolved targets in parallel ──────────────────
+        // Each task gets its own DI scope → isolated DbContext + SeekStreamingUploadService.
+        var uploaded = 0;
+        var uploadFailed = 0;
+        var done = 0;
+        var progressLock = new SemaphoreSlim(1, 1);
+
+        var tasks = resolvedTargets.Select(async target =>
+        {
+            if (ct.IsCancellationRequested) return;
+
+            using var scope = scopeFactory.CreateScope();
+            var scopedService = scope.ServiceProvider.GetRequiredService<SeekStreamingUploadService>();
+
+            var success = await scopedService.UploadResolvedAsync(target, ct);
+            if (success) Interlocked.Increment(ref uploaded); else Interlocked.Increment(ref uploadFailed);
 
             var doneNow = Interlocked.Increment(ref done);
-            // Update progress every 3 completions or when all done.
-            if (doneNow % 3 == 0 || doneNow == episodeIds.Count)
+            if (doneNow % 3 == 0 || doneNow == resolvedTargets.Count)
             {
                 await progressLock.WaitAsync(ct);
                 try
                 {
                     await UpdateProgressAsync(job,
-                        $"pass3:{doneNow}/{episodeIds.Count},uploaded:{Volatile.Read(ref uploaded)},failed:{Volatile.Read(ref failed)}",
+                        $"pass3:uploading:{doneNow}/{resolvedTargets.Count},uploaded:{Volatile.Read(ref uploaded)},failed:{Volatile.Read(ref uploadFailed)}",
                         ct);
                 }
                 finally { progressLock.Release(); }
@@ -463,8 +498,10 @@ public class BackfillJob(
         await Task.WhenAll(tasks);
 
         logger.LogInformation(
-            "Pass 3 complete — uploaded={Uploaded}, failed={Failed}, total={Total}",
-            uploaded, failed, episodeIds.Count);
-        await UpdateProgressAsync(job, $"pass3:done:uploaded:{uploaded},failed:{failed}", ct);
+            "Pass 3 complete — uploaded={Uploaded}, uploadFailed={Failed}, unresolvable={Unresolvable}, total={Total}",
+            uploaded, uploadFailed, resolveSkipped, episodeIds.Count);
+        await UpdateProgressAsync(job,
+            $"pass3:done:uploaded:{uploaded},failed:{uploadFailed},unresolvable:{resolveSkipped}",
+            ct);
     }
 }

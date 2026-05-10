@@ -9,16 +9,16 @@ using AnimeIndex.Scraper;
 namespace AnimeIndex.Scraper.Infrastructure;
 
 /// <summary>
-/// Orchestrates the upload-to-SeekStreaming pipeline for a single episode:
-///   1. Pick the best embed URL from the existing external mirrors (VOE / Mp4Upload / OkRu first
-///      because they return direct mp4 — no HLS token expiry risk).
-///   2. Resolve that embed URL to a direct video URL using the existing resolver infrastructure.
-///   3. Upload to SeekStreaming via remote URL (SeekStreaming fetches the video itself).
-///   4. Upsert the resulting embed URL as a new mirror with priority=0 (always shown first).
+/// Orchestrates the upload-to-SeekStreaming pipeline for a single episode.
 ///
-/// This service is idempotent — if a 'seekstreaming' mirror already exists for the episode
-/// UpsertPipelineService's ON CONFLICT logic will leave it untouched.
-/// If all resolvers fail, returns false and the episode keeps its external mirrors unchanged.
+/// Two-phase design:
+///   Phase A — ResolveDirectUrlAsync: probe embed URLs to find the first downloadable direct MP4.
+///             This is fast (HTTP only) and runs sequentially in Pass3 before any upload starts.
+///   Phase B — UploadResolvedAsync: download the MP4 bytes and stream them to SeekStreaming via tus.
+///             This is slow (hundreds of MB) and runs fully in parallel via Task.WhenAll.
+///
+/// Splitting phases lets us fail-fast on unresolvable episodes before wasting parallel slots,
+/// and ensures all downloads start at the same moment for maximum throughput.
 /// </summary>
 public sealed class SeekStreamingUploadService
 {
@@ -45,22 +45,23 @@ public sealed class SeekStreamingUploadService
         _logger = logger;
     }
 
+    // ── Phase A: resolve embed URL → direct downloadable MP4 URL ────────────
+
     /// <summary>
-    /// Attempts to upload the episode to SeekStreaming using one of the provided embed URLs.
-    /// Returns true if a SeekStreaming mirror was successfully upserted, false otherwise.
+    /// Tries each embed URL (in priority order) until one resolves to a downloadable direct MP4.
+    /// Returns null if no resolvable URL was found (episode should be skipped).
     /// Never throws — all failures are logged and swallowed.
     /// </summary>
-    public async Task<bool> TryUploadEpisodeAsync(
+    public async Task<ResolvedUploadTarget?> ResolveDirectUrlAsync(
         Guid episodeId,
         IReadOnlyList<string> embedUrls,
         CancellationToken ct = default)
     {
-        if (embedUrls.Count == 0) return false;
+        if (embedUrls.Count == 0) return null;
 
-        // Sort by upload priority: mp4-direct providers first, unsupported last.
         var sorted = embedUrls
             .Select(url => (Url: url, Provider: Source2Strategy.ExtractProviderName(url)))
-            .Where(x => _registry.Supports(x.Provider))  // skip providers without a resolver
+            .Where(x => _registry.Supports(x.Provider))
             .OrderBy(x =>
             {
                 var idx = Array.IndexOf(Mp4FirstOrder, x.Provider);
@@ -70,17 +71,16 @@ public sealed class SeekStreamingUploadService
 
         if (sorted.Count == 0)
         {
-            _logger.LogDebug("Episode {EpisodeId}: no resolvable mirrors available for SeekStreaming upload", episodeId);
-            return false;
+            _logger.LogDebug("Episode {Id}: no resolvable mirrors", episodeId);
+            return null;
         }
 
         foreach (var (embedUrl, provider) in sorted)
         {
-            if (ct.IsCancellationRequested) return false;
+            if (ct.IsCancellationRequested) return null;
 
             try
             {
-                // Build a temporary Mirror record for the resolver.
                 var tempMirror = new Mirror
                 {
                     Id = Guid.NewGuid(),
@@ -91,85 +91,103 @@ public sealed class SeekStreamingUploadService
                     Priority = 50,
                 };
 
-                _logger.LogDebug(
-                    "Episode {EpisodeId}: resolving via {Provider} ({EmbedUrl})",
-                    episodeId, provider, embedUrl);
-
                 var resolver = _registry.GetFor(tempMirror);
                 if (resolver is null) continue;
 
                 var resolved = await resolver.ResolveAsync(tempMirror, ct);
 
-                _logger.LogDebug(
-                    "Episode {EpisodeId}: resolved {Provider} → {Format} {ResolvedUrl}",
-                    episodeId, provider, resolved.Format, resolved.Url[..Math.Min(80, resolved.Url.Length)]);
-
-                // Reject HLS manifests — cannot be downloaded as a single file without ffmpeg.
                 if (resolved.Url.Contains(".m3u8", StringComparison.OrdinalIgnoreCase) ||
                     resolved.Format == AnimeIndex.Api.Infrastructure.Resolvers.SourceFormat.Hls)
                 {
-                    _logger.LogDebug(
-                        "Episode {EpisodeId}: skipping {Provider} — resolved to HLS manifest (not a single-file MP4)",
-                        episodeId, provider);
+                    _logger.LogDebug("Episode {Id}: {Provider} resolved to HLS — skipping", episodeId, provider);
                     continue;
                 }
 
-                // Reject known test/placeholder video domains — they are served by some
-                // providers (e.g. VOE) as geo-block fallbacks and must never be uploaded.
                 if (IsTestVideoUrl(resolved.Url))
                 {
-                    _logger.LogDebug(
-                        "Episode {EpisodeId}: skipping {Provider} — resolved to test-video placeholder URL ({Url})",
-                        episodeId, provider, resolved.Url[..Math.Min(80, resolved.Url.Length)]);
+                    _logger.LogDebug("Episode {Id}: {Provider} resolved to placeholder URL — skipping", episodeId, provider);
                     continue;
                 }
 
-                var seekEmbedUrl = await _seekStreaming.UploadFromUrlAsync(
-                    resolved.Url,
-                    referer: Uri.TryCreate(embedUrl, UriKind.Absolute, out var eu)
-                        ? $"{eu.Scheme}://{eu.Host}/"
-                        : null,
-                    ct: ct);
-                if (seekEmbedUrl is null) continue;
-
-                await _upsert.UpsertMirrorAsync(new MirrorScrapedData(
-                    EpisodeId: episodeId,
-                    ProviderName: "seekstreaming",
-                    EmbedUrl: seekEmbedUrl,
-                    QualityLabel: 720,
-                    Priority: 0), ct);
+                var referer = Uri.TryCreate(embedUrl, UriKind.Absolute, out var eu)
+                    ? $"{eu.Scheme}://{eu.Host}/"
+                    : null;
 
                 _logger.LogInformation(
-                    "Episode {EpisodeId}: SeekStreaming mirror upserted (embedUrl={EmbedUrl}, source={Provider})",
-                    episodeId, seekEmbedUrl, provider);
+                    "Episode {Id}: resolved via {Provider} → {Url}",
+                    episodeId, provider, resolved.Url[..Math.Min(80, resolved.Url.Length)]);
 
-                return true;
+                return new ResolvedUploadTarget(episodeId, resolved.Url, referer, provider);
             }
             catch (ResolverException rex)
             {
-                _logger.LogDebug(
-                    "Episode {EpisodeId}: resolver {Provider} failed ({Reason}): {Message}",
+                _logger.LogDebug("Episode {Id}: {Provider} failed ({Reason}): {Message}",
                     episodeId, provider, rex.Reason, rex.Message);
             }
             catch (TaskCanceledException) when (ct.IsCancellationRequested)
             {
-                return false;
+                return null;
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex,
-                    "Episode {EpisodeId}: unexpected error resolving {Provider}",
-                    episodeId, provider);
+                _logger.LogWarning(ex, "Episode {Id}: unexpected error resolving {Provider}", episodeId, provider);
             }
         }
 
-        _logger.LogWarning(
-            "Episode {EpisodeId}: all {Count} resolver attempts failed — keeping external mirrors only",
-            episodeId, sorted.Count);
-        return false;
+        _logger.LogWarning("Episode {Id}: all {Count} resolver attempts failed", episodeId, sorted.Count);
+        return null;
     }
 
-    // Domains known to serve BigBuckBunny or other placeholder content as geo-block fallbacks.
+    // ── Phase B: download + tus upload + upsert ──────────────────────────────
+
+    /// <summary>
+    /// Downloads the pre-resolved direct URL and uploads it to SeekStreaming via tus,
+    /// then upserts the resulting embed URL as a priority=0 mirror.
+    /// Returns true on success. Never throws.
+    /// </summary>
+    public async Task<bool> UploadResolvedAsync(
+        ResolvedUploadTarget target,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            var seekEmbedUrl = await _seekStreaming.UploadFromUrlAsync(
+                target.DirectUrl,
+                referer: target.Referer,
+                ct: ct);
+
+            if (seekEmbedUrl is null)
+            {
+                _logger.LogWarning("Episode {Id}: tus upload returned null embed URL", target.EpisodeId);
+                return false;
+            }
+
+            await _upsert.UpsertMirrorAsync(new MirrorScrapedData(
+                EpisodeId: target.EpisodeId,
+                ProviderName: "seekstreaming",
+                EmbedUrl: seekEmbedUrl,
+                QualityLabel: 720,
+                Priority: 0), ct);
+
+            _logger.LogInformation(
+                "Episode {Id}: SeekStreaming mirror upserted (embed={Embed}, source={Provider})",
+                target.EpisodeId, seekEmbedUrl, target.Provider);
+
+            return true;
+        }
+        catch (TaskCanceledException) when (ct.IsCancellationRequested)
+        {
+            return false;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Episode {Id}: upload failed", target.EpisodeId);
+            return false;
+        }
+    }
+
+    // ── Domains known to serve BigBuckBunny or other placeholder content ─────
+
     private static readonly string[] TestVideoDomains =
     [
         "test-videos.co.uk",
@@ -186,3 +204,12 @@ public sealed class SeekStreamingUploadService
             uri.Host.EndsWith("." + d, StringComparison.OrdinalIgnoreCase));
     }
 }
+
+/// <summary>
+/// A direct downloadable video URL found during the resolve phase of Pass3.
+/// </summary>
+public sealed record ResolvedUploadTarget(
+    Guid EpisodeId,
+    string DirectUrl,
+    string? Referer,
+    string Provider);
