@@ -48,16 +48,20 @@ public sealed class SeekStreamingUploadService
     // ── Phase A: resolve embed URL → direct downloadable MP4 URL ────────────
 
     /// <summary>
-    /// Tries each embed URL (in priority order) until one resolves to a downloadable direct MP4.
-    /// Returns null if no resolvable URL was found (episode should be skipped).
+    /// Resolves ALL embed URLs that can produce a downloadable direct MP4 (not HLS).
+    /// Returns them ordered by priority (mp4upload first, then okru, etc.).
+    /// An empty list means no provider worked — episode should be skipped.
+    ///
+    /// Unlike the old single-result version, this lets Phase B fall back to the
+    /// next provider if the primary CDN download fails (e.g. cloud-IP block on mp4upload port 183).
     /// Never throws — all failures are logged and swallowed.
     /// </summary>
-    public async Task<ResolvedUploadTarget?> ResolveDirectUrlAsync(
+    public async Task<IReadOnlyList<ResolvedUploadTarget>> ResolveAllDirectUrlsAsync(
         Guid episodeId,
         IReadOnlyList<string> embedUrls,
         CancellationToken ct = default)
     {
-        if (embedUrls.Count == 0) return null;
+        if (embedUrls.Count == 0) return [];
 
         var sorted = embedUrls
             .Select(url => (Url: url, Provider: Source2Strategy.ExtractProviderName(url)))
@@ -72,12 +76,13 @@ public sealed class SeekStreamingUploadService
         if (sorted.Count == 0)
         {
             _logger.LogDebug("Episode {Id}: no resolvable mirrors", episodeId);
-            return null;
+            return [];
         }
 
+        var results = new List<ResolvedUploadTarget>(sorted.Count);
         foreach (var (embedUrl, provider) in sorted)
         {
-            if (ct.IsCancellationRequested) return null;
+            if (ct.IsCancellationRequested) break;
 
             try
             {
@@ -113,11 +118,11 @@ public sealed class SeekStreamingUploadService
                     ? $"{eu.Scheme}://{eu.Host}/"
                     : null;
 
-                _logger.LogInformation(
+                _logger.LogDebug(
                     "Episode {Id}: resolved via {Provider} → {Url}",
                     episodeId, provider, resolved.Url[..Math.Min(80, resolved.Url.Length)]);
 
-                return new ResolvedUploadTarget(episodeId, resolved.Url, referer, provider);
+                results.Add(new ResolvedUploadTarget(episodeId, resolved.Url, referer, provider));
             }
             catch (ResolverException rex)
             {
@@ -126,7 +131,7 @@ public sealed class SeekStreamingUploadService
             }
             catch (TaskCanceledException) when (ct.IsCancellationRequested)
             {
-                return null;
+                break;
             }
             catch (Exception ex)
             {
@@ -134,8 +139,28 @@ public sealed class SeekStreamingUploadService
             }
         }
 
-        _logger.LogWarning("Episode {Id}: all {Count} resolver attempts failed", episodeId, sorted.Count);
-        return null;
+        if (results.Count == 0)
+            _logger.LogWarning("Episode {Id}: all {Count} resolver attempts failed", episodeId, sorted.Count);
+        else
+            _logger.LogInformation(
+                "Episode {Id}: {Count} resolvable provider(s): [{Providers}]",
+                episodeId, results.Count, string.Join(", ", results.Select(r => r.Provider)));
+
+        return results;
+    }
+
+    /// <summary>
+    /// Compatibility shim — returns only the highest-priority resolvable URL.
+    /// Used by Source2Strategy (single-episode, non-bulk path).
+    /// For bulk backfill use <see cref="ResolveAllDirectUrlsAsync"/> + per-candidate fallback.
+    /// </summary>
+    public async Task<ResolvedUploadTarget?> ResolveDirectUrlAsync(
+        Guid episodeId,
+        IReadOnlyList<string> embedUrls,
+        CancellationToken ct = default)
+    {
+        var all = await ResolveAllDirectUrlsAsync(episodeId, embedUrls, ct);
+        return all.Count > 0 ? all[0] : null;
     }
 
     // ── Phase B: download + tus upload + upsert ──────────────────────────────

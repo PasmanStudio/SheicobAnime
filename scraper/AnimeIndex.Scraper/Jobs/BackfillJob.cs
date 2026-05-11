@@ -420,10 +420,11 @@ public class BackfillJob(
         logger.LogInformation("Pass 3: {Count} episodes — resolving embed URLs first", episodeIds.Count);
         await UpdateProgressAsync(job, $"pass3:resolving:0/{episodeIds.Count}", ct);
 
-        // ── Phase A: Resolve all embed URLs sequentially ──────────────────────
-        // Fast HTTP-only probing — finds the first downloadable direct MP4 per episode.
-        // Done sequentially to avoid hammering embed providers simultaneously.
-        var resolvedTargets = new List<ResolvedUploadTarget>(episodeIds.Count);
+        // ── Phase A: Resolve ALL candidate URLs per episode ───────────────────
+        // Collects every provider that can produce a direct MP4 (not just the first).
+        // This lets Phase B fall back to the next provider if the primary CDN
+        // download fails (e.g. mp4upload port 183 blocks GitHub Actions IPs).
+        var allTargets = new List<IReadOnlyList<ResolvedUploadTarget>>(episodeIds.Count);
         var resolveSkipped = 0;
 
         for (var i = 0; i < episodeIds.Count; i++)
@@ -439,56 +440,69 @@ public class BackfillJob(
                 .Select(m => m.EmbedUrl)
                 .ToListAsync(ct);
 
-            var target = await seekStreaming.ResolveDirectUrlAsync(episodeId, embedUrls, ct);
+            var candidates = await seekStreaming.ResolveAllDirectUrlsAsync(episodeId, embedUrls, ct);
 
-            if (target is not null)
-                resolvedTargets.Add(target);
+            if (candidates.Count > 0)
+                allTargets.Add(candidates);
             else
                 resolveSkipped++;
 
             if ((i + 1) % 5 == 0 || i == episodeIds.Count - 1)
                 await UpdateProgressAsync(job,
-                    $"pass3:resolving:{i + 1}/{episodeIds.Count},found:{resolvedTargets.Count},skipped:{resolveSkipped}",
+                    $"pass3:resolving:{i + 1}/{episodeIds.Count},found:{allTargets.Count},skipped:{resolveSkipped}",
                     ct);
         }
 
         logger.LogInformation(
-            "Pass 3 resolve complete — {Found} resolvable, {Skipped} unresolvable — launching {Found} parallel uploads",
-            resolvedTargets.Count, resolveSkipped, resolvedTargets.Count);
+            "Pass 3 resolve complete — {Found} episodes with candidates, {Skipped} unresolvable — launching {Found} parallel uploads",
+            allTargets.Count, resolveSkipped, allTargets.Count);
 
-        if (resolvedTargets.Count == 0)
+        if (allTargets.Count == 0)
         {
             await UpdateProgressAsync(job, $"pass3:done:uploaded:0,failed:0,unresolvable:{resolveSkipped}", ct);
             return;
         }
 
-        await UpdateProgressAsync(job, $"pass3:uploading:0/{resolvedTargets.Count}", ct);
+        await UpdateProgressAsync(job, $"pass3:uploading:0/{allTargets.Count}", ct);
 
         // ── Phase B: Upload all resolved targets in parallel ──────────────────
-        // Each task gets its own DI scope → isolated DbContext + SeekStreamingUploadService.
+        // Each episode gets its own DI scope. Within the scope, candidates are tried
+        // in priority order — if the first CDN download fails (cloud-IP block, 403,
+        // timeout) we automatically fall back to the next resolved provider.
         var uploaded = 0;
         var uploadFailed = 0;
         var done = 0;
         var progressLock = new SemaphoreSlim(1, 1);
 
-        var tasks = resolvedTargets.Select(async target =>
+        var tasks = allTargets.Select(async candidates =>
         {
             if (ct.IsCancellationRequested) return;
 
             using var scope = scopeFactory.CreateScope();
             var scopedService = scope.ServiceProvider.GetRequiredService<SeekStreamingUploadService>();
 
-            var success = await scopedService.UploadResolvedAsync(target, ct);
+            var success = false;
+            foreach (var target in candidates)
+            {
+                success = await scopedService.UploadResolvedAsync(target, ct);
+                if (success) break;
+
+                if (candidates.Count > 1)
+                    logger.LogWarning(
+                        "Episode {Id}: upload via {Provider} failed — trying next candidate",
+                        target.EpisodeId, target.Provider);
+            }
+
             if (success) Interlocked.Increment(ref uploaded); else Interlocked.Increment(ref uploadFailed);
 
             var doneNow = Interlocked.Increment(ref done);
-            if (doneNow % 3 == 0 || doneNow == resolvedTargets.Count)
+            if (doneNow % 3 == 0 || doneNow == allTargets.Count)
             {
                 await progressLock.WaitAsync(ct);
                 try
                 {
                     await UpdateProgressAsync(job,
-                        $"pass3:uploading:{doneNow}/{resolvedTargets.Count},uploaded:{Volatile.Read(ref uploaded)},failed:{Volatile.Read(ref uploadFailed)}",
+                        $"pass3:uploading:{doneNow}/{allTargets.Count},uploaded:{Volatile.Read(ref uploaded)},failed:{Volatile.Read(ref uploadFailed)}",
                         ct);
                 }
                 finally { progressLock.Release(); }

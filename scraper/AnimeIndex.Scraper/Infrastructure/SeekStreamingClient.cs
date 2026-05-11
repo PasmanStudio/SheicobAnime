@@ -64,7 +64,7 @@ public sealed class SeekStreamingClient
     public async Task<string?> UploadFromUrlAsync(
         string directVideoUrl,
         string? referer = null,
-        int pollTimeoutMinutes = 20,
+        int pollTimeoutMinutes = 15,
         CancellationToken ct = default)
     {
         // ─── Step 1: get tus credentials ──────────────────────────
