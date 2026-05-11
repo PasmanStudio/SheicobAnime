@@ -64,7 +64,7 @@ public sealed class SeekStreamingClient
     public async Task<string?> UploadFromUrlAsync(
         string directVideoUrl,
         string? referer = null,
-        int pollTimeoutMinutes = 10,
+        int pollTimeoutMinutes = 20,
         CancellationToken ct = default)
     {
         // ─── Step 1: get tus credentials ──────────────────────────
@@ -213,22 +213,35 @@ public sealed class SeekStreamingClient
     {
         var deadline = DateTime.UtcNow.AddMinutes(timeoutMinutes);
         const int PollIntervalMs = 15_000; // 15 s — transcoding is fast for most files
+        // Match by full name OR without extension — SeekStreaming API may strip .mp4 from the stored name.
+        var filenameNoExt = Path.GetFileNameWithoutExtension(filename);
 
         while (DateTime.UtcNow < deadline && !ct.IsCancellationRequested)
         {
             await Task.Delay(PollIntervalMs, ct);
             try
             {
-                using var res = await _http.GetAsync($"{_baseUrl}/api/v1/video/manage?limit=20", ct);
+                // limit=100 — ensure all recently uploaded videos are in the window even with
+                // 6+ parallel uploads on an account that already has many videos.
+                using var res = await _http.GetAsync($"{_baseUrl}/api/v1/video/manage?limit=100", ct);
                 if (!res.IsSuccessStatusCode) continue;
 
                 var json = await res.Content.ReadAsStringAsync(ct);
                 var list = JsonSerializer.Deserialize<VideoManageResponse>(json, JsonOpts);
 
                 var match = list?.Data?.FirstOrDefault(v =>
-                    filename.Equals(v.Name, StringComparison.OrdinalIgnoreCase));
+                    filename.Equals(v.Name, StringComparison.OrdinalIgnoreCase) ||
+                    filenameNoExt.Equals(v.Name, StringComparison.OrdinalIgnoreCase));
 
-                if (match is null) continue;
+                if (match is null)
+                {
+                    // Log what the API actually returned so we can diagnose name-format mismatches.
+                    var names = list?.Data?.Select(v => v.Name ?? "(null)").ToArray() ?? [];
+                    _logger.LogDebug(
+                        "SeekStreaming poll: looking for '{Filename}' (or '{FilenameNoExt}') — {Count} videos in list: [{Names}]",
+                        filename, filenameNoExt, names.Length, string.Join(", ", names.Take(10)));
+                    continue;
+                }
 
                 _logger.LogDebug(
                     "SeekStreaming poll: found {Name} id={Id} status={Status}",
