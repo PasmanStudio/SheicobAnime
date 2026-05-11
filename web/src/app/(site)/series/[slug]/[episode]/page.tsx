@@ -78,14 +78,14 @@ export default async function EpisodePage({ params }: Readonly<Props>) {
 
       {/* Breadcrumb */}
       {episode.series && (
-        <nav className="text-sm text-neutral-500 flex items-center gap-2 mb-4">
+        <nav className="text-sm text-neutral-500 flex flex-wrap items-center gap-1 mb-4">
           <Link href="/" className="hover:text-white transition-colors">
             Inicio
           </Link>
           <span>/</span>
           <Link
             href={`/series/${episode.series.slug}`}
-            className="hover:text-white transition-colors"
+            className="hover:text-white transition-colors truncate max-w-[160px] sm:max-w-none"
           >
             {episode.series.title}
           </Link>

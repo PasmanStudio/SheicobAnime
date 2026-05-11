@@ -108,11 +108,11 @@ export default function DirectEpisodePlayer({ mirrors, episodeTitle, seriesTitle
             ))
           )}
 
-          {/* Toggle other servers */}
+          {/* Toggle other servers — pushed right on wide screens, new row wraps naturally on narrow */}
           {otherMirrors.length > 0 && (
             <button
               onClick={() => setShowOthers((v) => !v)}
-              className="ml-auto px-3 py-1.5 rounded text-xs text-neutral-400 hover:text-white bg-neutral-800 hover:bg-neutral-700 transition-colors focus:outline-none focus:ring-2 focus:ring-neutral-500 whitespace-nowrap"
+              className="sm:ml-auto px-3 py-1.5 rounded text-xs text-neutral-400 hover:text-white bg-neutral-800 hover:bg-neutral-700 transition-colors focus:outline-none focus:ring-2 focus:ring-neutral-500 whitespace-nowrap"
             >
               Ver otros servidores {showOthers ? "▲" : "▼"}
             </button>
