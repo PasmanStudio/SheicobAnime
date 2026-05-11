@@ -5,6 +5,7 @@ import DirectEpisodePlayer from "@/components/player/DirectEpisodePlayer";
 import EpisodeSidebar from "@/components/player/EpisodeSidebar";
 import { ApiError, getEpisodeBySlug, getEpisodeMirrorsBySlug, getSeriesEpisodes } from "@/lib/api";
 import type { Metadata } from "next";
+import Image from "next/image";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
@@ -111,11 +112,15 @@ export default async function EpisodePage({ params }: Readonly<Props>) {
           {episode.series && (
             <div className="mt-4 flex items-start gap-4 bg-neutral-900/60 rounded-lg p-4 border border-neutral-800">
               {episode.series.coverUrl && (
-                <img
-                  src={episode.series.coverUrl}
-                  alt={episode.series.title}
-                  className="w-14 h-20 object-cover rounded shrink-0"
-                />
+                <div className="relative w-14 h-20 shrink-0">
+                  <Image
+                    src={episode.series.coverUrl}
+                    alt={episode.series.title}
+                    fill
+                    sizes="56px"
+                    className="object-cover rounded"
+                  />
+                </div>
               )}
               <div className="min-w-0">
                 <Link
