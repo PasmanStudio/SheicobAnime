@@ -15,7 +15,7 @@ export const metadata: Metadata = {
 };
 
 interface Props {
-  searchParams: {
+  searchParams: Promise<{
     genre?: string;
     letter?: string;
     type?: string;
@@ -23,24 +23,25 @@ interface Props {
     year?: string;
     sort?: string;
     page?: string;
-  };
+  }>;
 }
 
 export default async function DirectoryPage({ searchParams }: Props) {
-  const page = Math.max(1, parseInt(searchParams.page ?? "1", 10));
+  const sp = await searchParams;
+  const page = Math.max(1, parseInt(sp.page ?? "1", 10));
   const pageSize = 24;
 
   const params: SeriesQueryParams = {
     page,
     pageSize,
-    sort: (searchParams.sort as SeriesQueryParams["sort"]) ?? "updated",
+    sort: (sp.sort as SeriesQueryParams["sort"]) ?? "updated",
   };
 
-  if (searchParams.genre) params.genre = searchParams.genre;
-  if (searchParams.type) params.type = searchParams.type as SeriesType;
-  if (searchParams.status) params.status = searchParams.status as SeriesStatus;
-  if (searchParams.year) params.year = parseInt(searchParams.year, 10);
-  if (searchParams.letter) params.letter = searchParams.letter;
+  if (sp.genre) params.genre = sp.genre;
+  if (sp.type) params.type = sp.type as SeriesType;
+  if (sp.status) params.status = sp.status as SeriesStatus;
+  if (sp.year) params.year = parseInt(sp.year, 10);
+  if (sp.letter) params.letter = sp.letter;
 
   let results;
   try {
@@ -51,12 +52,12 @@ export default async function DirectoryPage({ searchParams }: Props) {
 
   // Build basePath for pagination preserving current filters
   const filterParams = new URLSearchParams();
-  if (searchParams.genre) filterParams.set("genre", searchParams.genre);
-  if (searchParams.letter) filterParams.set("letter", searchParams.letter);
-  if (searchParams.type) filterParams.set("type", searchParams.type);
-  if (searchParams.status) filterParams.set("status", searchParams.status);
-  if (searchParams.year) filterParams.set("year", searchParams.year);
-  if (searchParams.sort) filterParams.set("sort", searchParams.sort);
+  if (sp.genre) filterParams.set("genre", sp.genre);
+  if (sp.letter) filterParams.set("letter", sp.letter);
+  if (sp.type) filterParams.set("type", sp.type);
+  if (sp.status) filterParams.set("status", sp.status);
+  if (sp.year) filterParams.set("year", sp.year);
+  if (sp.sort) filterParams.set("sort", sp.sort);
   const filterString = filterParams.toString();
   const basePath = filterString ? `/directory?${filterString}` : "/directory";
 
@@ -72,12 +73,12 @@ export default async function DirectoryPage({ searchParams }: Props) {
 
       <DirectoryFilters
         currentFilters={{
-          genre: searchParams.genre,
-          letter: searchParams.letter,
-          type: searchParams.type,
-          status: searchParams.status,
-          year: searchParams.year,
-          sort: searchParams.sort,
+          genre: sp.genre,
+          letter: sp.letter,
+          type: sp.type,
+          status: sp.status,
+          year: sp.year,
+          sort: sp.sort,
         }}
       />
 

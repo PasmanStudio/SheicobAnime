@@ -4,7 +4,7 @@ import { getEpisode, ApiError } from "@/lib/api";
 export const dynamic = "force-dynamic";
 
 interface Props {
-  params: { id: string };
+  params: Promise<{ id: string }>;
 }
 
 /**
@@ -12,9 +12,10 @@ interface Props {
  * Keeps bookmarks and search engine links alive.
  */
 export default async function EpisodeRedirectPage({ params }: Props) {
+  const { id } = await params;
   let episode;
   try {
-    episode = await getEpisode(params.id);
+    episode = await getEpisode(id);
   } catch (err) {
     if (err instanceof ApiError && err.status === 404) notFound();
     throw err;

@@ -362,10 +362,20 @@ public class BackfillJob(
 
     private static readonly Dictionary<string, short> ProviderPriorities = new(StringComparer.OrdinalIgnoreCase)
     {
-        ["okru"] = 1, ["mp4upload"] = 2, ["sendvid"] = 3, ["yourupload"] = 4,
-        ["filemoon"] = 5, ["streamwish"] = 6, ["voe"] = 7, ["vidhide"] = 8,
-        ["streamtape"] = 9, ["fembed"] = 10, ["doodstream"] = 11, ["nozomi"] = 12,
-        ["mixdrop"] = 13, ["desu"] = 14,
+        ["okru"] = 1,
+        ["mp4upload"] = 2,
+        ["sendvid"] = 3,
+        ["yourupload"] = 4,
+        ["filemoon"] = 5,
+        ["streamwish"] = 6,
+        ["voe"] = 7,
+        ["vidhide"] = 8,
+        ["streamtape"] = 9,
+        ["fembed"] = 10,
+        ["doodstream"] = 11,
+        ["nozomi"] = 12,
+        ["mixdrop"] = 13,
+        ["desu"] = 14,
     };
 
     private static short GetProviderPriority(string provider) =>
@@ -381,8 +391,12 @@ public class BackfillJob(
 
     private static string MapType(string? raw) => raw?.ToLowerInvariant() switch
     {
-        "tv" => "tv", "movie" => "movie", "ova" => "ova",
-        "ona" => "ona", "special" => "special", _ => "tv"
+        "tv" => "tv",
+        "movie" => "movie",
+        "ova" => "ova",
+        "ona" => "ona",
+        "special" => "special",
+        _ => "tv"
     };
 
     // ── Pass 3: SeekStreaming upload ─────────────────────────

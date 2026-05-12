@@ -12,17 +12,18 @@ import { notFound } from "next/navigation";
 export const dynamic = "force-dynamic";
 
 interface Props {
-  params: { slug: string; episode: string };
+  params: Promise<{ slug: string; episode: string }>;
 }
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
-  const episodeNumber = Number(params.episode);
+  const { slug, episode: episodeStr } = await params;
+  const episodeNumber = Number(episodeStr);
   if (!Number.isInteger(episodeNumber) || episodeNumber < 1) {
     return { title: "Episode Not Found" };
   }
 
   try {
-    const episode = await getEpisodeBySlug(params.slug, episodeNumber);
+    const episode = await getEpisodeBySlug(slug, episodeNumber);
     const baseTitle = episode.series
       ? `${episode.series.title} — Episodio ${episode.episodeNumber}`
       : `Episodio ${episode.episodeNumber}`;
@@ -41,12 +42,13 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 }
 
 export default async function EpisodePage({ params }: Readonly<Props>) {
-  const episodeNumber = Number(params.episode);
+  const { slug, episode: episodeStr } = await params;
+  const episodeNumber = Number(episodeStr);
   if (!Number.isInteger(episodeNumber) || episodeNumber < 1) notFound();
 
   let episode;
   try {
-    episode = await getEpisodeBySlug(params.slug, episodeNumber);
+    episode = await getEpisodeBySlug(slug, episodeNumber);
   } catch (err) {
     if (err instanceof ApiError && err.status === 404) notFound();
     throw err;
@@ -57,8 +59,8 @@ export default async function EpisodePage({ params }: Readonly<Props>) {
   let mirrors: Awaited<ReturnType<typeof getEpisodeMirrorsBySlug>> = [];
   try {
     [{ data: allEpisodes }, mirrors] = await Promise.all([
-      getSeriesEpisodes(params.slug, { pageSize: 500 }),
-      getEpisodeMirrorsBySlug(params.slug, episodeNumber),
+      getSeriesEpisodes(slug, { pageSize: 500 }),
+      getEpisodeMirrorsBySlug(slug, episodeNumber),
     ]);
   } catch {
     allEpisodes = [];
@@ -70,7 +72,7 @@ export default async function EpisodePage({ params }: Readonly<Props>) {
     : `Episodio ${episode.episodeNumber}`;
 
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://sheicobanime.vercel.app";
-  const pageUrl = `${siteUrl}/series/${params.slug}/${episode.episodeNumber}`;
+  const pageUrl = `${siteUrl}/series/${slug}/${episode.episodeNumber}`;
 
   return (
     <div className="container mx-auto px-4 py-6 max-w-6xl">
@@ -159,7 +161,7 @@ export default async function EpisodePage({ params }: Readonly<Props>) {
           <div className="flex items-center justify-between gap-2 mt-4">
             {episodeNumber > 1 ? (
               <Link
-                href={`/series/${params.slug}/${episodeNumber - 1}`}
+                href={`/series/${slug}/${episodeNumber - 1}`}
                 className="flex-1 sm:flex-none text-center px-4 py-3 sm:py-2 bg-neutral-800 hover:bg-neutral-700 text-sm text-neutral-300 hover:text-white rounded-lg transition-colors"
               >
                 ‹ Anterior
@@ -169,7 +171,7 @@ export default async function EpisodePage({ params }: Readonly<Props>) {
             )}
             {allEpisodes.some((ep) => ep.episodeNumber === episodeNumber + 1) && (
               <Link
-                href={`/series/${params.slug}/${episodeNumber + 1}`}
+                href={`/series/${slug}/${episodeNumber + 1}`}
                 className="flex-1 sm:flex-none text-center px-4 py-3 sm:py-2 bg-neutral-800 hover:bg-neutral-700 text-sm text-neutral-300 hover:text-white rounded-lg transition-colors"
               >
                 Siguiente ›
@@ -181,7 +183,7 @@ export default async function EpisodePage({ params }: Readonly<Props>) {
           <section className="mt-6">
             <h2 className="text-lg font-semibold text-white mb-3">Comentarios</h2>
             <CommentSection
-              pageId={`${params.slug}-ep${episode.episodeNumber}`}
+              pageId={`${slug}-ep${episode.episodeNumber}`}
               pageUrl={pageUrl}
             />
           </section>
@@ -194,7 +196,7 @@ export default async function EpisodePage({ params }: Readonly<Props>) {
           <EpisodeSidebar
             episodes={allEpisodes}
             currentEpisodeNumber={episodeNumber}
-            seriesSlug={params.slug}
+            seriesSlug={slug}
             seriesTitle={episode.series?.title ?? "Serie"}
             seriesCoverUrl={episode.series?.coverUrl}
           />

@@ -7,11 +7,12 @@ import Pagination from "@/components/ui/Pagination";
 import AdSlot from "@/components/ads/AdSlot";
 
 interface Props {
-  searchParams: { q?: string; page?: string };
+  searchParams: Promise<{ q?: string; page?: string }>;
 }
 
-export function generateMetadata({ searchParams }: Props): Metadata {
-  const q = searchParams.q?.trim() ?? "";
+export async function generateMetadata({ searchParams }: Props): Promise<Metadata> {
+  const { q: rawQ } = await searchParams;
+  const q = rawQ?.trim() ?? "";
   return {
     title: q ? `Search: ${q}` : "Search Anime",
     description: q
@@ -21,8 +22,9 @@ export function generateMetadata({ searchParams }: Props): Metadata {
 }
 
 export default async function SearchPage({ searchParams }: Props) {
-  const q = searchParams.q?.trim() ?? "";
-  const page = Math.max(1, parseInt(searchParams.page ?? "1", 10));
+  const sp = await searchParams;
+  const q = sp.q?.trim() ?? "";
+  const page = Math.max(1, parseInt(sp.page ?? "1", 10));
 
   if (!q) {
     return (

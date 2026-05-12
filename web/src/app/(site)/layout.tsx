@@ -1,9 +1,9 @@
+import AdsterraGlobalAds from "@/components/ads/AdsterraGlobalAds";
+import ConsentBanner from "@/components/ads/ConsentBanner";
+import SiteHeader from "@/components/layout/SiteHeader";
 import type { Metadata, Viewport } from "next";
 import localFont from "next/font/local";
 import "../globals.css";
-import SiteHeader from "@/components/layout/SiteHeader";
-import ConsentBanner from "@/components/ads/ConsentBanner";
-import AdsterraGlobalAds from "@/components/ads/AdsterraGlobalAds";
 
 const geistSans = localFont({
   src: "../fonts/GeistVF.woff",

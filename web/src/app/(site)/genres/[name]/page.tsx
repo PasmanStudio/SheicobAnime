@@ -8,12 +8,13 @@ import AdSlot from "@/components/ads/AdSlot";
 import Link from "next/link";
 
 interface Props {
-  params: { name: string };
-  searchParams: { page?: string };
+  params: Promise<{ name: string }>;
+  searchParams: Promise<{ page?: string }>;
 }
 
-export function generateMetadata({ params }: Pick<Props, "params">): Metadata {
-  const name = decodeURIComponent(params.name);
+export async function generateMetadata({ params }: Pick<Props, "params">): Promise<Metadata> {
+  const { name: rawName } = await params;
+  const name = decodeURIComponent(rawName);
   return {
     title: `${name} Anime`,
     description: `Browse ${name} anime series on SheicobAnime.`,
@@ -21,8 +22,10 @@ export function generateMetadata({ params }: Pick<Props, "params">): Metadata {
 }
 
 export default async function GenrePage({ params, searchParams }: Props) {
-  const name = decodeURIComponent(params.name);
-  const page = Math.max(1, parseInt(searchParams.page ?? "1", 10));
+  const { name: rawName } = await params;
+  const { page: pageParam } = await searchParams;
+  const name = decodeURIComponent(rawName);
+  const page = Math.max(1, parseInt(pageParam ?? "1", 10));
 
   const results = await getSeries({ genre: name, page, pageSize: 24 });
 
@@ -62,7 +65,7 @@ export default async function GenrePage({ params, searchParams }: Props) {
         page={page}
         total={results.total}
         pageSize={24}
-        basePath={`/genres/${params.name}`}
+          basePath={`/genres/${rawName}`}
       />
 
       <AdSlot placement="genre_bottom" />

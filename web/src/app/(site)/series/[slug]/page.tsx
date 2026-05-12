@@ -1,22 +1,22 @@
-import type { Metadata } from "next";
-import { notFound } from "next/navigation";
-import Image from "next/image";
-import Link from "next/link";
-import { getSeriesBySlug, getSeriesEpisodes } from "@/lib/api";
-
-export const dynamic = "force-dynamic";
-import { ApiError } from "@/lib/api";
 import AdSlot from "@/components/ads/AdSlot";
 import Pagination from "@/components/ui/Pagination";
+import { ApiError, getSeriesBySlug, getSeriesEpisodes } from "@/lib/api";
+import type { Metadata } from "next";
+import Image from "next/image";
+import Link from "next/link";
+import { notFound } from "next/navigation";
+
+export const dynamic = "force-dynamic";
 
 interface Props {
-  params: { slug: string };
-  searchParams: { page?: string };
+  params: Promise<{ slug: string }>;
+  searchParams: Promise<{ page?: string }>;
 }
 
 export async function generateMetadata({ params }: Pick<Props, "params">): Promise<Metadata> {
   try {
-    const series = await getSeriesBySlug(params.slug);
+    const { slug } = await params;
+    const series = await getSeriesBySlug(slug);
     return {
       title: series.title,
       description:
@@ -34,13 +34,15 @@ export async function generateMetadata({ params }: Pick<Props, "params">): Promi
 }
 
 export default async function SeriesPage({ params, searchParams }: Props) {
-  const page = Math.max(1, parseInt(searchParams.page ?? "1", 10));
+  const { slug } = await params;
+  const { page: pageParam } = await searchParams;
+  const page = Math.max(1, parseInt(pageParam ?? "1", 10));
 
   let series, episodesPage;
   try {
     [series, episodesPage] = await Promise.all([
-      getSeriesBySlug(params.slug),
-      getSeriesEpisodes(params.slug, { page, pageSize: 24 }),
+      getSeriesBySlug(slug),
+      getSeriesEpisodes(slug, { page, pageSize: 24 }),
     ]);
   } catch (err) {
     if (err instanceof ApiError && err.status === 404) notFound();
@@ -224,7 +226,7 @@ export default async function SeriesPage({ params, searchParams }: Props) {
             {episodesPage.data.map((ep) => (
               <Link
                 key={ep.id}
-                href={`/series/${params.slug}/${ep.episodeNumber}`}
+                href={`/series/${slug}/${ep.episodeNumber}`}
                 className="flex items-center justify-center px-3 py-2.5 rounded-md bg-neutral-800 hover:bg-indigo-700 hover:text-white text-neutral-300 text-sm font-medium transition-colors"
               >
                 Ep {ep.episodeNumber}
@@ -242,7 +244,7 @@ export default async function SeriesPage({ params, searchParams }: Props) {
           page={page}
           total={episodesPage.total}
           pageSize={24}
-          basePath={`/series/${params.slug}`}
+          basePath={`/series/${slug}`}
         />
       </section>
 

@@ -6,7 +6,7 @@ import { notFound } from "next/navigation";
 export const dynamic = "force-dynamic";
 
 interface Props {
-  params: { episodeId: string };
+  params: Promise<{ episodeId: string }>;
 }
 
 /**
@@ -19,11 +19,12 @@ interface Props {
  * origin; any third party trying to embed it is denied.
  */
 export default async function EmbedPlayerPage({ params }: Readonly<Props>) {
+  const { episodeId } = await params;
   let episode, mirrors;
   try {
     [episode, mirrors] = await Promise.all([
-      getEpisode(params.episodeId),
-      getEpisodeMirrors(params.episodeId),
+      getEpisode(episodeId),
+      getEpisodeMirrors(episodeId),
     ]);
   } catch (err) {
     if (err instanceof ApiError && err.status === 404) notFound();
