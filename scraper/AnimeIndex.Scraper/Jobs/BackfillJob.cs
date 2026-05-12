@@ -465,49 +465,66 @@ public class BackfillJob(
 
         await UpdateProgressAsync(job, $"pass3:uploading:0/{allTargets.Count}", ct);
 
-        // ── Phase B: Upload all resolved targets in parallel ──────────────────
+        // ── Phase B: Upload resolved targets with bounded parallelism ─────────
         // Each episode gets its own DI scope. Within the scope, candidates are tried
         // in priority order — if the first CDN download fails (cloud-IP block, 403,
         // timeout) we automatically fall back to the next resolved provider.
+        //
+        // MaxParallelUploads (default 6) caps simultaneous tus uploads so we don't
+        // saturate the GHA runner's bandwidth or hit SeekStreaming rate limits.
+        // Set env var SEEKSTREAMING__MAXPARALLELUPLOADS to tune (max 20 recommended).
+        var maxParallel = Math.Clamp(
+            config.GetValue("SeekStreaming:MaxParallelUploads", 6),
+            1, 20);
+
+        logger.LogInformation("Pass 3 Phase B: launching {Count} uploads, maxParallel={Max}",
+            allTargets.Count, maxParallel);
+
         var uploaded = 0;
         var uploadFailed = 0;
         var done = 0;
         var progressLock = new SemaphoreSlim(1, 1);
+        using var uploadSem = new SemaphoreSlim(maxParallel, maxParallel);
 
         var tasks = allTargets.Select(async candidates =>
         {
-            if (ct.IsCancellationRequested) return;
-
-            using var scope = scopeFactory.CreateScope();
-            var scopedService = scope.ServiceProvider.GetRequiredService<SeekStreamingUploadService>();
-
-            var success = false;
-            foreach (var target in candidates)
+            await uploadSem.WaitAsync(ct);
+            try
             {
-                success = await scopedService.UploadResolvedAsync(target, ct);
-                if (success) break;
+                if (ct.IsCancellationRequested) return;
 
-                if (candidates.Count > 1)
-                    logger.LogWarning(
-                        "Episode {Id}: upload via {Provider} failed — trying next candidate",
-                        target.EpisodeId, target.Provider);
-            }
+                using var scope = scopeFactory.CreateScope();
+                var scopedService = scope.ServiceProvider.GetRequiredService<SeekStreamingUploadService>();
 
-            if (success) Interlocked.Increment(ref uploaded); else Interlocked.Increment(ref uploadFailed);
-
-            var doneNow = Interlocked.Increment(ref done);
-            if (doneNow % 3 == 0 || doneNow == allTargets.Count)
-            {
-                await progressLock.WaitAsync(ct);
-                try
+                var success = false;
+                foreach (var target in candidates)
                 {
-                    await UpdateProgressAsync(job,
-                        $"pass3:uploading:{doneNow}/{allTargets.Count},uploaded:{Volatile.Read(ref uploaded)},failed:{Volatile.Read(ref uploadFailed)}",
-                        ct);
+                    success = await scopedService.UploadResolvedAsync(target, ct);
+                    if (success) break;
+
+                    if (candidates.Count > 1)
+                        logger.LogWarning(
+                            "Episode {Id}: upload via {Provider} failed — trying next candidate",
+                            target.EpisodeId, target.Provider);
                 }
-                finally { progressLock.Release(); }
+
+                if (success) Interlocked.Increment(ref uploaded); else Interlocked.Increment(ref uploadFailed);
+
+                var doneNow = Interlocked.Increment(ref done);
+                if (doneNow % 3 == 0 || doneNow == allTargets.Count)
+                {
+                    await progressLock.WaitAsync(ct);
+                    try
+                    {
+                        await UpdateProgressAsync(job,
+                            $"pass3:uploading:{doneNow}/{allTargets.Count},uploaded:{Volatile.Read(ref uploaded)},failed:{Volatile.Read(ref uploadFailed)}",
+                            ct);
+                    }
+                    finally { progressLock.Release(); }
+                }
             }
-        });
+            finally { uploadSem.Release(); }
+        }).ToArray();
 
         await Task.WhenAll(tasks);
 
