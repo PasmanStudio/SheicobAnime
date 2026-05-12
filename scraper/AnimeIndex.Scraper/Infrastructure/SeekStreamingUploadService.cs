@@ -183,7 +183,7 @@ public sealed class SeekStreamingUploadService
 
             if (seekEmbedUrl is null)
             {
-                _logger.LogWarning("Episode {Id}: tus upload returned null embed URL", target.EpisodeId);
+                _logger.LogWarning("\u274c Episode {Id}: SeekStreaming upload failed — tus returned no embed URL", target.EpisodeId);
                 return false;
             }
 
@@ -195,7 +195,7 @@ public sealed class SeekStreamingUploadService
                 Priority: 0), ct);
 
             _logger.LogInformation(
-                "Episode {Id}: SeekStreaming mirror upserted (embed={Embed}, source={Provider})",
+                "\u2705 Episode {Id}: SeekStreaming video created OK (embed={Embed}, source={Provider})",
                 target.EpisodeId, seekEmbedUrl, target.Provider);
 
             return true;
@@ -206,7 +206,7 @@ public sealed class SeekStreamingUploadService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Episode {Id}: upload failed", target.EpisodeId);
+            _logger.LogWarning(ex, "\u274c Episode {Id}: SeekStreaming upload failed (exception)", target.EpisodeId);
             return false;
         }
     }

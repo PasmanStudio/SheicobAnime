@@ -197,14 +197,14 @@ public sealed class SeekStreamingClient
         if (videoId is null)
         {
             _logger.LogWarning(
-                "SeekStreaming: video {Filename} not Active after {Timeout} min",
+                "\u274c SeekStreaming: video {Filename} not Active after {Timeout} min — transcoding timed out",
                 filename, pollTimeoutMinutes);
             return null;
         }
 
         var embedUrl = GetEmbedUrl(videoId);
         _logger.LogInformation(
-            "SeekStreaming upload complete: filename={Filename} videoId={VideoId} embed={EmbedUrl}",
+            "\u2705 SeekStreaming upload complete: filename={Filename} videoId={VideoId} embed={EmbedUrl}",
             filename, videoId, embedUrl);
         return embedUrl;
     }
