@@ -156,21 +156,21 @@ export default async function EpisodePage({ params }: Readonly<Props>) {
           )}
 
           {/* Prev / Next navigation */}
-          <div className="flex items-center justify-between mt-4">
+          <div className="flex items-center justify-between gap-2 mt-4">
             {episodeNumber > 1 ? (
               <Link
                 href={`/series/${params.slug}/${episodeNumber - 1}`}
-                className="px-4 py-2 bg-neutral-800 hover:bg-neutral-700 text-sm text-neutral-300 hover:text-white rounded-lg transition-colors"
+                className="flex-1 sm:flex-none text-center px-4 py-3 sm:py-2 bg-neutral-800 hover:bg-neutral-700 text-sm text-neutral-300 hover:text-white rounded-lg transition-colors"
               >
                 ‹ Anterior
               </Link>
             ) : (
-              <span />
+              <span className="flex-1 sm:flex-none" />
             )}
             {allEpisodes.some((ep) => ep.episodeNumber === episodeNumber + 1) && (
               <Link
                 href={`/series/${params.slug}/${episodeNumber + 1}`}
-                className="px-4 py-2 bg-neutral-800 hover:bg-neutral-700 text-sm text-neutral-300 hover:text-white rounded-lg transition-colors"
+                className="flex-1 sm:flex-none text-center px-4 py-3 sm:py-2 bg-neutral-800 hover:bg-neutral-700 text-sm text-neutral-300 hover:text-white rounded-lg transition-colors"
               >
                 Siguiente ›
               </Link>

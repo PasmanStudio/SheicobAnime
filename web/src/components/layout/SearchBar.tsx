@@ -149,7 +149,7 @@ export default function SearchBar() {
           placeholder="Buscar anime…"
           aria-label="Buscar anime"
           autoComplete="off"
-          className="w-28 sm:w-44 md:w-64 rounded-md bg-neutral-800 border border-neutral-700 px-3 py-1.5 text-sm text-white placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors"
+          className="w-32 sm:w-44 md:w-64 rounded-md bg-neutral-800 border border-neutral-700 px-3 py-1.5 text-sm text-white placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors"
         />
         <button
           type="submit"
@@ -165,7 +165,7 @@ export default function SearchBar() {
 
       {/* Suggestions dropdown */}
       {showSuggestions && (
-        <div className="absolute right-0 top-full mt-1 w-80 bg-neutral-900 border border-neutral-700 rounded-lg shadow-xl z-50 overflow-hidden">
+        <div className="absolute right-0 top-full mt-1 w-80 max-w-[calc(100vw-1rem)] bg-neutral-900 border border-neutral-700 rounded-lg shadow-xl z-50 overflow-hidden">
           {suggestions.map((item, i) => (
             <button
               key={item.slug}
@@ -214,7 +214,7 @@ export default function SearchBar() {
 
       {/* Recent searches dropdown */}
       {showRecent && (
-        <div className="absolute right-0 top-full mt-1 w-72 bg-neutral-900 border border-neutral-700 rounded-lg shadow-xl z-50 overflow-hidden">
+        <div className="absolute right-0 top-full mt-1 w-72 max-w-[calc(100vw-1rem)] bg-neutral-900 border border-neutral-700 rounded-lg shadow-xl z-50 overflow-hidden">
           <div className="flex items-center justify-between px-3 py-2 border-b border-neutral-800">
             <span className="text-xs text-neutral-400 font-medium">Búsquedas recientes</span>
             <button

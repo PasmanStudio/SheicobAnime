@@ -50,9 +50,9 @@ export default async function SeriesPage({ params, searchParams }: Props) {
   return (
     <div className="container mx-auto px-4 py-8">
       {/* Hero */}
-      <div className="flex flex-col md:flex-row gap-6 mb-8">
+      <div className="flex flex-col md:flex-row gap-6 mb-8 items-center md:items-start">
         {/* Cover */}
-        <div className="shrink-0 w-44 md:w-52 self-start">
+        <div className="shrink-0 w-36 sm:w-44 md:w-52 self-center md:self-start mx-auto md:mx-0">
           <div className="relative aspect-[2/3] rounded-lg overflow-hidden bg-neutral-800 shadow-xl">
             {series.coverUrl ? (
               <Image
@@ -72,7 +72,7 @@ export default async function SeriesPage({ params, searchParams }: Props) {
         </div>
 
         {/* Info */}
-        <div className="flex-1 space-y-4">
+        <div className="flex-1 space-y-4 text-center md:text-left">
           <h1 className="text-2xl md:text-3xl font-bold text-white">
             {series.title}
           </h1>
@@ -93,7 +93,7 @@ export default async function SeriesPage({ params, searchParams }: Props) {
 
           {/* Genres */}
           {series.genres.length > 0 && (
-            <div className="flex flex-wrap gap-1.5">
+            <div className="flex flex-wrap gap-1.5 justify-center md:justify-start">
               {series.genres.map((g) => (
                 <Link
                   key={g.id}

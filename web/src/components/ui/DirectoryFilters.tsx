@@ -142,12 +142,12 @@ export default function DirectoryFilters({ currentFilters }: DirectoryFiltersPro
         </button>
       </div>
 
-      {/* Letter filter */}
-      <div className="flex flex-wrap gap-1">
+      {/* Letter filter — horizontally scrollable on mobile */}
+      <div className="flex gap-1 overflow-x-auto pb-1 scrollbar-thin scrollbar-track-transparent scrollbar-thumb-neutral-700">
         <button
           type="button"
           onClick={() => updateFilter("letter", "")}
-          className={`px-2.5 py-1 text-xs rounded font-medium transition-colors ${
+          className={`shrink-0 px-3 py-1.5 text-xs rounded font-medium transition-colors ${
             !currentFilters.letter
               ? "bg-indigo-600 text-white"
               : "bg-neutral-800 text-neutral-400 hover:bg-neutral-700 hover:text-white"
@@ -160,7 +160,7 @@ export default function DirectoryFilters({ currentFilters }: DirectoryFiltersPro
             key={l}
             type="button"
             onClick={() => updateFilter("letter", l)}
-            className={`px-2.5 py-1 text-xs rounded font-medium transition-colors ${
+            className={`shrink-0 px-2.5 py-1.5 text-xs rounded font-medium transition-colors ${
               currentFilters.letter === l
                 ? "bg-indigo-600 text-white"
                 : "bg-neutral-800 text-neutral-400 hover:bg-neutral-700 hover:text-white"

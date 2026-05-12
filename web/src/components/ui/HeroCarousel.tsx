@@ -69,7 +69,7 @@ export default function HeroCarousel({ series }: HeroCarouselProps) {
       </div>
 
       {/* Content */}
-      <div className="relative h-full flex flex-col justify-end p-6 sm:p-8 md:p-10 max-w-3xl">
+      <div className="relative h-full flex flex-col justify-end pl-14 pr-14 pb-6 sm:pl-16 sm:pr-6 sm:pb-8 md:pl-10 md:pr-10 md:pb-10 max-w-3xl">
         <h2 className="text-2xl sm:text-3xl md:text-4xl font-bold text-white leading-tight drop-shadow-lg">
           {item.title}
         </h2>
@@ -107,10 +107,10 @@ export default function HeroCarousel({ series }: HeroCarouselProps) {
         )}
 
         {/* Action buttons */}
-        <div className="flex items-center gap-3 mt-4">
+        <div className="flex flex-wrap items-center gap-2 sm:gap-3 mt-4">
           <Link
             href={`/series/${item.slug}`}
-            className="inline-flex items-center gap-2 bg-neutral-700/80 hover:bg-neutral-600 text-white text-sm font-medium px-5 py-2.5 rounded-lg transition-colors"
+            className="inline-flex items-center gap-2 bg-neutral-700/80 hover:bg-neutral-600 text-white text-sm font-medium px-4 py-2 sm:px-5 sm:py-2.5 rounded-lg transition-colors"
           >
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -119,7 +119,7 @@ export default function HeroCarousel({ series }: HeroCarouselProps) {
           </Link>
           <Link
             href={`/series/${item.slug}`}
-            className="inline-flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-5 py-2.5 rounded-lg transition-colors"
+            className="inline-flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-4 py-2 sm:px-5 sm:py-2.5 rounded-lg transition-colors"
           >
             <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
               <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd" />
@@ -129,13 +129,13 @@ export default function HeroCarousel({ series }: HeroCarouselProps) {
         </div>
       </div>
 
-      {/* Navigation arrows */}
+      {/* Navigation arrows — vertically centered, accessible on mobile */}
       {items.length > 1 && (
         <>
           <button
             type="button"
             onClick={prev}
-            className="absolute right-14 top-4 sm:top-6 w-9 h-9 flex items-center justify-center bg-neutral-800/70 hover:bg-neutral-700 text-white rounded-lg transition-colors"
+            className="absolute left-2 top-1/2 -translate-y-1/2 w-9 h-9 flex items-center justify-center bg-black/50 hover:bg-black/70 text-white rounded-full transition-colors"
             aria-label="Anterior"
           >
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -145,7 +145,7 @@ export default function HeroCarousel({ series }: HeroCarouselProps) {
           <button
             type="button"
             onClick={next}
-            className="absolute right-4 top-4 sm:top-6 w-9 h-9 flex items-center justify-center bg-neutral-800/70 hover:bg-neutral-700 text-white rounded-lg transition-colors"
+            className="absolute right-2 top-1/2 -translate-y-1/2 w-9 h-9 flex items-center justify-center bg-black/50 hover:bg-black/70 text-white rounded-full transition-colors"
             aria-label="Siguiente"
           >
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
