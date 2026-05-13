@@ -25,7 +25,6 @@ public class BackfillJob(
     UpsertPipelineService upsert,
     JkAnimeHttpClient http,
     DeadLetterAlerter alerter,
-    SeekStreamingUploadService seekStreaming,
     IServiceScopeFactory scopeFactory,
     IConfiguration config,
     ILogger<BackfillJob> logger)
@@ -431,76 +430,92 @@ public class BackfillJob(
             return;
         }
 
-        logger.LogInformation("Pass 3: {Count} episodes — resolving embed URLs first", episodeIds.Count);
+        logger.LogInformation("Pass 3: {Count} episodes — resolving embed URLs first (parallel)", episodeIds.Count);
         await UpdateProgressAsync(job, $"pass3:resolving:0/{episodeIds.Count}", ct);
 
         // ── Phase A: Resolve ALL candidate URLs per episode ───────────────────
-        // Collects every provider that can produce a direct MP4 (not just the first).
-        // This lets Phase B fall back to the next provider if the primary CDN
-        // download fails (e.g. mp4upload port 183 blocks GitHub Actions IPs).
-        var allTargets = new List<IReadOnlyList<ResolvedUploadTarget>>(episodeIds.Count);
+        // Runs in parallel (16 concurrent resolver slots) so HTTP round-trips to
+        // mp4upload/okru/etc. don't block each other. Each resolver is read-only
+        // (no DB writes) so there is no ordering concern.
+        // The DB query for embed URLs is issued inside each task to avoid sharing
+        // the EF DbContext across threads (DbContext is not thread-safe).
+        var allTargets = new System.Collections.Concurrent.ConcurrentBag<IReadOnlyList<ResolvedUploadTarget>>();
         var resolveSkipped = 0;
+        var resolvedCount = 0;
+        using var resolveSem = new SemaphoreSlim(16, 16);
 
-        for (var i = 0; i < episodeIds.Count; i++)
+        var resolveTasks = episodeIds.Select(async episodeId =>
         {
-            if (ct.IsCancellationRequested) break;
+            await resolveSem.WaitAsync(ct);
+            try
+            {
+                if (ct.IsCancellationRequested) return;
 
-            var episodeId = episodeIds[i];
+                // Each task needs its own scope so EF DbContext is not shared.
+                using var scope = scopeFactory.CreateScope();
+                var scopedDb = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
-            var embedUrls = await db.Mirrors
-                .AsNoTracking()
-                .Where(m => m.EpisodeId == episodeId && m.IsActive)
-                .OrderBy(m => m.Priority)
-                .Select(m => m.EmbedUrl)
-                .ToListAsync(ct);
+                var embedUrls = await scopedDb.Mirrors
+                    .AsNoTracking()
+                    .Where(m => m.EpisodeId == episodeId && m.IsActive)
+                    .OrderBy(m => m.Priority)
+                    .Select(m => m.EmbedUrl)
+                    .ToListAsync(ct);
 
-            var candidates = await seekStreaming.ResolveAllDirectUrlsAsync(episodeId, embedUrls, ct);
+                var scopedSeek = scope.ServiceProvider.GetRequiredService<SeekStreamingUploadService>();
+                var candidates = await scopedSeek.ResolveAllDirectUrlsAsync(episodeId, embedUrls, ct);
 
-            if (candidates.Count > 0)
-                allTargets.Add(candidates);
-            else
-                resolveSkipped++;
+                if (candidates.Count > 0)
+                    allTargets.Add(candidates);
+                else
+                    Interlocked.Increment(ref resolveSkipped);
 
-            if ((i + 1) % 5 == 0 || i == episodeIds.Count - 1)
-                await UpdateProgressAsync(job,
-                    $"pass3:resolving:{i + 1}/{episodeIds.Count},found:{allTargets.Count},skipped:{resolveSkipped}",
-                    ct);
-        }
+                var done = Interlocked.Increment(ref resolvedCount);
+                if (done % 10 == 0 || done == episodeIds.Count)
+                    await UpdateProgressAsync(job,
+                        $"pass3:resolving:{done}/{episodeIds.Count},found:{allTargets.Count},skipped:{Volatile.Read(ref resolveSkipped)}",
+                        ct);
+            }
+            finally { resolveSem.Release(); }
+        }).ToArray();
+
+        await Task.WhenAll(resolveTasks);
+
+        var resolvedTargets = allTargets.ToList();
 
         logger.LogInformation(
-            "Pass 3 resolve complete — {Found} episodes with candidates, {Skipped} unresolvable — launching {Found} parallel uploads",
-            allTargets.Count, resolveSkipped, allTargets.Count);
+            "Pass 3 resolve complete — {Found} episodes with candidates, {Skipped} unresolvable — launching parallel uploads",
+            resolvedTargets.Count, resolveSkipped);
 
-        if (allTargets.Count == 0)
+        if (resolvedTargets.Count == 0)
         {
             await UpdateProgressAsync(job, $"pass3:done:uploaded:0,failed:0,unresolvable:{resolveSkipped}", ct);
             return;
         }
 
-        await UpdateProgressAsync(job, $"pass3:uploading:0/{allTargets.Count}", ct);
+        await UpdateProgressAsync(job, $"pass3:uploading:0/{resolvedTargets.Count}", ct);
 
         // ── Phase B: Upload resolved targets with bounded parallelism ─────────
         // Each episode gets its own DI scope. Within the scope, candidates are tried
         // in priority order — if the first CDN download fails (cloud-IP block, 403,
         // timeout) we automatically fall back to the next resolved provider.
         //
-        // MaxParallelUploads (default 6) caps simultaneous tus uploads so we don't
-        // saturate the GHA runner's bandwidth or hit SeekStreaming rate limits.
-        // Set env var SEEKSTREAMING__MAXPARALLELUPLOADS to tune (max 20 recommended).
+        // MaxParallelUploads caps simultaneous tus uploads. Default 20 (SeekStreaming
+        // account limit). Set env var SEEKSTREAMING__MAXPARALLELUPLOADS to override.
         var maxParallel = Math.Clamp(
-            config.GetValue("SeekStreaming:MaxParallelUploads", 6),
+            config.GetValue("SeekStreaming:MaxParallelUploads", 20),
             1, 20);
 
         logger.LogInformation("Pass 3 Phase B: launching {Count} uploads, maxParallel={Max}",
-            allTargets.Count, maxParallel);
+            resolvedTargets.Count, maxParallel);
 
         var uploaded = 0;
         var uploadFailed = 0;
-        var done = 0;
+        var uploadsDone = 0;
         var progressLock = new SemaphoreSlim(1, 1);
         using var uploadSem = new SemaphoreSlim(maxParallel, maxParallel);
 
-        var tasks = allTargets.Select(async candidates =>
+        var tasks = resolvedTargets.Select(async candidates =>
         {
             await uploadSem.WaitAsync(ct);
             try
@@ -524,14 +539,14 @@ public class BackfillJob(
 
                 if (success) Interlocked.Increment(ref uploaded); else Interlocked.Increment(ref uploadFailed);
 
-                var doneNow = Interlocked.Increment(ref done);
-                if (doneNow % 3 == 0 || doneNow == allTargets.Count)
+                var doneNow = Interlocked.Increment(ref uploadsDone);
+                if (doneNow % 3 == 0 || doneNow == resolvedTargets.Count)
                 {
                     await progressLock.WaitAsync(ct);
                     try
                     {
                         await UpdateProgressAsync(job,
-                            $"pass3:uploading:{doneNow}/{allTargets.Count},uploaded:{Volatile.Read(ref uploaded)},failed:{Volatile.Read(ref uploadFailed)}",
+                            $"pass3:uploading:{doneNow}/{resolvedTargets.Count},uploaded:{Volatile.Read(ref uploaded)},failed:{Volatile.Read(ref uploadFailed)}",
                             ct);
                     }
                     finally { progressLock.Release(); }

@@ -132,7 +132,11 @@ public sealed class SeekStreamingClient
             filename, fileSize, directVideoUrl);
 
         // ─── Step 4: stream download → tus PATCH in 50 MB chunks ──
+        // Chunks are retried up to 3 times on transient SeekStreaming errors (502/503/429/504).
+        // The buffer already holds the downloaded bytes so retrying only resends the PATCH —
+        // no re-download needed. offset is only incremented on a successful PATCH.
         const long ChunkSize = 52_428_800L; // 50 MB — SeekStreaming recommended
+        const int MaxChunkRetries = 3;
         try
         {
             using var dlClient = _httpFactory.CreateClient("seek-download");
@@ -161,16 +165,53 @@ public sealed class SeekStreamingClient
                 }
                 if (bytesRead == 0) break;
 
-                using var patchReq = new HttpRequestMessage(HttpMethod.Patch, uploadUrl);
-                patchReq.Headers.TryAddWithoutValidation("Tus-Resumable", "1.0.0");
-                patchReq.Headers.TryAddWithoutValidation("Upload-Offset", offset.ToString());
-                patchReq.Content = new ByteArrayContent(buffer, 0, bytesRead);
-                patchReq.Content.Headers.ContentType =
-                    MediaTypeHeaderValue.Parse("application/offset+octet-stream");
-                patchReq.Content.Headers.ContentLength = bytesRead;
+                // Retry loop — buffer already holds the chunk bytes so we can recreate
+                // the PATCH request on each attempt without re-downloading from the source.
+                System.Net.HttpStatusCode? lastFailStatus = null;
+                for (var attempt = 0; attempt < MaxChunkRetries; attempt++)
+                {
+                    if (attempt > 0)
+                    {
+                        var delay = TimeSpan.FromSeconds(Math.Pow(2, attempt + 1)); // 4s, 8s
+                        _logger.LogWarning(
+                            "SeekStreaming tus PATCH retry {Attempt}/{Max} after {Status} (offset={Offset}) — waiting {Delay}s",
+                            attempt, MaxChunkRetries, lastFailStatus, offset, delay.TotalSeconds);
+                        await Task.Delay(delay, ct);
+                    }
 
-                using var patchResp = await tusClient.SendAsync(patchReq, ct);
-                patchResp.EnsureSuccessStatusCode();
+                    using var patchReq = new HttpRequestMessage(HttpMethod.Patch, uploadUrl);
+                    patchReq.Headers.TryAddWithoutValidation("Tus-Resumable", "1.0.0");
+                    patchReq.Headers.TryAddWithoutValidation("Upload-Offset", offset.ToString());
+                    patchReq.Content = new ByteArrayContent(buffer, 0, bytesRead);
+                    patchReq.Content.Headers.ContentType =
+                        MediaTypeHeaderValue.Parse("application/offset+octet-stream");
+                    patchReq.Content.Headers.ContentLength = bytesRead;
+
+                    using var patchResp = await tusClient.SendAsync(patchReq, ct);
+
+                    if (patchResp.IsSuccessStatusCode)
+                    {
+                        lastFailStatus = null;
+                        break;
+                    }
+
+                    lastFailStatus = patchResp.StatusCode;
+
+                    // Only retry on transient server errors — fail fast on auth/client errors.
+                    if (patchResp.StatusCode is not (
+                        System.Net.HttpStatusCode.BadGateway or           // 502
+                        System.Net.HttpStatusCode.ServiceUnavailable or   // 503
+                        System.Net.HttpStatusCode.GatewayTimeout or       // 504
+                        System.Net.HttpStatusCode.TooManyRequests))       // 429
+                    {
+                        patchResp.EnsureSuccessStatusCode(); // throws for non-transient errors
+                    }
+                }
+
+                if (lastFailStatus is not null)
+                    throw new HttpRequestException(
+                        $"SeekStreaming tus PATCH failed after {MaxChunkRetries} retries — last status: {(int)lastFailStatus} {lastFailStatus}");
+
                 offset += bytesRead;
 
                 _logger.LogDebug(

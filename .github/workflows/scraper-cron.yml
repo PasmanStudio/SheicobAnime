@@ -52,8 +52,8 @@ jobs:
           REDIS_URL:     ${{ secrets.REDIS_URL }}
           HANGFIRE_DASHBOARD_PASSWORD: ${{ secrets.HANGFIRE_DASHBOARD_PASSWORD }}
           SeekStreaming__ApiKey: ${{ secrets.SEEKSTREAMING_API_KEY }}
-          # Parallel uploads: up to 6 simultaneous tus uploads (configurable, max 20)
-          SeekStreaming__MaxParallelUploads: "6"
+          # Parallel uploads: 20 simultaneous tus uploads (SeekStreaming account limit)
+          SeekStreaming__MaxParallelUploads: "20"
           # Speed up scheduler: check every 30s (default is 15s but let's be explicit)
           Source2__DelayMs: "2000"
           # Force scheduler to fire immediately on startup (override 2am cron for GHA runs)
