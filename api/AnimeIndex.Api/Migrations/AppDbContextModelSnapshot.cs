@@ -22,6 +22,67 @@ namespace AnimeIndex.Api.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("AnimeIndex.Api.Data.Entities.InstagramPost", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id")
+                        .HasDefaultValueSql("gen_random_uuid()");
+
+                    b.Property<string>("Caption")
+                        .HasColumnType("text")
+                        .HasColumnName("caption");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<string>("ErrorMessage")
+                        .HasColumnType("text")
+                        .HasColumnName("error_message");
+
+                    b.Property<Guid>("EpisodeId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("episode_id");
+
+                    b.Property<string>("IgMediaId")
+                        .HasColumnType("text")
+                        .HasColumnName("ig_media_id");
+
+                    b.Property<string>("PostType")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("post_type");
+
+                    b.Property<DateTime?>("PublishedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("published_at");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text")
+                        .HasDefaultValue("published")
+                        .HasColumnName("status");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("EpisodeId")
+                        .HasDatabaseName("idx_instagram_posts_episode");
+
+                    b.HasIndex("CreatedAt")
+                        .HasDatabaseName("idx_instagram_posts_created");
+
+                    b.ToTable("instagram_posts", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_instagram_posts_type", "post_type IN ('story','feed','carousel_item')");
+                            t.HasCheckConstraint("CK_instagram_posts_status", "status IN ('published','failed','skipped')");
+                        });
+                });
+
             modelBuilder.Entity("AnimeIndex.Api.Data.Entities.BlockedSlug", b =>
                 {
                     b.Property<string>("Slug")
@@ -437,6 +498,17 @@ namespace AnimeIndex.Api.Migrations
                         .HasDatabaseName("idx_watch_progress_device_updated");
 
                     b.ToTable("watch_progress", (string)null);
+                });
+
+            modelBuilder.Entity("AnimeIndex.Api.Data.Entities.InstagramPost", b =>
+                {
+                    b.HasOne("AnimeIndex.Api.Data.Entities.Episode", "Episode")
+                        .WithMany()
+                        .HasForeignKey("EpisodeId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Episode");
                 });
 
             modelBuilder.Entity("AnimeIndex.Api.Data.Entities.Episode", b =>
