@@ -1,6 +1,7 @@
 using AnimeIndex.Api.Data;
 using AnimeIndex.Api.Infrastructure.Scraping;
 using AnimeIndex.Scraper.Infrastructure;
+using AnimeIndex.Scraper.Infrastructure.Instagram;
 using AnimeIndex.Scraper.Jobs;
 using AnimeIndex.Scraper.Strategies;
 using Hangfire;
@@ -8,6 +9,21 @@ using Hangfire.PostgreSql;
 using Microsoft.EntityFrameworkCore;
 using Serilog;
 using Serilog.Formatting.Json;
+
+// ── Quick local image-generation test (no DB, no Hangfire, no Instagram creds) ──
+// Usage: dotnet run --project scraper/AnimeIndex.Scraper -- --images
+if (args.Contains("--images"))
+{
+    await using var sp = new ServiceCollection()
+        .AddLogging(b => b.AddSimpleConsole(o => { o.SingleLine = true; o.TimestampFormat = "HH:mm:ss "; }))
+        .AddHttpClient()
+        .BuildServiceProvider();
+
+    await AnimeIndex.Scraper.Infrastructure.Instagram.TestImageGenerator.RunAsync(
+        sp.GetRequiredService<IHttpClientFactory>(),
+        sp.GetRequiredService<ILoggerFactory>());
+    return;
+}
 
 Log.Logger = new LoggerConfiguration()
     .WriteTo.Console(new JsonFormatter())
@@ -75,7 +91,16 @@ try
         options.Queues = ["scraper", "default"];
     });
 
+    // ─── Instagram settings ────────────────────────────────
+    var igSettings = new AnimeIndex.Scraper.Infrastructure.Instagram.InstagramSettings();
+    builder.Configuration.GetSection("Instagram").Bind(igSettings);
+    builder.Services.AddSingleton(igSettings);
+
     // ─── HTTP clients ─────────────────────────────────────
+    builder.Services.AddHttpClient("instagram-graph", c =>
+    {
+        c.Timeout = TimeSpan.FromSeconds(30);
+    });
     builder.Services.AddHttpClient("probe", c =>
     {
         c.Timeout = TimeSpan.FromSeconds(10);
@@ -111,6 +136,12 @@ try
     {
         c.Timeout = TimeSpan.FromMinutes(90);
     });
+
+    // ─── Instagram publishing services ────────────────────
+    builder.Services.AddScoped<MetaGraphApiClient>();
+    builder.Services.AddScoped<InstagramImageService>();
+    builder.Services.AddScoped<CaptionGeneratorService>();
+    builder.Services.AddScoped<InstagramPublisherService>();
 
     // ─── Scraper services ─────────────────────────────────
     builder.Services.AddScoped<MirrorProbeService>();
