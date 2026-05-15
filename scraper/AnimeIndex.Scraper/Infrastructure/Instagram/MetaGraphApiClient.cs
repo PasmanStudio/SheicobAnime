@@ -284,7 +284,10 @@ public class MetaGraphApiClient(
             if (doc.RootElement.TryGetProperty("data", out var data)
                 && data.TryGetProperty("expires_at", out var expiresAt))
             {
-                var secs = expiresAt.GetInt64() - DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+                var expiresAtValue = expiresAt.GetInt64();
+                // System User tokens never expire — Meta returns expires_at=0 for them
+                if (expiresAtValue == 0) return double.MaxValue;
+                var secs = expiresAtValue - DateTimeOffset.UtcNow.ToUnixTimeSeconds();
                 return secs / 86400.0;
             }
             return double.MaxValue;
