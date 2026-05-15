@@ -10,6 +10,21 @@ using Microsoft.EntityFrameworkCore;
 using Serilog;
 using Serilog.Formatting.Json;
 
+// ── Quick local image-generation test (no DB, no Hangfire, no Instagram creds) ──
+// Usage: dotnet run --project scraper/AnimeIndex.Scraper -- --images
+if (args.Contains("--images"))
+{
+    await using var sp = new ServiceCollection()
+        .AddLogging(b => b.AddSimpleConsole(o => { o.SingleLine = true; o.TimestampFormat = "HH:mm:ss "; }))
+        .AddHttpClient()
+        .BuildServiceProvider();
+
+    await AnimeIndex.Scraper.Infrastructure.Instagram.TestImageGenerator.RunAsync(
+        sp.GetRequiredService<IHttpClientFactory>(),
+        sp.GetRequiredService<ILoggerFactory>());
+    return;
+}
+
 Log.Logger = new LoggerConfiguration()
     .WriteTo.Console(new JsonFormatter())
     .CreateBootstrapLogger();
