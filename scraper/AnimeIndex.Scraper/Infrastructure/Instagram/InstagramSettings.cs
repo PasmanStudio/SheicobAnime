@@ -25,7 +25,7 @@ public class InstagramSettings
     public string AppSecret { get; set; } = string.Empty;
 
     // Meta Graph API version
-    public string ApiVersion { get; set; } = "v22.0";
+    public string ApiVersion { get; set; } = "v25.0";
 
     public bool IsConfigured =>
         !string.IsNullOrWhiteSpace(AccessToken) &&

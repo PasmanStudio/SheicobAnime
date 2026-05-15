@@ -148,6 +148,33 @@ public class MetaGraphApiClient(
             ?? throw new InvalidOperationException("Single image container response missing id");
     }
 
+    /// <summary>
+    /// Creates an Instagram Story container with a link sticker.
+    /// The story image should be 1080×1920 (9:16). Requires media_type=STORIES.
+    /// </summary>
+    public async Task<string> CreateStoryContainerAsync(
+        string imageUrl, string linkStickerUrl, CancellationToken ct = default)
+    {
+        var fields = new Dictionary<string, string>
+        {
+            ["image_url"]        = imageUrl,
+            ["media_type"]       = "STORIES",
+            ["link_sticker_url"] = linkStickerUrl,
+            ["access_token"]     = settings.AccessToken
+        };
+
+        using var form = new FormUrlEncodedContent(fields);
+        var resp = await Http.PostAsync($"{BaseUrl}/{settings.IgUserId}/media", form, ct);
+        var body = await resp.Content.ReadAsStringAsync(ct);
+
+        if (!resp.IsSuccessStatusCode)
+            throw new InvalidOperationException($"CreateStory failed ({resp.StatusCode}): {body}");
+
+        using var doc = JsonDocument.Parse(body);
+        return doc.RootElement.GetProperty("id").GetString()
+            ?? throw new InvalidOperationException("Story container response missing id");
+    }
+
     // ── Shared publish flow ───────────────────────────────────────────
 
     /// <summary>
