@@ -206,8 +206,11 @@ try
             "0 4 * * *", // 04:00 UTC daily
             new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc });
 
-        // Auto-create initial scrape jobs if none exist (first deployment bootstrap)
+        // Apply any pending EF Core migrations (safety net if deploy workflow skipped them)
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        await db.Database.MigrateAsync();
+
+        // Auto-create initial scrape jobs if none exist (first deployment bootstrap)
         var hasJobs = await db.ScrapeJobs.AnyAsync(j => j.Status == "pending" || j.Status == "running");
         if (!hasJobs)
         {
