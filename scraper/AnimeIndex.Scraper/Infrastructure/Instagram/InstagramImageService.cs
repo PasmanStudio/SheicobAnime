@@ -19,6 +19,14 @@ public class InstagramImageService(
     private static readonly SKColor TextWhite = new(0xFF, 0xFF, 0xFF);
     private static readonly SKColor BadgeBg   = new(0xFF, 0x6B, 0x35, 0xEE);
 
+    // Logo loaded once from embedded resource; null = file missing (uses text fallback)
+    private static readonly Lazy<SKBitmap?> Logo = new(() =>
+    {
+        var asm    = typeof(InstagramImageService).Assembly;
+        var stream = asm.GetManifestResourceStream("AnimeIndex.Scraper.Resources.sheicob-logo.png");
+        return stream is null ? null : SKBitmap.Decode(stream);
+    });
+
     public async Task<byte[]> GenerateStoryAsync(
         Series series, Episode episode, CancellationToken ct = default)
         => await GenerateAsync(series, episode, 1080, 1920, isStory: true, ct);
@@ -106,8 +114,10 @@ public class InstagramImageService(
             srcRect = new SKRect(0, offsetY, cover.Width, offsetY + cropH);
         }
 
-        using var paint = new SKPaint { FilterQuality = SKFilterQuality.High };
-        canvas.DrawBitmap(cover, srcRect, destRect, paint);
+        using var image = SKImage.FromBitmap(cover);
+        using var paint = new SKPaint();
+        canvas.DrawImage(image, srcRect, destRect,
+            new SKSamplingOptions(SKFilterMode.Linear, SKMipmapMode.Linear), paint);
     }
 
     private static void DrawGradientOverlay(SKCanvas canvas, int width, int height, bool isStory)
@@ -143,25 +153,26 @@ public class InstagramImageService(
 
         // ── "NUEVO EPISODIO" badge ──────────────────────────────────
         float badgeY = isStory ? height * 0.71f : height * 0.64f;
-        DrawBadge(canvas, "NUEVO EPISODIO ✦", width * 0.07f, badgeY, scale);
+        DrawBadge(canvas, "NUEVO EPISODIO", width * 0.07f, badgeY, scale);
 
-        // ── Series title ────────────────────────────────────────────
+        // ── Series title ─────────────────────────────────────────────
         float titleY = isStory ? height * 0.775f : height * 0.72f;
         float titleFontSize = isStory ? 68 * scale : 60 * scale;
-        DrawText(canvas, series.Title, width * 0.07f, titleY,
+        float afterTitleY = DrawText(canvas, series.Title, width * 0.07f, titleY,
             titleFontSize, TextWhite, maxWidth: width * 0.86f, bold: true);
 
-        // ── Episode label ────────────────────────────────────────────
-        float epY = isStory ? height * 0.845f : height * 0.80f;
+        // ── Episode label — flows directly below the title ────────────
         float epFontSize = 42 * scale;
+        float epY = afterTitleY + 6 * scale;
         var epLabel = episode.Title is { Length: > 0 } t
             ? $"Episodio {episode.EpisodeNumber} · {TruncateAt(t, 32)}"
             : $"Episodio {episode.EpisodeNumber}";
-        DrawText(canvas, epLabel, width * 0.07f, epY, epFontSize, Accent);
+        float afterEpY = DrawText(canvas, epLabel, width * 0.07f, epY, epFontSize, Accent);
 
-        // ── CTA line ─────────────────────────────────────────────────
-        float ctaY = isStory ? height * 0.91f : height * 0.875f;
-        DrawText(canvas, "▶ Miralo en @sheicobanime  ·  Link en bio",
+        // ── CTA line — at least a small gap below the episode label ──
+        float ctaDefaultY = isStory ? height * 0.91f : height * 0.875f;
+        float ctaY = Math.Max(ctaDefaultY, afterEpY + 12 * scale);
+        DrawText(canvas, "Miralo en @sheicobanime  ·  Link en bio",
             width * 0.07f, ctaY, 28 * scale, new SKColor(0xDD, 0xDD, 0xDD));
 
         // ── Branding watermark (bottom-right) ────────────────────────
@@ -187,42 +198,47 @@ public class InstagramImageService(
         canvas.DrawText(text, x, y, font, textPaint);
     }
 
-    private static void DrawText(
+    private static float DrawText(
         SKCanvas canvas, string text, float x, float y,
         float fontSize, SKColor color, float maxWidth = 0, bool bold = false)
     {
-        using var font = CreateFont(fontSize, bold);
-        using var paint = new SKPaint { Color = color, IsAntialias = true };
-
-        // Drop shadow
+        using var font       = CreateFont(fontSize, bold);
+        using var paint      = new SKPaint { Color = color, IsAntialias = true };
         using var shadowPaint = new SKPaint { Color = new SKColor(0, 0, 0, 160), IsAntialias = true };
-        canvas.DrawText(text, x + 2, y + 2, font, shadowPaint);
 
-        // Wrap if maxWidth specified
-        if (maxWidth > 0)
+        var lines      = maxWidth > 0 ? WrapText(text, font, maxWidth) : [text];
+        float lineHeight = fontSize * 1.25f;
+
+        foreach (var line in lines)
         {
-            var lines = WrapText(text, font, maxWidth);
-            float lineHeight = fontSize * 1.25f;
-            foreach (var line in lines)
-            {
-                canvas.DrawText(line, x, y, font, paint);
-                y += lineHeight;
-            }
+            canvas.DrawText(line, x + 2, y + 2, font, shadowPaint);
+            canvas.DrawText(line, x, y, font, paint);
+            y += lineHeight;
         }
-        else
-        {
-            canvas.DrawText(text, x, y, font, paint);
-        }
+        return y;
     }
 
     private static void DrawBrandingMark(SKCanvas canvas, int width, float y, float scale)
     {
-        string brand = "SheicobAnime";
-        float fontSize = 26 * scale;
-        using var font = CreateFont(fontSize, bold: true);
-        using var paint = new SKPaint { Color = new SKColor(0xFF, 0xFF, 0xFF, 0xBB), IsAntialias = true };
-        float textWidth = font.MeasureText(brand, paint);
-        canvas.DrawText(brand, width - textWidth - 36 * scale, y, font, paint);
+        var logo = Logo.Value;
+        if (logo is not null)
+        {
+            float logoW = 180 * scale;
+            float logoH = logo.Height * (logoW / logo.Width);
+            float x = width - logoW - 20 * scale;
+            var dest = new SKRect(x, y - logoH, x + logoW, y);
+            using var paint = new SKPaint { IsAntialias = true };
+            canvas.DrawBitmap(logo, dest, paint);
+        }
+        else
+        {
+            string brand = "SheicobAnime";
+            float fontSize = 26 * scale;
+            using var font  = CreateFont(fontSize, bold: true);
+            using var paint = new SKPaint { Color = new SKColor(0xFF, 0xFF, 0xFF, 0xBB), IsAntialias = true };
+            float textWidth = font.MeasureText(brand);
+            canvas.DrawText(brand, width - textWidth - 36 * scale, y, font, paint);
+        }
     }
 
     private static SKFont CreateFont(float size, bool bold = false)
