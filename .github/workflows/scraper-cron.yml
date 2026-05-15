@@ -58,3 +58,15 @@ jobs:
           Source2__DelayMs: "2000"
           # Force scheduler to fire immediately on startup (override 2am cron for GHA runs)
           Hangfire__SchedulerCron: "* * * * *"
+          # ── Instagram publishing (optional — skipped if not set) ──
+          # Long-lived Facebook User Access Token (valid ~60 days — renew monthly)
+          Instagram__AccessToken:  ${{ secrets.INSTAGRAM_ACCESS_TOKEN }}
+          # Instagram Business Account numeric user ID (from granular_scopes in debug_token)
+          Instagram__IgUserId:     ${{ secrets.INSTAGRAM_IG_USER_ID }}
+          # imgbb.com API key for temporary public image hosting
+          Instagram__ImgBbApiKey:  ${{ secrets.IMGBB_API_KEY }}
+          # Facebook App credentials — used for monthly token re-extension
+          Instagram__AppId:        ${{ secrets.INSTAGRAM_APP_ID }}
+          Instagram__AppSecret:    ${{ secrets.INSTAGRAM_APP_SECRET }}
+          # Max episodes in one carousel (Instagram hard limit: 10)
+          Instagram__MaxCarouselItems: "10"

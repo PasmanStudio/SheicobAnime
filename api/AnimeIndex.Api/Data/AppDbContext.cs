@@ -13,6 +13,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<BlockedSlug> BlockedSlugs => Set<BlockedSlug>();
     public DbSet<ScrapeJob> ScrapeJobs => Set<ScrapeJob>();
     public DbSet<WatchProgress> WatchProgress => Set<WatchProgress>();
+    public DbSet<InstagramPost> InstagramPosts => Set<InstagramPost>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -165,6 +166,30 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.HasOne(w => w.Episode)
                 .WithMany()
                 .HasForeignKey(w => w.EpisodeId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ─── InstagramPost ────────────────────────────────
+        modelBuilder.Entity<InstagramPost>(e =>
+        {
+            e.ToTable("instagram_posts");
+            e.HasKey(p => p.Id);
+            e.Property(p => p.Id).HasDefaultValueSql("gen_random_uuid()");
+            e.Property(p => p.PostType).IsRequired();
+            e.Property(p => p.Status).IsRequired().HasDefaultValue("published");
+            e.Property(p => p.CreatedAt).HasDefaultValueSql("now()");
+
+            e.ToTable(t => t.HasCheckConstraint("CK_instagram_posts_type",
+                "post_type IN ('story','feed','carousel_item')"));
+            e.ToTable(t => t.HasCheckConstraint("CK_instagram_posts_status",
+                "status IN ('published','failed','skipped')"));
+
+            e.HasIndex(p => p.EpisodeId).HasDatabaseName("idx_instagram_posts_episode");
+            e.HasIndex(p => p.CreatedAt).HasDatabaseName("idx_instagram_posts_created");
+
+            e.HasOne(p => p.Episode)
+                .WithMany()
+                .HasForeignKey(p => p.EpisodeId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
 
