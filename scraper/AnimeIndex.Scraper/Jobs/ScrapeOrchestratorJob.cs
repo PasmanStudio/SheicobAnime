@@ -1,6 +1,7 @@
 using AnimeIndex.Api.Data;
 using AnimeIndex.Api.Infrastructure.Scraping;
 using AnimeIndex.Scraper.Infrastructure;
+using AnimeIndex.Scraper.Infrastructure.Instagram;
 using Hangfire;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -17,12 +18,15 @@ namespace AnimeIndex.Scraper.Jobs;
 /// handles recovery by detecting stuck/failed jobs and re-enqueuing.
 /// After completion (success or failure), stops the host so the GHA step
 /// exits immediately instead of waiting for the 6-hour timeout.
+/// On success, runs InstagramPublisherService as a best-effort post-step
+/// (failure never propagates back to the scrape job status).
 /// </summary>
 [AutomaticRetry(Attempts = 0)]
 public class ScrapeOrchestratorJob(
     IEnumerable<IScrapeStrategy> strategies,
     AppDbContext db,
     DeadLetterAlerter alerter,
+    InstagramPublisherService instagramPublisher,
     IServiceScopeFactory scopeFactory,
     IHostApplicationLifetime lifetime,
     ILogger<ScrapeOrchestratorJob> logger)
@@ -60,6 +64,16 @@ public class ScrapeOrchestratorJob(
                 logger.LogInformation(
                     "Job {JobId} succeeded — series={S} episodes={E} mirrors={M}",
                     scrapeJobId, result.SeriesIndexed, result.EpisodesIndexed, result.MirrorsIndexed);
+
+                // Best-effort Instagram publishing — never fails the scrape job
+                try
+                {
+                    await instagramPublisher.PublishNewEpisodesAsync(ct);
+                }
+                catch (Exception igEx)
+                {
+                    logger.LogError(igEx, "Instagram publishing encountered an unhandled error (non-critical)");
+                }
             }
             else
             {
