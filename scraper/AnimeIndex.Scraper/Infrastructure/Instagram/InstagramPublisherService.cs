@@ -44,10 +44,12 @@ public class InstagramPublisherService(
 
         await CheckTokenExpiryAsync(ct);
 
-        // Episodes published in the last 25 hours with no existing instagram_posts row
         var since = DateTime.UtcNow.AddHours(-25);
-        var alreadyPosted = await db.InstagramPosts
-            .Where(p => p.Status == "published" || p.Status == "skipped")
+
+        // ── Feed / Carousel ───────────────────────────────────────────────
+        var alreadyFeedPosted = await db.InstagramPosts
+            .Where(p => (p.PostType == "feed" || p.PostType == "carousel_item")
+                     && (p.Status == "published" || p.Status == "skipped"))
             .Select(p => p.EpisodeId)
             .Distinct()
             .ToListAsync(ct);
@@ -58,24 +60,47 @@ public class InstagramPublisherService(
                     .ThenInclude(sg => sg.Genre)
             .Where(e => e.IsPublished
                      && e.CreatedAt >= since
-                     && !alreadyPosted.Contains(e.Id))
+                     && !alreadyFeedPosted.Contains(e.Id))
             .OrderByDescending(e => e.CreatedAt)
             .Take(settings.MaxCarouselItems)
             .ToListAsync(ct);
 
         if (episodes.Count == 0)
+            logger.LogInformation("No new episodes to post to Instagram today (feed)");
+        else
         {
-            logger.LogInformation("No new episodes to post to Instagram today");
-            return;
+            logger.LogInformation("Preparing Instagram {PostType} with {Count} episode(s)",
+                episodes.Count == 1 ? "post" : "carousel", episodes.Count);
+
+            if (episodes.Count == 1)
+                await PublishSingleAsync(episodes[0], ct);
+            else
+                await PublishCarouselAsync(episodes, ct);
         }
 
-        logger.LogInformation("Preparing Instagram {PostType} with {Count} episode(s)",
-            episodes.Count == 1 ? "post" : "carousel", episodes.Count);
+        // ── Story (one per run — most recent new episode) ─────────────────
+        var alreadyStoryPosted = await db.InstagramPosts
+            .Where(p => p.PostType == "story"
+                     && (p.Status == "published" || p.Status == "skipped"))
+            .Select(p => p.EpisodeId)
+            .Distinct()
+            .ToListAsync(ct);
 
-        if (episodes.Count == 1)
-            await PublishSingleAsync(episodes[0], ct);
+        // Prefer the first episode from today's feed batch; fall back to a DB query
+        // in case the feed was already published on a previous run.
+        var storyEpisode = episodes.FirstOrDefault(e => !alreadyStoryPosted.Contains(e.Id))
+            ?? await db.Episodes
+                .Include(e => e.Series)
+                .Where(e => e.IsPublished
+                         && e.CreatedAt >= since
+                         && !alreadyStoryPosted.Contains(e.Id))
+                .OrderByDescending(e => e.CreatedAt)
+                .FirstOrDefaultAsync(ct);
+
+        if (storyEpisode is not null)
+            await PublishStoryAsync(storyEpisode, ct);
         else
-            await PublishCarouselAsync(episodes, ct);
+            logger.LogInformation("No new episodes to post to Instagram today (story)");
     }
 
     // ── Single image post (1 episode) ────────────────────────────────
@@ -180,6 +205,43 @@ public class InstagramPublisherService(
                 record.ErrorMessage = ex.Message[..Math.Min(ex.Message.Length, 500)];
             }
             logger.LogError(ex, "Carousel publish failed for {Count} episodes", episodes.Count);
+        }
+        finally
+        {
+            await db.SaveChangesAsync(CancellationToken.None);
+        }
+    }
+
+    // ── Story post (1 episode, 1080×1920 with link sticker) ─────────────
+
+    private async Task PublishStoryAsync(Episode episode, CancellationToken ct)
+    {
+        var record = CreateRecord(episode, "story");
+        db.InstagramPosts.Add(record);
+
+        try
+        {
+            var imageBytes = await imageService.GenerateStoryAsync(episode.Series, episode, ct);
+            var fileName   = BuildFileName(episode.Series.Slug, episode.EpisodeNumber, "story");
+            var publicUrl  = await api.UploadImageToImgBbAsync(imageBytes, fileName, ct);
+
+            var episodeUrl = $"{settings.SiteUrl}/series/{episode.Series.Slug}/{episode.EpisodeNumber}";
+            var containerId = await api.CreateStoryContainerAsync(publicUrl, episodeUrl, ct);
+            await api.WaitForContainerReadyAsync(containerId, ct);
+            var mediaId = await api.PublishContainerAsync(containerId, ct);
+
+            record.Status      = "published";
+            record.IgMediaId   = mediaId;
+            record.PublishedAt = DateTime.UtcNow;
+
+            logger.LogInformation("Published story for {Series} ep {Ep} → {MediaId} (link: {Url})",
+                episode.Series.Title, episode.EpisodeNumber, mediaId, episodeUrl);
+        }
+        catch (Exception ex)
+        {
+            record.Status       = "failed";
+            record.ErrorMessage = ex.Message[..Math.Min(ex.Message.Length, 500)];
+            logger.LogError(ex, "Failed to publish story for episode {EpisodeId}", episode.Id);
         }
         finally
         {
