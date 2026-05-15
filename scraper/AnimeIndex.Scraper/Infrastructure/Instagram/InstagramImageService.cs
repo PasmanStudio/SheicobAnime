@@ -114,8 +114,10 @@ public class InstagramImageService(
             srcRect = new SKRect(0, offsetY, cover.Width, offsetY + cropH);
         }
 
-        using var paint = new SKPaint { FilterQuality = SKFilterQuality.High };
-        canvas.DrawBitmap(cover, srcRect, destRect, paint);
+        using var image = SKImage.FromBitmap(cover);
+        using var paint = new SKPaint();
+        canvas.DrawImage(image, srcRect, destRect,
+            new SKSamplingOptions(SKFilterMode.Linear, SKMipmapMode.Linear), paint);
     }
 
     private static void DrawGradientOverlay(SKCanvas canvas, int width, int height, bool isStory)
