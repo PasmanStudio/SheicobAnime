@@ -70,3 +70,5 @@ jobs:
           Instagram__AppSecret:    ${{ secrets.INSTAGRAM_APP_SECRET }}
           # Max episodes in one carousel (Instagram hard limit: 10)
           Instagram__MaxCarouselItems: "10"
+          # Public site URL for story link stickers and captions
+          Instagram__SiteUrl: ${{ secrets.INSTAGRAM_SITE_URL }}

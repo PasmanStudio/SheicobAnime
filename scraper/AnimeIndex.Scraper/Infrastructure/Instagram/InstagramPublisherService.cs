@@ -154,21 +154,23 @@ public class InstagramPublisherService(
         string? mediaId = null;
         try
         {
-            // 1. Generate + upload images in order
+            // 1. Generate + upload images in order, wait for each item to be FINISHED
             var childContainerIds = new List<string>();
             foreach (var episode in episodes)
             {
                 if (ct.IsCancellationRequested) break;
                 logger.LogDebug("Generating image for {Series} ep {Ep}", episode.Series.Title, episode.EpisodeNumber);
 
-                var imageBytes  = await imageService.GenerateFeedAsync(episode.Series, episode, ct);
-                var fileName    = BuildFileName(episode.Series.Slug, episode.EpisodeNumber, "carousel");
-                var publicUrl   = await api.UploadImageToImgBbAsync(imageBytes, fileName, ct);
-                var itemId      = await api.CreateCarouselItemContainerAsync(publicUrl, ct);
-                childContainerIds.Add(itemId);
+                var imageBytes = await imageService.GenerateFeedAsync(episode.Series, episode, ct);
+                var fileName   = BuildFileName(episode.Series.Slug, episode.EpisodeNumber, "carousel");
+                var publicUrl  = await api.UploadImageToImgBbAsync(imageBytes, fileName, ct);
+                var itemId     = await api.CreateCarouselItemContainerAsync(publicUrl, ct);
 
-                // Small delay between item creation to avoid burst
-                await Task.Delay(TimeSpan.FromSeconds(2), ct);
+                // Meta requires each item container to reach FINISHED before the parent is created
+                await api.WaitForContainerReadyAsync(itemId, ct);
+                childContainerIds.Add(itemId);
+                logger.LogDebug("Carousel item ready: {ItemId} ({Series} ep {Ep})",
+                    itemId, episode.Series.Title, episode.EpisodeNumber);
             }
 
             // 2. Generate combined caption
