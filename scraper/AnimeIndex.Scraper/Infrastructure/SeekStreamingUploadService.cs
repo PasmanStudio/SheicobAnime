@@ -135,8 +135,15 @@ public sealed class SeekStreamingUploadService
             }
             catch (ResolverException rex)
             {
-                _logger.LogDebug("Episode {Id}: {Provider} failed ({Reason}): {Message}",
-                    episodeId, provider, rex.Reason, rex.Message);
+                // PatternChanged = site changed its HTML/JS — needs immediate attention.
+                // Log at Warning so it's visible in production without Debug verbosity.
+                if (rex.Reason == ResolverFailureReason.PatternChanged)
+                    _logger.LogWarning(
+                        "Episode {Id}: {Provider} PatternChanged — url={Url} msg={Message}",
+                        episodeId, provider, embedUrl, rex.Message);
+                else
+                    _logger.LogDebug("Episode {Id}: {Provider} failed ({Reason}): {Message}",
+                        episodeId, provider, rex.Reason, rex.Message);
                 failures.Add($"{provider}:{rex.Reason}");
             }
             catch (TaskCanceledException) when (ct.IsCancellationRequested)
