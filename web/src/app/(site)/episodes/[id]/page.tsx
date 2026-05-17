@@ -1,7 +1,7 @@
 import { redirect, notFound } from "next/navigation";
 import { getEpisode, ApiError } from "@/lib/api";
 
-export const dynamic = "force-dynamic";
+export const revalidate = 300;
 
 interface Props {
   params: Promise<{ id: string }>;
