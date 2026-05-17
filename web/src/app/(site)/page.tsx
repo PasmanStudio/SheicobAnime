@@ -9,7 +9,9 @@ import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
 
-export const dynamic = "force-dynamic";
+// ISR: regenerate at most once per minute. Public data (series, episodes)
+// doesn't need to be fresh on every request — 60s staleness is acceptable.
+export const revalidate = 60;
 
 export const metadata: Metadata = {
   title: "SheicobAnime — Watch Anime Online",
