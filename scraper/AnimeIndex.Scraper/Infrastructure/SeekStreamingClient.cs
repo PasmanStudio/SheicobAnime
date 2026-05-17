@@ -65,6 +65,8 @@ public sealed class SeekStreamingClient
         string directVideoUrl,
         string? referer = null,
         int pollTimeoutMinutes = 15,
+        Guid? episodeId = null,
+        string? provider = null,
         CancellationToken ct = default)
     {
         // ─── Step 1: get tus credentials ──────────────────────────
@@ -78,13 +80,15 @@ public sealed class SeekStreamingClient
         }
         catch (Exception ex) when (ex is not TaskCanceledException { CancellationToken.IsCancellationRequested: true })
         {
-            _logger.LogWarning(ex, "SeekStreaming: failed to get tus credentials");
+            _logger.LogWarning(ex, "SeekStreaming: failed to get tus credentials (ep={EpisodeId} via={Provider})",
+                episodeId, provider);
             return null;
         }
 
         if (creds is null || string.IsNullOrEmpty(creds.TusUrl) || string.IsNullOrEmpty(creds.AccessToken))
         {
-            _logger.LogWarning("SeekStreaming: invalid tus credentials response");
+            _logger.LogWarning("SeekStreaming: invalid tus credentials response (ep={EpisodeId} via={Provider})",
+                episodeId, provider);
             return null;
         }
 
@@ -97,7 +101,9 @@ public sealed class SeekStreamingClient
             fileSize = await GetFileSizeAsync(dlClient, directVideoUrl, referer, ct);
             if (fileSize <= 0)
             {
-                _logger.LogWarning("SeekStreaming: could not determine file size for {Url}", directVideoUrl);
+                _logger.LogWarning(
+                    "SeekStreaming: could not determine file size (ep={EpisodeId} via={Provider}) for {Url}",
+                    episodeId, provider, directVideoUrl);
                 return null;
             }
         }
@@ -123,13 +129,15 @@ public sealed class SeekStreamingClient
         }
         catch (Exception ex) when (ex is not TaskCanceledException { CancellationToken.IsCancellationRequested: true })
         {
-            _logger.LogWarning(ex, "SeekStreaming: failed to create tus upload slot");
+            _logger.LogWarning(ex,
+                "SeekStreaming: failed to create tus upload slot (ep={EpisodeId} via={Provider}) for {Url}",
+                episodeId, provider, directVideoUrl);
             return null;
         }
 
         _logger.LogInformation(
-            "SeekStreaming tus upload started: filename={Filename} size={Size} url={Url}",
-            filename, fileSize, directVideoUrl);
+            "SeekStreaming tus upload started: ep={EpisodeId} via={Provider} filename={Filename} size={Size} url={Url}",
+            episodeId, provider, filename, fileSize, directVideoUrl);
 
         // ─── Step 4: stream download → tus PATCH in 50 MB chunks ──
         // Chunks are retried up to 3 times on transient SeekStreaming errors (502/503/429/504).
@@ -176,8 +184,8 @@ public sealed class SeekStreamingClient
                     {
                         var delay = TimeSpan.FromSeconds(Math.Pow(2, attempt + 1)); // 4s, 8s
                         _logger.LogWarning(
-                            "SeekStreaming tus PATCH retry {Attempt}/{Max} after {Status} (offset={Offset}) — waiting {Delay}s",
-                            attempt, MaxChunkRetries, lastFailStatus, offset, delay.TotalSeconds);
+                            "SeekStreaming tus PATCH retry {Attempt}/{Max} after {Status} (ep={EpisodeId} via={Provider} offset={Offset}) — waiting {Delay}s",
+                            attempt, MaxChunkRetries, lastFailStatus, episodeId, provider, offset, delay.TotalSeconds);
 
                         // tus protocol: after any transient error, HEAD the upload to get the
                         // real server offset before retrying. A 502 from a reverse proxy can
@@ -244,32 +252,37 @@ public sealed class SeekStreamingClient
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "SeekStreaming: tus upload failed for {Url}", directVideoUrl);
+            _logger.LogWarning(ex,
+                "SeekStreaming: tus upload failed (ep={EpisodeId} via={Provider}) for {Url}",
+                episodeId, provider, directVideoUrl);
             return null;
         }
 
         _logger.LogInformation(
-            "SeekStreaming tus transfer complete ({Size} bytes) for {Url} — polling for transcoding",
-            fileSize, directVideoUrl);
+            "SeekStreaming tus transfer complete (ep={EpisodeId} via={Provider} {Size} bytes) for {Url} — polling for transcoding",
+            episodeId, provider, fileSize, directVideoUrl);
 
         // ─── Step 5: poll video/manage until Active ───────────────
-        var videoId = await PollForVideoAsync(filename, pollTimeoutMinutes, ct);
+        var videoId = await PollForVideoAsync(filename, pollTimeoutMinutes, episodeId, provider, directVideoUrl, ct);
         if (videoId is null)
         {
             _logger.LogWarning(
-                "\u274c SeekStreaming: video {Filename} not Active after {Timeout} min — transcoding timed out",
-                filename, pollTimeoutMinutes);
+                "\u274c SeekStreaming: transcoding timed out after {Timeout} min (ep={EpisodeId} via={Provider} filename={Filename} sourceUrl={Url})",
+                pollTimeoutMinutes, episodeId, provider, filename, directVideoUrl);
             return null;
         }
 
         var embedUrl = GetEmbedUrl(videoId);
         _logger.LogInformation(
-            "\u2705 SeekStreaming upload complete: filename={Filename} videoId={VideoId} embed={EmbedUrl}",
-            filename, videoId, embedUrl);
+            "\u2705 SeekStreaming upload complete: ep={EpisodeId} via={Provider} filename={Filename} videoId={VideoId} embed={EmbedUrl}",
+            episodeId, provider, filename, videoId, embedUrl);
         return embedUrl;
     }
 
-    private async Task<string?> PollForVideoAsync(string filename, int timeoutMinutes, CancellationToken ct)
+    private async Task<string?> PollForVideoAsync(
+        string filename, int timeoutMinutes,
+        Guid? episodeId, string? provider, string? sourceUrl,
+        CancellationToken ct)
     {
         var deadline = DateTime.UtcNow.AddMinutes(timeoutMinutes);
         const int PollIntervalMs = 15_000; // 15 s — transcoding is fast for most files
@@ -298,8 +311,8 @@ public sealed class SeekStreamingClient
                     // Log what the API actually returned so we can diagnose name-format mismatches.
                     var names = list?.Data?.Select(v => v.Name ?? "(null)").ToArray() ?? [];
                     _logger.LogDebug(
-                        "SeekStreaming poll: looking for '{Filename}' (or '{FilenameNoExt}') — {Count} videos in list: [{Names}]",
-                        filename, filenameNoExt, names.Length, string.Join(", ", names.Take(10)));
+                        "SeekStreaming poll: looking for '{Filename}' (or '{FilenameNoExt}') ep={EpisodeId} via={Provider} — {Count} videos in list: [{Names}]",
+                        filename, filenameNoExt, episodeId, provider, names.Length, string.Join(", ", names.Take(10)));
                     continue;
                 }
 
@@ -313,7 +326,9 @@ public sealed class SeekStreamingClient
                 // Treat terminal failure states as immediate exit
                 if (string.Equals(match.Status, "Deleted", StringComparison.OrdinalIgnoreCase))
                 {
-                    _logger.LogWarning("SeekStreaming: video {Name} was Deleted during transcoding", filename);
+                    _logger.LogWarning(
+                        "SeekStreaming: video {Name} was Deleted during transcoding (ep={EpisodeId} via={Provider})",
+                        filename, episodeId, provider);
                     return null;
                 }
             }
