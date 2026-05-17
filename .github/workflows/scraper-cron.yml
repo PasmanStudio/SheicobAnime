@@ -1,6 +1,6 @@
 name: Scraper — Daily cron
 
-# Runs the scraper once per day (02:00 UTC).
+# Runs the scraper once per day (21:15 UTC = 18:15 Argentina time, UTC-3).
 # Also triggerable manually from the Actions tab.
 # Max runtime: 6 hours (GitHub Actions limit for free tier).
 #
@@ -11,7 +11,7 @@ name: Scraper — Daily cron
 
 on:
   schedule:
-    - cron: '0 2 * * *'   # 02:00 UTC daily
+    - cron: '15 21 * * *'  # 21:15 UTC = 18:15 Argentina (UTC-3) daily
   workflow_dispatch:        # allow manual runs
 
 env:

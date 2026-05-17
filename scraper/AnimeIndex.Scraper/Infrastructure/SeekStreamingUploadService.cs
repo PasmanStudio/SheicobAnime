@@ -187,6 +187,8 @@ public sealed class SeekStreamingUploadService
             var seekEmbedUrl = await _seekStreaming.UploadFromUrlAsync(
                 target.DirectUrl,
                 referer: target.Referer,
+                episodeId: target.EpisodeId,
+                provider: target.Provider,
                 ct: ct);
 
             if (seekEmbedUrl is null)
