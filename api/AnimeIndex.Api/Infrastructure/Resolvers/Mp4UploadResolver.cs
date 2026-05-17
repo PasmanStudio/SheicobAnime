@@ -53,12 +53,21 @@ public sealed class Mp4UploadResolver : IHosterResolver
                     $"Mp4Upload embed returned {(int)res.StatusCode}");
 
             var html = await res.Content.ReadAsStringAsync(ct);
+
+            // Mp4Upload returns HTTP 200 for deleted/expired files but shows an error page.
+            if (html.Contains("File was deleted", StringComparison.OrdinalIgnoreCase) ||
+                html.Contains("file has been deleted", StringComparison.OrdinalIgnoreCase) ||
+                html.Contains("no longer available", StringComparison.OrdinalIgnoreCase) ||
+                html.Contains("File Not Found", StringComparison.OrdinalIgnoreCase))
+                throw new ResolverException(Hoster, ResolverFailureReason.EmbedUnavailable,
+                    "Mp4Upload file deleted or expired");
+
             var unpacked = PackedJsUnpacker.Unpack(html);
 
             var srcMatch = Mp4SourceRegex.Match(unpacked);
             if (!srcMatch.Success)
                 throw new ResolverException(Hoster, ResolverFailureReason.PatternChanged,
-                    "Could not find .mp4 source in unpacked JS");
+                    $"Could not find .mp4 source in unpacked JS (html_len={html.Length} unpacked_len={unpacked.Length})");
 
             var url = srcMatch.Groups[1].Value;
             return new ResolvedSource(
