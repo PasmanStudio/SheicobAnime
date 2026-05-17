@@ -44,7 +44,10 @@ async function request<T>(
 
   const res = await fetch(url, {
     ...options,
-    cache: "no-store",
+    // Cache public data for 60 s on the Next.js server.
+    // Client-side calls (useEffect, event handlers) ignore this field entirely,
+    // so user-specific endpoints like /progress are unaffected.
+    next: { revalidate: 60 },
     credentials: "include", // send sheicob_did cookie for watch_progress endpoints
     headers: {
       "Content-Type": "application/json",

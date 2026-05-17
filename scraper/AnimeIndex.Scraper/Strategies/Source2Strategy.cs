@@ -15,6 +15,7 @@ public sealed class Source2Strategy(
     UpsertPipelineService upsert,
     JkAnimeHttpClient http,
     SeekStreamingUploadService? seekStreaming,
+    IServiceScopeFactory? scopeFactory,
     IConfiguration config,
     ILogger<Source2Strategy> logger) : IScrapeStrategy
 {
@@ -31,6 +32,9 @@ public sealed class Source2Strategy(
         var episodeCount = 0;
         var mirrorCount = 0;
         var noEpisodesCount = 0;
+
+        // Accumulate upload targets during Phase 2; uploaded in parallel at the end.
+        var pendingUploads = new List<(Guid EpisodeId, List<string> MirrorUrls)>();
 
         // ── Check blocked_slugs for this job's series ────────
         var job = await db.ScrapeJobs
@@ -227,13 +231,9 @@ public sealed class Source2Strategy(
                     mirrorCount++;
                 }
 
-                // Upload to SeekStreaming (own mirror, priority=0) — non-blocking on failure.
+                // Queue for SeekStreaming upload — resolved and uploaded in parallel after Phase 2.
                 if (mirrorUrls.Count > 0 && seekStreaming is not null)
-                {
-                    var target = await seekStreaming.ResolveDirectUrlAsync(episodeId, mirrorUrls, ct);
-                    if (target is not null)
-                        await seekStreaming.UploadResolvedAsync(target, ct);
-                }
+                    pendingUploads.Add((episodeId, mirrorUrls.ToList()));
 
                 // Heartbeat after every episode to prevent stuck-job detection
                 // killing active jobs that have many episodes.
@@ -243,6 +243,96 @@ public sealed class Source2Strategy(
 
             // Sync episode count from actual DB records
             await upsert.SyncEpisodeCountAsync(seriesId, ct);
+        }
+
+        // ── Enqueue retry uploads: episodes with mirrors but no seekstreaming mirror ──
+        // Covers episodes whose previous upload failed (e.g. 409 Conflict) — they were
+        // skipped by the delta-fetch above since they already exist in DB with mirrors.
+        if (seekStreaming is not null && !ct.IsCancellationRequested)
+        {
+            var retryWindow = DateTime.UtcNow.AddDays(-7);
+            var alreadyQueued = pendingUploads.Select(p => p.EpisodeId).ToHashSet();
+
+            var retryEpisodes = await db.Episodes
+                .Where(e => e.CreatedAt >= retryWindow
+                         && e.Mirrors.Any(m => m.IsActive)
+                         && !e.Mirrors.Any(m => m.IsActive && m.ProviderName == "seekstreaming"))
+                .Select(e => new
+                {
+                    e.Id,
+                    EmbedUrls = e.Mirrors
+                        .Where(m => m.IsActive)
+                        .OrderBy(m => m.Priority)
+                        .Select(m => m.EmbedUrl)
+                        .ToList()
+                })
+                .ToListAsync(ct);
+
+            var retryCount = 0;
+            foreach (var ep in retryEpisodes)
+            {
+                if (alreadyQueued.Contains(ep.Id) || ep.EmbedUrls.Count == 0) continue;
+                pendingUploads.Add((ep.Id, ep.EmbedUrls));
+                retryCount++;
+            }
+
+            if (retryCount > 0)
+                logger.LogInformation(
+                    "SeekStreaming: queued {Count} episode(s) for retry (had mirrors, no seekstreaming mirror, last 7d)",
+                    retryCount);
+        }
+
+        // ── Phase 3: resolve + upload to SeekStreaming in parallel ────────────
+        if (pendingUploads.Count > 0 && scopeFactory is not null && !ct.IsCancellationRequested)
+        {
+            var maxParallel = Math.Clamp(
+                config.GetValue("SeekStreaming:MaxParallelUploads", 20), 1, 20);
+
+            logger.LogInformation(
+                "SeekStreaming Phase A: resolving {Count} episode(s)",
+                pendingUploads.Count);
+
+            // Phase A: resolve embed URLs → direct MP4 URLs (sequential; each call is a
+            // short HTTP round-trip, so this adds ~1-2 s per episode, not the bottleneck).
+            var targets = new List<ResolvedUploadTarget>(pendingUploads.Count);
+            foreach (var (episodeId, mirrorUrls) in pendingUploads)
+            {
+                if (ct.IsCancellationRequested) break;
+                using var scope = scopeFactory.CreateScope();
+                var svc = scope.ServiceProvider.GetRequiredService<SeekStreamingUploadService>();
+                var all = await svc.ResolveAllDirectUrlsAsync(episodeId, mirrorUrls, ct);
+                if (all.Count > 0) targets.Add(all[0]);
+            }
+
+            logger.LogInformation(
+                "SeekStreaming Phase B: uploading {Resolved}/{Total} episode(s) — maxParallel={Max}",
+                targets.Count, pendingUploads.Count, maxParallel);
+
+            // Phase B: upload all resolved targets in parallel.
+            var uploaded    = 0;
+            var uploadFailed = 0;
+            using var sem = new SemaphoreSlim(maxParallel, maxParallel);
+
+            var uploadTasks = targets.Select(async target =>
+            {
+                await sem.WaitAsync(ct);
+                try
+                {
+                    if (ct.IsCancellationRequested) return;
+                    using var scope = scopeFactory.CreateScope();
+                    var svc = scope.ServiceProvider.GetRequiredService<SeekStreamingUploadService>();
+                    var ok = await svc.UploadResolvedAsync(target, ct);
+                    if (ok) Interlocked.Increment(ref uploaded);
+                    else    Interlocked.Increment(ref uploadFailed);
+                }
+                finally { sem.Release(); }
+            }).ToArray();
+
+            await Task.WhenAll(uploadTasks);
+
+            logger.LogInformation(
+                "SeekStreaming Phase B done: {Uploaded} uploaded, {Failed} failed",
+                uploaded, uploadFailed);
         }
 
         logger.LogInformation(
