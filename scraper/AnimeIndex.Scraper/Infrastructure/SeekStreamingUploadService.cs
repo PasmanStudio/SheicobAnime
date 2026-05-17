@@ -79,7 +79,9 @@ public sealed class SeekStreamingUploadService
             return [];
         }
 
-        var results = new List<ResolvedUploadTarget>(sorted.Count);
+        var results  = new List<ResolvedUploadTarget>(sorted.Count);
+        var failures = new List<string>(); // "provider:Reason" pairs for diagnostic logging
+
         foreach (var (embedUrl, provider) in sorted)
         {
             if (ct.IsCancellationRequested) break;
@@ -105,12 +107,14 @@ public sealed class SeekStreamingUploadService
                     resolved.Format == AnimeIndex.Api.Infrastructure.Resolvers.SourceFormat.Hls)
                 {
                     _logger.LogDebug("Episode {Id}: {Provider} resolved to HLS — skipping", episodeId, provider);
+                    failures.Add($"{provider}:HLS");
                     continue;
                 }
 
                 if (IsTestVideoUrl(resolved.Url))
                 {
                     _logger.LogDebug("Episode {Id}: {Provider} resolved to placeholder URL — skipping", episodeId, provider);
+                    failures.Add($"{provider}:Placeholder");
                     continue;
                 }
 
@@ -128,6 +132,7 @@ public sealed class SeekStreamingUploadService
             {
                 _logger.LogDebug("Episode {Id}: {Provider} failed ({Reason}): {Message}",
                     episodeId, provider, rex.Reason, rex.Message);
+                failures.Add($"{provider}:{rex.Reason}");
             }
             catch (TaskCanceledException) when (ct.IsCancellationRequested)
             {
@@ -136,11 +141,14 @@ public sealed class SeekStreamingUploadService
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Episode {Id}: unexpected error resolving {Provider}", episodeId, provider);
+                failures.Add($"{provider}:Exception");
             }
         }
 
         if (results.Count == 0)
-            _logger.LogWarning("Episode {Id}: all {Count} resolver attempts failed", episodeId, sorted.Count);
+            _logger.LogWarning(
+                "Episode {Id}: all {Count} resolver attempts failed — [{Failures}]",
+                episodeId, sorted.Count, string.Join(", ", failures));
         else
             _logger.LogInformation(
                 "Episode {Id}: {Count} resolvable provider(s): [{Providers}]",
