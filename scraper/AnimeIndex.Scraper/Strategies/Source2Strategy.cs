@@ -245,6 +245,43 @@ public sealed class Source2Strategy(
             await upsert.SyncEpisodeCountAsync(seriesId, ct);
         }
 
+        // ── Enqueue retry uploads: episodes with mirrors but no seekstreaming mirror ──
+        // Covers episodes whose previous upload failed (e.g. 409 Conflict) — they were
+        // skipped by the delta-fetch above since they already exist in DB with mirrors.
+        if (seekStreaming is not null && !ct.IsCancellationRequested)
+        {
+            var retryWindow = DateTime.UtcNow.AddDays(-7);
+            var alreadyQueued = pendingUploads.Select(p => p.EpisodeId).ToHashSet();
+
+            var retryEpisodes = await db.Episodes
+                .Where(e => e.CreatedAt >= retryWindow
+                         && e.Mirrors.Any(m => m.IsActive)
+                         && !e.Mirrors.Any(m => m.IsActive && m.ProviderName == "seekstreaming"))
+                .Select(e => new
+                {
+                    e.Id,
+                    EmbedUrls = e.Mirrors
+                        .Where(m => m.IsActive)
+                        .OrderBy(m => m.Priority)
+                        .Select(m => m.EmbedUrl)
+                        .ToList()
+                })
+                .ToListAsync(ct);
+
+            var retryCount = 0;
+            foreach (var ep in retryEpisodes)
+            {
+                if (alreadyQueued.Contains(ep.Id) || ep.EmbedUrls.Count == 0) continue;
+                pendingUploads.Add((ep.Id, ep.EmbedUrls));
+                retryCount++;
+            }
+
+            if (retryCount > 0)
+                logger.LogInformation(
+                    "SeekStreaming: queued {Count} episode(s) for retry (had mirrors, no seekstreaming mirror, last 7d)",
+                    retryCount);
+        }
+
         // ── Phase 3: resolve + upload to SeekStreaming in parallel ────────────
         if (pendingUploads.Count > 0 && scopeFactory is not null && !ct.IsCancellationRequested)
         {
