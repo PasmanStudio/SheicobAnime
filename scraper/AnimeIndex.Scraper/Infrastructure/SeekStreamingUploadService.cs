@@ -36,7 +36,7 @@ public sealed class SeekStreamingUploadService
     // voe       — direct MP4 via var source= (updated 2026-05-08); sometimes serves placeholder.
     // streamwish/vidhide/filemoon — always HLS, filtered by the m3u8 check before upload.
     private static readonly string[] Mp4FirstOrder =
-        ["mp4upload", "okru", "mixdrop", "voe", "streamwish", "vidhide", "filemoon"];
+        ["mp4upload", "okru", "mixdrop", "mediafire", "voe", "streamwish", "vidhide", "filemoon"];
 
     public SeekStreamingUploadService(
         SeekStreamingClient seekStreaming,

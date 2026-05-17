@@ -471,7 +471,7 @@ public sealed class Source2Strategy(
 
     private static readonly HashSet<string> BlockedProviders = new(StringComparer.OrdinalIgnoreCase)
     {
-        "mega", "mediafire", "desu",
+        "mega", "desu",
     };
 
     private static readonly Dictionary<string, short> ProviderPriorities = new(StringComparer.OrdinalIgnoreCase)
@@ -479,7 +479,7 @@ public sealed class Source2Strategy(
         ["okru"] = 1, ["mp4upload"] = 2, ["sendvid"] = 3, ["yourupload"] = 4,
         ["filemoon"] = 5, ["streamwish"] = 6, ["voe"] = 7, ["vidhide"] = 8,
         ["streamtape"] = 9, ["fembed"] = 10, ["doodstream"] = 11, ["nozomi"] = 12,
-        ["mixdrop"] = 13, ["desu"] = 14,
+        ["mixdrop"] = 13, ["mediafire"] = 14, ["desu"] = 15,
     };
 
     private static short GetProviderPriority(string provider) =>
@@ -509,6 +509,7 @@ public sealed class Source2Strategy(
                 var h when h.Contains("desu") || h.Contains("playmudos") => "desu",
                 var h when h.Contains("nozomi") => "nozomi",
                 var h when h.Contains("mega") => "mega",
+                var h when h.Contains("mediafire") => "mediafire",
                 var h when h.Contains("vidhide") || h.Contains("dsvplay") => "vidhide",
                 var h when h.Contains("mxdrop") => "mixdrop",
                 _ => host.Split('.')[0]
