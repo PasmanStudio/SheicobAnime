@@ -223,6 +223,7 @@ try
     builder.Services.AddSingleton<IHosterResolver, StreamwishResolver>();
     builder.Services.AddSingleton<IHosterResolver, VoeResolver>();
     builder.Services.AddSingleton<IHosterResolver, MixdropResolver>();
+    builder.Services.AddSingleton<IHosterResolver, MediafireResolver>();
     builder.Services.AddSingleton<ResolverRegistry>();
 
     // ─── Streaming proxy (signed HMAC) ──────────────────
