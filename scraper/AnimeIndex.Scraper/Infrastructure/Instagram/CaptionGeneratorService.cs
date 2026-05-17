@@ -60,6 +60,28 @@ public class CaptionGeneratorService(InstagramSettings settings)
         return string.Join("\n", lines);
     }
 
+    /// <summary>
+    /// Generates the first-comment text with a direct link per episode.
+    /// Posted automatically right after the carousel/single post is published.
+    /// Links in Instagram comments are tappable on mobile.
+    /// </summary>
+    public string GenerateEpisodeLinksComment(IReadOnlyList<(Series Series, Episode Episode)> items)
+    {
+        var lines = new List<string>();
+        lines.Add(items.Count == 1 ? "▶️ Ver episodio:" : "▶️ Ver episodios:");
+        lines.Add(string.Empty);
+
+        foreach (var (series, episode) in items)
+        {
+            var url = $"{settings.SiteUrl}/series/{series.Slug}/{episode.EpisodeNumber}";
+            lines.Add($"📺 {series.Title} · Ep {episode.EpisodeNumber}");
+            lines.Add(url);
+            lines.Add(string.Empty);
+        }
+
+        return string.Join("\n", lines).TrimEnd();
+    }
+
     private static string TruncateAt(string s, int maxLen) =>
         s.Length <= maxLen ? s : s[..maxLen].TrimEnd() + "…";
 }
