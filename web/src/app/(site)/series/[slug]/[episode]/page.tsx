@@ -9,7 +9,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
-export const dynamic = "force-dynamic";
+export const revalidate = 300;
 
 interface Props {
   params: Promise<{ slug: string; episode: string }>;
@@ -59,7 +59,7 @@ export default async function EpisodePage({ params }: Readonly<Props>) {
   let mirrors: Awaited<ReturnType<typeof getEpisodeMirrorsBySlug>> = [];
   try {
     [{ data: allEpisodes }, mirrors] = await Promise.all([
-      getSeriesEpisodes(slug, { pageSize: 500 }),
+      getSeriesEpisodes(slug, { pageSize: 50 }),
       getEpisodeMirrorsBySlug(slug, episodeNumber),
     ]);
   } catch {

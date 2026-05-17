@@ -119,6 +119,9 @@ public class ScraperTests
     [InlineData("https://mxdrop.org/d/abc", "mixdrop")]
     [InlineData("https://bysekoze.com/e/abc", "streamwish")]
     [InlineData("https://mixdrop.co/e/abc", "mixdrop")]
+    [InlineData("https://mixdrop.top/e/xwlpj114c87oq4", "mixdrop")]
+    [InlineData("https://mediafire.com/file/83fnd32qnxw8i4u/", "mediafire")]
+    [InlineData("https://www.mediafire.com/file/abc123/", "mediafire")]
     public void ExtractProviderName_MapsCorrectly(string url, string expected)
     {
         Assert.Equal(expected, Source2Strategy.ExtractProviderName(url));
