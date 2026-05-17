@@ -27,11 +27,16 @@ public sealed class SeekStreamingUploadService
     private readonly UpsertPipelineService _upsert;
     private readonly ILogger<SeekStreamingUploadService> _logger;
 
-    // Resolvers that return direct MP4 URLs (prioritised for tus upload).
-    // VOE excluded: always returns HLS (.m3u8) from cloud IPs — not downloadable as a single file.
-    // mp4upload first: highest quality, direct .mp4 link (port 183 accessible from GHA).
+    // Priority order for providers that can yield a direct downloadable MP4 (not HLS).
+    // Providers not in this list get priority 999 (tried last).
+    // Providers with no resolver are filtered out before this order is applied.
+    // mp4upload — highest quality; port 183 works from GHA but some CDN nodes block cloud IPs.
+    // okru      — NOT IP-bound (confirmed); very reliable from cloud.
+    // mixdrop   — NOT IP-bound (confirmed via mxcontent.net CDN); needs MixdropResolver.
+    // voe       — direct MP4 via var source= (updated 2026-05-08); sometimes serves placeholder.
+    // streamwish/vidhide/filemoon — always HLS, filtered by the m3u8 check before upload.
     private static readonly string[] Mp4FirstOrder =
-        ["mp4upload", "okru", "yourupload", "sendvid", "streamwish", "vidhide", "filemoon"];
+        ["mp4upload", "okru", "mixdrop", "voe", "streamwish", "vidhide", "filemoon"];
 
     public SeekStreamingUploadService(
         SeekStreamingClient seekStreaming,

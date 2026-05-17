@@ -119,6 +119,7 @@ public class ScraperTests
     [InlineData("https://mxdrop.org/d/abc", "mixdrop")]
     [InlineData("https://bysekoze.com/e/abc", "streamwish")]
     [InlineData("https://mixdrop.co/e/abc", "mixdrop")]
+    [InlineData("https://mixdrop.top/e/xwlpj114c87oq4", "mixdrop")]
     public void ExtractProviderName_MapsCorrectly(string url, string expected)
     {
         Assert.Equal(expected, Source2Strategy.ExtractProviderName(url));
