@@ -15,7 +15,7 @@ public sealed class Source2Strategy(
     UpsertPipelineService upsert,
     JkAnimeHttpClient http,
     SeekStreamingUploadService? seekStreaming,
-    IServiceScopeFactory scopeFactory,
+    IServiceScopeFactory? scopeFactory,
     IConfiguration config,
     ILogger<Source2Strategy> logger) : IScrapeStrategy
 {
@@ -246,7 +246,7 @@ public sealed class Source2Strategy(
         }
 
         // ── Phase 3: resolve + upload to SeekStreaming in parallel ────────────
-        if (pendingUploads.Count > 0 && !ct.IsCancellationRequested)
+        if (pendingUploads.Count > 0 && scopeFactory is not null && !ct.IsCancellationRequested)
         {
             var maxParallel = Math.Clamp(
                 config.GetValue("SeekStreaming:MaxParallelUploads", 20), 1, 20);
