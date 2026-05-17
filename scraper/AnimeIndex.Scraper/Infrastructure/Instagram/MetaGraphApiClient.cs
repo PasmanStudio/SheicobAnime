@@ -235,6 +235,33 @@ public class MetaGraphApiClient(
         return mediaId;
     }
 
+    // ── Comments ─────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Posts a comment on a published IG media object.
+    /// Used to pin the episode link list as the first comment on a carousel/single post.
+    /// Returns the new comment ID.
+    /// </summary>
+    public async Task<string> PostCommentAsync(
+        string mediaId, string text, CancellationToken ct = default)
+    {
+        using var form = new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["message"]      = text,
+            ["access_token"] = settings.AccessToken
+        });
+
+        var resp = await Http.PostAsync($"{BaseUrl}/{mediaId}/comments", form, ct);
+        var body = await resp.Content.ReadAsStringAsync(ct);
+
+        if (!resp.IsSuccessStatusCode)
+            throw new InvalidOperationException($"PostComment failed ({resp.StatusCode}): {body}");
+
+        using var doc = JsonDocument.Parse(body);
+        return doc.RootElement.GetProperty("id").GetString()
+            ?? throw new InvalidOperationException("Comment response missing id");
+    }
+
     // ── Token management ─────────────────────────────────────────────
 
     /// <summary>

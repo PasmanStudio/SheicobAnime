@@ -129,6 +129,9 @@ public class InstagramPublisherService(
 
             logger.LogInformation("Published single post for {Series} ep {Ep} → {MediaId}",
                 episode.Series.Title, episode.EpisodeNumber, mediaId);
+
+            var comment = captionGen.GenerateEpisodeLinksComment([(episode.Series, episode)]);
+            await PostFirstCommentAsync(mediaId, comment, ct);
         }
         catch (Exception ex)
         {
@@ -198,6 +201,9 @@ public class InstagramPublisherService(
             logger.LogInformation(
                 "Published carousel with {Count} episodes → IG Media {MediaId}",
                 episodes.Count, mediaId);
+
+            var comment = captionGen.GenerateEpisodeLinksComment(items);
+            await PostFirstCommentAsync(mediaId, comment, ct);
         }
         catch (Exception ex)
         {
@@ -263,6 +269,19 @@ public class InstagramPublisherService(
 
     private static string BuildFileName(string slug, short epNumber, string tag) =>
         $"{slug}-ep{epNumber}-{tag}-{DateTime.UtcNow:yyyyMMddHHmmss}.jpg";
+
+    private async Task PostFirstCommentAsync(string mediaId, string comment, CancellationToken ct)
+    {
+        try
+        {
+            var commentId = await api.PostCommentAsync(mediaId, comment, ct);
+            logger.LogInformation("Posted episode links comment {CommentId} on media {MediaId}", commentId, mediaId);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to post first comment on media {MediaId} — post remains published", mediaId);
+        }
+    }
 
     private async Task CheckTokenExpiryAsync(CancellationToken ct)
     {
