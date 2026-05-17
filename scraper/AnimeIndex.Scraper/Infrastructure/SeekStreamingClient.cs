@@ -168,6 +168,8 @@ public sealed class SeekStreamingClient
                 // Retry loop — buffer already holds the chunk bytes so we can recreate
                 // the PATCH request on each attempt without re-downloading from the source.
                 System.Net.HttpStatusCode? lastFailStatus = null;
+                long? serverOffsetOverride = null; // set when server confirms it has the chunk
+
                 for (var attempt = 0; attempt < MaxChunkRetries; attempt++)
                 {
                     if (attempt > 0)
@@ -176,6 +178,23 @@ public sealed class SeekStreamingClient
                         _logger.LogWarning(
                             "SeekStreaming tus PATCH retry {Attempt}/{Max} after {Status} (offset={Offset}) — waiting {Delay}s",
                             attempt, MaxChunkRetries, lastFailStatus, offset, delay.TotalSeconds);
+
+                        // tus protocol: after any transient error, HEAD the upload to get the
+                        // real server offset before retrying. A 502 from a reverse proxy can
+                        // occur AFTER the server committed the chunk, making a same-offset
+                        // retry produce a 409 Conflict. If the server is already past this
+                        // chunk, skip the PATCH and advance the local offset.
+                        var sv = await QueryTusOffsetAsync(uploadUrl, tusClient, ct);
+                        if (sv >= offset + bytesRead)
+                        {
+                            _logger.LogDebug(
+                                "SeekStreaming: server already has chunk (serverOffset={Sv} >= {Expected}), skipping retry",
+                                sv, offset + bytesRead);
+                            serverOffsetOverride = sv;
+                            lastFailStatus = null;
+                            break;
+                        }
+
                         await Task.Delay(delay, ct);
                     }
 
@@ -212,7 +231,7 @@ public sealed class SeekStreamingClient
                     throw new HttpRequestException(
                         $"SeekStreaming tus PATCH failed after {MaxChunkRetries} retries — last status: {(int)lastFailStatus} {lastFailStatus}");
 
-                offset += bytesRead;
+                offset = serverOffsetOverride ?? (offset + bytesRead);
 
                 _logger.LogDebug(
                     "SeekStreaming tus chunk: {Offset}/{Total} bytes ({Pct:F0}%)",
@@ -366,6 +385,27 @@ public sealed class SeekStreamingClient
         }
 
         return 0;
+    }
+
+    /// <summary>
+    /// Sends a tus HEAD request to retrieve the current server-side Upload-Offset.
+    /// Returns -1 if the check fails so callers treat it as "unknown — retry".
+    /// </summary>
+    private static async Task<long> QueryTusOffsetAsync(
+        string uploadUrl, HttpClient tusClient, CancellationToken ct)
+    {
+        try
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Head, uploadUrl);
+            req.Headers.TryAddWithoutValidation("Tus-Resumable", "1.0.0");
+            using var resp = await tusClient.SendAsync(req, ct);
+            if (resp.IsSuccessStatusCode &&
+                resp.Headers.TryGetValues("Upload-Offset", out var vals) &&
+                long.TryParse(vals.First(), out var sv))
+                return sv;
+        }
+        catch { }
+        return -1L;
     }
 
     private static string BuildTusMetadata(string accessToken, string filename, string mimeType)
