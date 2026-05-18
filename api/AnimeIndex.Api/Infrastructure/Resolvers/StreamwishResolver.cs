@@ -36,8 +36,8 @@ public sealed class StreamwishResolver : IHosterResolver
     {
         var idMatch = EmbedIdRegex.Match(mirror.EmbedUrl);
         if (!idMatch.Success)
-            throw new ResolverException(Hoster, ResolverFailureReason.PatternChanged,
-                $"Could not extract Streamwish ID from {mirror.EmbedUrl}");
+            throw new ResolverException(Hoster, ResolverFailureReason.EmbedUnavailable,
+                $"Unsupported Streamwish host: {mirror.EmbedUrl}");
 
         var host = new Uri(mirror.EmbedUrl).Host;
         var id = idMatch.Groups[1].Value;

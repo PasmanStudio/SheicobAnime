@@ -37,8 +37,8 @@ public sealed class VidhideResolver : IHosterResolver
     {
         var idMatch = EmbedIdRegex.Match(mirror.EmbedUrl);
         if (!idMatch.Success)
-            throw new ResolverException(Hoster, ResolverFailureReason.PatternChanged,
-                $"Could not extract Vidhide ID from {mirror.EmbedUrl}");
+            throw new ResolverException(Hoster, ResolverFailureReason.EmbedUnavailable,
+                $"Unsupported Vidhide host: {mirror.EmbedUrl}");
 
         var id = idMatch.Groups[1].Value;
         var host = new Uri(mirror.EmbedUrl).Host;
