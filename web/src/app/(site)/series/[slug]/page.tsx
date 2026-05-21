@@ -1,5 +1,6 @@
 import AdSlot from "@/components/ads/AdSlot";
 import Pagination from "@/components/ui/Pagination";
+import WatchlistButton from "@/components/watchlist/WatchlistButton";
 import { ApiError, getSeriesBySlug, getSeriesEpisodes } from "@/lib/api";
 import type { Metadata } from "next";
 import Image from "next/image";
@@ -107,6 +108,15 @@ export default async function SeriesPage({ params, searchParams }: Props) {
               ))}
             </div>
           )}
+
+          {/* Watchlist button */}
+          <div className="flex justify-center md:justify-start">
+            <WatchlistButton
+              seriesSlug={slug}
+              seriesTitle={series.title}
+              coverUrl={series.coverUrl}
+            />
+          </div>
 
           {/* Metadata grid */}
           <dl className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-2 text-sm mt-2">
