@@ -72,3 +72,9 @@ jobs:
           Instagram__MaxCarouselItems: "10"
           # Public site URL for story link stickers and captions
           Instagram__SiteUrl: ${{ secrets.INSTAGRAM_SITE_URL }}
+          # ── Discord publishing (optional — skipped if not set) ──
+          # Incoming Webhook URL from: Server Settings → Integrations → Webhooks
+          Discord__WebhookUrl: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          # Override display name / avatar if desired
+          Discord__Username:   "SheicobAnime"
+          Discord__SiteUrl:    ${{ secrets.INSTAGRAM_SITE_URL }}
