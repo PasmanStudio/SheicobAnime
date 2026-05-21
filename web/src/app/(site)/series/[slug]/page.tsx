@@ -1,4 +1,5 @@
 import AdSlot from "@/components/ads/AdSlot";
+import AddToListButton from "@/components/lists/AddToListButton";
 import Pagination from "@/components/ui/Pagination";
 import WatchlistButton from "@/components/watchlist/WatchlistButton";
 import { ApiError, getSeriesBySlug, getSeriesEpisodes } from "@/lib/api";
@@ -109,9 +110,14 @@ export default async function SeriesPage({ params, searchParams }: Props) {
             </div>
           )}
 
-          {/* Watchlist button */}
-          <div className="flex justify-center md:justify-start">
+          {/* Action buttons */}
+          <div className="flex flex-wrap gap-2 justify-center md:justify-start">
             <WatchlistButton
+              seriesSlug={slug}
+              seriesTitle={series.title}
+              coverUrl={series.coverUrl}
+            />
+            <AddToListButton
               seriesSlug={slug}
               seriesTitle={series.title}
               coverUrl={series.coverUrl}
