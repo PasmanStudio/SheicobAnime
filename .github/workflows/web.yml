@@ -49,3 +49,10 @@ jobs:
           NEXT_PUBLIC_AD_PROVIDER: "stub"
           NEXT_PUBLIC_DISQUS_SHORTNAME: "test"
           NEXT_PUBLIC_COMMENT_PROVIDER: "disqus"
+          # Auth.js — placeholder values for build (runtime-only, not used at build time)
+          AUTH_SECRET: "ci-build-secret-placeholder-32chars!!"
+          AUTH_GOOGLE_ID: "placeholder"
+          AUTH_GOOGLE_SECRET: "placeholder"
+          AUTH_DISCORD_ID: "placeholder"
+          AUTH_DISCORD_SECRET: "placeholder"
+          NEXTAUTH_DATABASE_URL: ""
