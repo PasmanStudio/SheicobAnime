@@ -2,6 +2,7 @@
 
 import { signIn } from "next-auth/react";
 import { useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 
 interface LoginModalProps {
   onClose: () => void;
@@ -30,7 +31,10 @@ export default function LoginModal({ onClose }: LoginModalProps) {
   const handleDiscord = () =>
     signIn("discord", { callbackUrl: window.location.href });
 
-  return (
+  // Render into document.body via portal so that the SiteHeader's
+  // backdrop-blur-md (which creates a CSS containing block) does not
+  // constrain the fixed overlay to the header element instead of the viewport.
+  return createPortal(
     <div
       ref={overlayRef}
       onClick={handleOverlayClick}
@@ -107,6 +111,7 @@ export default function LoginModal({ onClose }: LoginModalProps) {
           .
         </p>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
