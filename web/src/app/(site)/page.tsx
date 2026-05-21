@@ -9,9 +9,10 @@ import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
 
-// ISR: regenerate at most once per minute. Public data (series, episodes)
-// doesn't need to be fresh on every request — 60s staleness is acceptable.
-export const revalidate = 60;
+// force-dynamic: skip static pre-render at build time.
+// The home page calls the external API (Render) which can be cold at build.
+// Vercel CDN / Next.js route cache handles caching at the edge.
+export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
   title: "SheicobAnime — Watch Anime Online",
