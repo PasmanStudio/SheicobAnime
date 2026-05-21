@@ -95,6 +95,7 @@ try
         connectionString = NormalizePostgresConnectionString(connectionString);
 
         builder.Services.AddDbContext<AppDbContext>(options =>
+        {
             options.UseNpgsql(connectionString, npgsqlOptions =>
             {
                 npgsqlOptions.EnableRetryOnFailure(
@@ -102,7 +103,12 @@ try
                     maxRetryDelay: TimeSpan.FromSeconds(5),
                     errorCodesToAdd: null);
                 npgsqlOptions.CommandTimeout(30);
-            }));
+            });
+            // Raw-SQL migrations (AddAuthTables, AddDiscordPosts, AddUserWatchlist) don't update
+            // the EF snapshot — suppress the PendingModelChangesWarning so `database update` runs.
+            options.ConfigureWarnings(w =>
+                w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.RelationalEventId.PendingModelChangesWarning));
+        });
 
         // ─── Hangfire (client + dashboard only — NO server/workers) ───
         // The scraper service owns all Hangfire workers and recurring jobs.
