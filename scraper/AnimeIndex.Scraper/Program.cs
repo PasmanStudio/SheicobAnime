@@ -1,6 +1,7 @@
 using AnimeIndex.Api.Data;
 using AnimeIndex.Api.Infrastructure.Scraping;
 using AnimeIndex.Scraper.Infrastructure;
+using AnimeIndex.Scraper.Infrastructure.Discord;
 using AnimeIndex.Scraper.Infrastructure.Instagram;
 using AnimeIndex.Scraper.Jobs;
 using AnimeIndex.Scraper.Strategies;
@@ -96,7 +97,17 @@ try
     builder.Configuration.GetSection("Instagram").Bind(igSettings);
     builder.Services.AddSingleton(igSettings);
 
+    // ─── Discord settings ──────────────────────────────────
+    var discordSettings = new DiscordSettings();
+    builder.Configuration.GetSection("Discord").Bind(discordSettings);
+    builder.Services.AddSingleton(discordSettings);
+
     // ─── HTTP clients ─────────────────────────────────────
+    builder.Services.AddHttpClient("discord", c =>
+    {
+        c.Timeout = TimeSpan.FromSeconds(15);
+        c.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", "SheicobAnime-Scraper/1.0");
+    });
     builder.Services.AddHttpClient("instagram-graph", c =>
     {
         c.Timeout = TimeSpan.FromSeconds(30);
@@ -136,6 +147,10 @@ try
     {
         c.Timeout = TimeSpan.FromMinutes(90);
     });
+
+    // ─── Discord publishing services ───────────────────────
+    builder.Services.AddScoped<DiscordWebhookClient>();
+    builder.Services.AddScoped<DiscordPublisherService>();
 
     // ─── Instagram publishing services ────────────────────
     builder.Services.AddScoped<MetaGraphApiClient>();

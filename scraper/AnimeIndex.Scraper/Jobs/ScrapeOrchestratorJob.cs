@@ -1,6 +1,7 @@
 using AnimeIndex.Api.Data;
 using AnimeIndex.Api.Infrastructure.Scraping;
 using AnimeIndex.Scraper.Infrastructure;
+using AnimeIndex.Scraper.Infrastructure.Discord;
 using AnimeIndex.Scraper.Infrastructure.Instagram;
 using Hangfire;
 using Microsoft.EntityFrameworkCore;
@@ -27,6 +28,7 @@ public class ScrapeOrchestratorJob(
     AppDbContext db,
     DeadLetterAlerter alerter,
     InstagramPublisherService instagramPublisher,
+    DiscordPublisherService discordPublisher,
     IServiceScopeFactory scopeFactory,
     IHostApplicationLifetime lifetime,
     ILogger<ScrapeOrchestratorJob> logger)
@@ -73,6 +75,16 @@ public class ScrapeOrchestratorJob(
                 catch (Exception igEx)
                 {
                     logger.LogError(igEx, "Instagram publishing encountered an unhandled error (non-critical)");
+                }
+
+                // Best-effort Discord publishing — never fails the scrape job
+                try
+                {
+                    await discordPublisher.PublishNewEpisodesAsync(ct);
+                }
+                catch (Exception dcEx)
+                {
+                    logger.LogError(dcEx, "Discord publishing encountered an unhandled error (non-critical)");
                 }
             }
             else
