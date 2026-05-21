@@ -1,5 +1,6 @@
 import AdSlot from "@/components/ads/AdSlot";
 import AddToListButton from "@/components/lists/AddToListButton";
+import AddToTierButton from "@/components/tierlist/AddToTierButton";
 import Pagination from "@/components/ui/Pagination";
 import WatchlistButton from "@/components/watchlist/WatchlistButton";
 import { ApiError, getSeriesBySlug, getSeriesEpisodes } from "@/lib/api";
@@ -118,6 +119,11 @@ export default async function SeriesPage({ params, searchParams }: Props) {
               coverUrl={series.coverUrl}
             />
             <AddToListButton
+              seriesSlug={slug}
+              seriesTitle={series.title}
+              coverUrl={series.coverUrl}
+            />
+            <AddToTierButton
               seriesSlug={slug}
               seriesTitle={series.title}
               coverUrl={series.coverUrl}
