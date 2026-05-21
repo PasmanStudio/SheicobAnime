@@ -25,11 +25,16 @@ export default function LoginModal({ onClose }: LoginModalProps) {
     if (e.target === overlayRef.current) onClose();
   };
 
+  // Strip query params (e.g. ?error=Configuration from a previous failed attempt)
+  // so OAuth doesn't redirect back with stale error params in the URL.
+  const callbackUrl = () =>
+    `${window.location.origin}${window.location.pathname}`;
+
   const handleGoogle = () =>
-    signIn("google", { callbackUrl: window.location.href });
+    signIn("google", { callbackUrl: callbackUrl() });
 
   const handleDiscord = () =>
-    signIn("discord", { callbackUrl: window.location.href });
+    signIn("discord", { callbackUrl: callbackUrl() });
 
   // Render into document.body via portal so that the SiteHeader's
   // backdrop-blur-md (which creates a CSS containing block) does not
