@@ -109,25 +109,30 @@ export default async function TierListDetailPage({ params }: Props) {
           )}
         </div>
       ) : (
-        <div className="rounded-xl overflow-hidden border border-neutral-800">
+        {/* overflow-visible so TierPickerOnEntry dropdowns aren't clipped */}
+        <div className="rounded-xl border border-neutral-800">
           {TIERS.map((tier, idx) => {
             const entries = byTier[tier];
             const colors = TIER_COLORS[tier];
+            const isFirst = idx === 0;
+            const isLast = idx === TIERS.length - 1;
 
             return (
               <div
                 key={tier}
                 className={`flex min-h-[72px] ${idx < TIERS.length - 1 ? "border-b border-neutral-800" : ""}`}
               >
-                {/* Tier label */}
+                {/* Tier label — explicit corner rounding since parent has no overflow-hidden */}
                 <div
-                  className={`w-14 shrink-0 flex items-center justify-center text-2xl font-extrabold ${colors.bg} ${colors.text} select-none`}
+                  className={`w-14 shrink-0 flex items-center justify-center text-2xl font-extrabold ${colors.bg} ${colors.text} select-none
+                    ${isFirst ? "rounded-tl-xl" : ""} ${isLast ? "rounded-bl-xl" : ""}`}
                 >
                   {tier}
                 </div>
 
                 {/* Entries */}
-                <div className="flex-1 bg-neutral-900 px-3 py-2 flex items-center gap-2 flex-wrap min-h-[72px]">
+                <div className={`flex-1 bg-neutral-900 px-3 py-2 flex items-center gap-2 flex-wrap min-h-[72px]
+                  ${isFirst ? "rounded-tr-xl" : ""} ${isLast ? "rounded-br-xl" : ""}`}>
                   {entries.length === 0 ? (
                     <span className="text-xs text-neutral-700 italic">Vacío</span>
                   ) : (

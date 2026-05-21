@@ -85,7 +85,7 @@ export default function TierPickerOnEntry({
       </button>
 
       {open && (
-        <div className="absolute z-50 bottom-full mb-1 left-1/2 -translate-x-1/2 bg-neutral-900 border border-neutral-700 rounded-xl shadow-2xl overflow-hidden w-36">
+        <div className="absolute z-50 top-full mt-1 left-1/2 -translate-x-1/2 bg-neutral-900 border border-neutral-700 rounded-xl shadow-2xl overflow-hidden w-36">
           <p className="px-3 py-2 text-[10px] text-neutral-500 uppercase tracking-wider font-medium border-b border-neutral-800 truncate">
             {seriesTitle}
           </p>
