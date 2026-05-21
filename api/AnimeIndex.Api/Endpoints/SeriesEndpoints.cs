@@ -9,7 +9,7 @@ namespace AnimeIndex.Api.Endpoints;
 public static class SeriesEndpoints
 {
     private const int DefaultPageSize = 20;
-    private const int MaxPageSize = 50;
+    private const int MaxPageSize = 500; // raised to allow temporada page to fetch full catalogue
     private static readonly TimeSpan CacheDuration = TimeSpan.FromMinutes(5);
 
     public static void MapSeriesEndpoints(this WebApplication app)

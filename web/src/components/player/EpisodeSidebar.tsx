@@ -150,14 +150,14 @@ export default function EpisodeSidebar({
                         }`}>
                           Episodio {ep.episodeNumber}
                         </p>
-                        <p className="text-[11px] text-neutral-500 truncate">
-                          {seriesTitle}
-                        </p>
-                        {ep.airedAt && (
+                        {/* Show episode-specific subtitle: real episode title (not series name) or aired date */}
+                        {ep.title && ep.title !== seriesTitle ? (
+                          <p className="text-[11px] text-neutral-500 truncate">{ep.title}</p>
+                        ) : ep.airedAt ? (
                           <p className="text-[11px] text-neutral-600">
-                            {new Date(ep.airedAt).toLocaleDateString()}
+                            {new Date(ep.airedAt).toLocaleDateString("es-AR")}
                           </p>
-                        )}
+                        ) : null}
                       </div>
                     </Link>
                   </li>

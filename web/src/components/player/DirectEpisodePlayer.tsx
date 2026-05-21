@@ -6,7 +6,6 @@ import { useMemo, useState } from "react";
 interface Props {
   mirrors: Mirror[];
   episodeTitle: string;
-  seriesTitle?: string;
 }
 
 /**
@@ -15,7 +14,7 @@ interface Props {
  * - Other servers are collapsed under "Ver otros servidores ▼"
  * - No custom HTML5 player — relies on the embed provider's own player
  */
-export default function DirectEpisodePlayer({ mirrors, episodeTitle, seriesTitle }: Readonly<Props>) {
+export default function DirectEpisodePlayer({ mirrors, episodeTitle }: Readonly<Props>) {
   const activeMirrors = useMemo(
     () => [...mirrors].filter((m) => m.isActive).sort((a, b) => a.priority - b.priority),
     [mirrors],
@@ -58,9 +57,6 @@ export default function DirectEpisodePlayer({ mirrors, episodeTitle, seriesTitle
       <div className="bg-neutral-900 border-x border-neutral-700/50 px-3 sm:px-4 py-2.5 flex items-center gap-2 min-w-0">
         <h2 className="text-xs sm:text-sm font-bold text-white uppercase truncate flex-1 min-w-0">
           <span className="text-orange-400">{episodeTitle}</span>
-          {seriesTitle && (
-            <span className="text-neutral-400 font-normal lowercase"> — {seriesTitle}</span>
-          )}
         </h2>
       </div>
 
