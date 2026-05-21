@@ -11,6 +11,10 @@ export function getDb(): Pool {
       max: 5,
       idleTimeoutMillis: 30_000,
       connectionTimeoutMillis: 5_000,
+      // Required for Supabase pooler — same as auth.ts pool
+      ssl: process.env.NEXTAUTH_DATABASE_URL
+        ? { rejectUnauthorized: false }
+        : false,
     });
   }
   return _pool;

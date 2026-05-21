@@ -26,13 +26,18 @@ interface UserStats {
 
 // ─── DB helpers ───────────────────────────────────────────────────────────────
 
-async function getUserByUsername(username: string): Promise<DbUser | null> {
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+async function getUserBySlug(slug: string): Promise<DbUser | null> {
   try {
     const db = getDb();
+    // Accept both UUID (new links) and username slug (future/existing usernames)
+    const isUuid = UUID_RE.test(slug);
     const { rows } = await db.query<DbUser>(
-      `SELECT id, name, email, image, username, bio, created_at
-       FROM users WHERE username = $1 LIMIT 1`,
-      [username],
+      isUuid
+        ? `SELECT id, name, email, image, username, bio, created_at FROM users WHERE id = $1::uuid LIMIT 1`
+        : `SELECT id, name, email, image, username, bio, created_at FROM users WHERE username = $1 LIMIT 1`,
+      [slug],
     );
     return rows[0] ?? null;
   } catch {
@@ -96,7 +101,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
 export default async function UsuarioPage({ params }: Props) {
   const { username } = await params;
-  const [user, session] = await Promise.all([getUserByUsername(username), auth()]);
+  const [user, session] = await Promise.all([getUserBySlug(username), auth()]);
 
   if (!user) notFound();
 

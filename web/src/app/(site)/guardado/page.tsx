@@ -66,13 +66,19 @@ export default async function GuardadoPage({ searchParams }: Props) {
   const entries = await getWatchlist(session.user.id, activeStatus);
 
   // Count per status for tab badges
-  const db = getDb();
-  const { rows: counts } = await db.query<{ status: WatchStatus; count: string }>(
-    `SELECT status, COUNT(*) as count FROM user_watch_entries WHERE user_id = $1 GROUP BY status`,
-    [session.user.id],
-  );
-  const countMap = Object.fromEntries(counts.map((r) => [r.status, Number(r.count)])) as Record<WatchStatus, number>;
-  const totalCount = Object.values(countMap).reduce((a, b) => a + b, 0);
+  let countMap: Record<WatchStatus, number> = {} as Record<WatchStatus, number>;
+  let totalCount = 0;
+  try {
+    const db = getDb();
+    const { rows: counts } = await db.query<{ status: WatchStatus; count: string }>(
+      `SELECT status, COUNT(*) as count FROM user_watch_entries WHERE user_id = $1 GROUP BY status`,
+      [session.user.id],
+    );
+    countMap = Object.fromEntries(counts.map((r) => [r.status, Number(r.count)])) as Record<WatchStatus, number>;
+    totalCount = Object.values(countMap).reduce((a, b) => a + b, 0);
+  } catch {
+    // Non-fatal — tabs render without counts
+  }
 
   return (
     <div className="container mx-auto px-4 py-8 max-w-5xl">

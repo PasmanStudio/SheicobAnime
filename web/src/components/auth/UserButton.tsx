@@ -49,11 +49,6 @@ export default function UserButton() {
   // Logged in → show avatar + dropdown
   const user = session.user;
   const displayName = user.name ?? user.email ?? "Usuario";
-  // Build username from display name (e.g. "Matias T" → "matias-t")
-  const username = displayName
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "");
 
   return (
     <div className="relative" ref={dropdownRef}>
@@ -91,7 +86,7 @@ export default function UserButton() {
           {/* Menu items */}
           <nav className="py-1">
             <Link
-              href={`/usuario/${username}`}
+              href={`/usuario/${user.id}`}
               onClick={() => setDropdownOpen(false)}
               className="flex items-center gap-2.5 px-4 py-2.5 text-sm text-neutral-300 hover:text-white hover:bg-neutral-800 transition-colors"
             >
