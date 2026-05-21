@@ -377,11 +377,6 @@ export default function EpisodePlayer({
       <div className="bg-neutral-900 border-x border-neutral-700/50 px-4 py-2.5 flex items-center gap-3">
         <h2 className="text-sm md:text-base font-bold text-white uppercase truncate flex-1">
           <span className="text-orange-400">{episodeTitle}</span>
-          {seriesTitle && (
-            <span className="text-neutral-400 font-normal lowercase">
-              {" "}— {seriesTitle}
-            </span>
-          )}
         </h2>
 
         {/* Action icons */}

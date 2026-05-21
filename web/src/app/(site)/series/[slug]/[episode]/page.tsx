@@ -106,7 +106,6 @@ export default async function EpisodePage({ params }: Readonly<Props>) {
           <DirectEpisodePlayer
             mirrors={mirrors}
             episodeTitle={episodeTitle}
-            seriesTitle={episode.series?.title}
           />
 
           <AdSlot placement="episode_mid" />
