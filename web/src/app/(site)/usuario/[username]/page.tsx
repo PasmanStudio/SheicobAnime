@@ -1,21 +1,12 @@
 import { auth } from "@/lib/auth";
+import { getDb } from "@/lib/db";
+import { WATCH_STATUS_ICONS, WATCH_STATUS_LABELS, type WatchEntry, type WatchStatus } from "@/lib/watchlist";
 import type { Metadata } from "next";
 import Image from "next/image";
+import Link from "next/link";
 import { notFound } from "next/navigation";
-import { Pool } from "pg";
 
-// ─── DB helpers ───────────────────────────────────────────────────────────────
-
-let _pool: Pool | null = null;
-function getPool(): Pool {
-  if (!_pool) {
-    _pool = new Pool({
-      connectionString: process.env.NEXTAUTH_DATABASE_URL,
-      max: 3,
-    });
-  }
-  return _pool;
-}
+// ─── Types ────────────────────────────────────────────────────────────────────
 
 interface DbUser {
   id: string;
@@ -27,19 +18,65 @@ interface DbUser {
   created_at: string;
 }
 
+interface UserStats {
+  watchlistCount: number;
+  episodesWatched: number;
+  statusCounts: Partial<Record<WatchStatus, number>>;
+}
+
+// ─── DB helpers ───────────────────────────────────────────────────────────────
+
 async function getUserByUsername(username: string): Promise<DbUser | null> {
   try {
-    const pool = getPool();
-    const { rows } = await pool.query<DbUser>(
+    const db = getDb();
+    const { rows } = await db.query<DbUser>(
       `SELECT id, name, email, image, username, bio, created_at
-       FROM users
-       WHERE username = $1
-       LIMIT 1`,
+       FROM users WHERE username = $1 LIMIT 1`,
       [username],
     );
     return rows[0] ?? null;
   } catch {
     return null;
+  }
+}
+
+async function getUserStats(userId: string): Promise<UserStats> {
+  try {
+    const db = getDb();
+    const [watchlistRes, historyRes, statusRes] = await Promise.all([
+      db.query<{ count: string }>(
+        `SELECT COUNT(*) as count FROM user_watch_entries WHERE user_id = $1`,
+        [userId],
+      ),
+      db.query<{ count: string }>(
+        `SELECT COUNT(*) as count FROM user_episode_history WHERE user_id = $1`,
+        [userId],
+      ),
+      db.query<{ status: WatchStatus; count: string }>(
+        `SELECT status, COUNT(*) as count FROM user_watch_entries WHERE user_id = $1 GROUP BY status`,
+        [userId],
+      ),
+    ]);
+    return {
+      watchlistCount: Number(watchlistRes.rows[0]?.count ?? 0),
+      episodesWatched: Number(historyRes.rows[0]?.count ?? 0),
+      statusCounts: Object.fromEntries(statusRes.rows.map((r) => [r.status, Number(r.count)])),
+    };
+  } catch {
+    return { watchlistCount: 0, episodesWatched: 0, statusCounts: {} };
+  }
+}
+
+async function getRecentWatchlist(userId: string, limit = 6): Promise<WatchEntry[]> {
+  try {
+    const db = getDb();
+    const { rows } = await db.query<WatchEntry>(
+      `SELECT * FROM user_watch_entries WHERE user_id = $1 ORDER BY updated_at DESC LIMIT $2`,
+      [userId, limit],
+    );
+    return rows;
+  } catch {
+    return [];
   }
 }
 
@@ -59,16 +96,19 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
 export default async function UsuarioPage({ params }: Props) {
   const { username } = await params;
-  const [user, session] = await Promise.all([
-    getUserByUsername(username),
-    auth(),
-  ]);
+  const [user, session] = await Promise.all([getUserByUsername(username), auth()]);
 
   if (!user) notFound();
 
   const isOwn = session?.user?.id === user.id;
   const displayName = user.name ?? user.username ?? username;
   const joinedYear = new Date(user.created_at).getFullYear();
+
+  // Only fetch stats if we know the user exists
+  const [stats, recentWatchlist] = await Promise.all([
+    getUserStats(user.id),
+    getRecentWatchlist(user.id),
+  ]);
 
   return (
     <div className="container mx-auto px-4 py-10 max-w-3xl">
@@ -110,26 +150,111 @@ export default async function UsuarioPage({ params }: Props) {
 
           {/* Bio */}
           {user.bio ? (
-            <p className="text-sm text-neutral-300 leading-relaxed mb-3">{user.bio}</p>
+            <p className="text-sm text-neutral-300 leading-relaxed mb-4">{user.bio}</p>
           ) : isOwn ? (
-            <p className="text-sm text-neutral-600 italic mb-3">
-              Todavía no agregaste una bio.
-            </p>
+            <p className="text-sm text-neutral-600 italic mb-4">Todavía no agregaste una bio.</p>
           ) : null}
 
-          <p className="text-xs text-neutral-600">Miembro desde {joinedYear}</p>
+          {/* Stats row */}
+          <div className="flex flex-wrap gap-x-6 gap-y-2 text-sm">
+            <div className="text-center">
+              <p className="text-white font-bold">{stats.episodesWatched}</p>
+              <p className="text-neutral-500 text-xs">Episodios vistos</p>
+            </div>
+            <div className="text-center">
+              <p className="text-white font-bold">{stats.watchlistCount}</p>
+              <p className="text-neutral-500 text-xs">En lista</p>
+            </div>
+            {(Object.entries(stats.statusCounts) as [WatchStatus, number][]).map(([s, c]) => (
+              <div key={s} className="text-center">
+                <p className="text-white font-bold">{c}</p>
+                <p className="text-neutral-500 text-xs">
+                  {WATCH_STATUS_ICONS[s]} {WATCH_STATUS_LABELS[s]}
+                </p>
+              </div>
+            ))}
+          </div>
+
+          <p className="text-xs text-neutral-600 mt-3">Miembro desde {joinedYear}</p>
         </div>
       </div>
 
-      {/* Activity sections — placeholders for #129, #130, #131 */}
-      <div className="mt-6 grid gap-4">
-        <div className="rounded-xl bg-neutral-900 border border-neutral-800 p-5">
-          <h2 className="text-sm font-semibold text-white mb-2">Actividad reciente</h2>
-          <p className="text-sm text-neutral-500">
-            El historial de actividad estará disponible próximamente.
-          </p>
+      {/* Quick links (own profile) */}
+      {isOwn && (
+        <div className="mt-4 flex gap-3">
+          <Link
+            href="/guardado"
+            className="flex-1 text-center px-4 py-2.5 rounded-xl bg-neutral-900 border border-neutral-800 hover:border-neutral-600 text-sm text-neutral-300 hover:text-white transition-colors"
+          >
+            📋 Mi lista
+          </Link>
+          <Link
+            href="/historial"
+            className="flex-1 text-center px-4 py-2.5 rounded-xl bg-neutral-900 border border-neutral-800 hover:border-neutral-600 text-sm text-neutral-300 hover:text-white transition-colors"
+          >
+            🕐 Historial
+          </Link>
         </div>
-      </div>
+      )}
+
+      {/* Recent watchlist */}
+      {recentWatchlist.length > 0 && (
+        <div className="mt-6">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-sm font-semibold text-white">Lista reciente</h2>
+            <Link href={`/guardado`} className="text-xs text-indigo-400 hover:text-indigo-300">
+              Ver todo →
+            </Link>
+          </div>
+          <div className="grid grid-cols-3 sm:grid-cols-6 gap-3">
+            {recentWatchlist.map((entry) => (
+              <Link
+                key={entry.series_slug}
+                href={`/series/${entry.series_slug}`}
+                className="group relative rounded-xl overflow-hidden bg-neutral-900 border border-neutral-800 hover:border-neutral-600 transition-all"
+              >
+                <div className="relative aspect-[2/3] bg-neutral-800">
+                  {entry.cover_url ? (
+                    <Image
+                      src={entry.cover_url}
+                      alt={entry.series_title}
+                      fill
+                      sizes="120px"
+                      className="object-cover group-hover:scale-105 transition-transform duration-300"
+                    />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center text-neutral-600">🎬</div>
+                  )}
+                  <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/80 p-1.5">
+                    <p className="text-[10px] text-neutral-300">
+                      {WATCH_STATUS_ICONS[entry.status]} {WATCH_STATUS_LABELS[entry.status]}
+                    </p>
+                  </div>
+                </div>
+              </Link>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Empty state */}
+      {recentWatchlist.length === 0 && (
+        <div className="mt-6 rounded-xl bg-neutral-900 border border-neutral-800 p-5 text-center">
+          <p className="text-sm text-neutral-500">
+            {isOwn
+              ? "Aún no guardaste ningún anime. Explorá el directorio y guardá tus favoritos."
+              : "Este usuario no tiene actividad pública."}
+          </p>
+          {isOwn && (
+            <Link
+              href="/directory"
+              className="inline-block mt-3 text-sm text-indigo-400 hover:text-indigo-300"
+            >
+              Explorar directorio →
+            </Link>
+          )}
+        </div>
+      )}
     </div>
   );
 }

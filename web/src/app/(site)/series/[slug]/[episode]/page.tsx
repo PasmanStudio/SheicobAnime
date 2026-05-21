@@ -3,6 +3,7 @@ import NavigationAdTrigger from "@/components/ads/NavigationAdTrigger";
 import CommentSection from "@/components/comments/CommentSection";
 import DirectEpisodePlayer from "@/components/player/DirectEpisodePlayer";
 import EpisodeSidebar from "@/components/player/EpisodeSidebar";
+import MarkWatchedButton from "@/components/watchlist/MarkWatchedButton";
 import { ApiError, getEpisodeBySlug, getEpisodeMirrorsBySlug, getSeriesEpisodes } from "@/lib/api";
 import type { Metadata } from "next";
 import Image from "next/image";
@@ -154,6 +155,20 @@ export default async function EpisodePage({ params }: Readonly<Props>) {
                   Emitido: {new Date(episode.airedAt).toLocaleDateString()}
                 </span>
               )}
+            </div>
+          )}
+
+          {/* Mark as watched */}
+          {episode.id && (
+            <div className="mt-3">
+              <MarkWatchedButton
+                episodeId={episode.id}
+                seriesSlug={slug}
+                episodeNumber={episodeNumber}
+                episodeTitle={episode.title}
+                seriesTitle={episode.series?.title}
+                coverUrl={episode.series?.coverUrl}
+              />
             </div>
           )}
 
