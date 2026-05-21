@@ -49,21 +49,29 @@ export default async function TemporadaPage({ searchParams }: Props) {
   const { season, year } = resolveParams(sp);
   const { season: currentSeason, year: currentYear } = getCurrentSeason();
 
-  // Fetch AniList seasonal data + our indexed series in parallel
-  const [anilistData, ourSeries] = await Promise.all([
+  // Fetch AniList seasonal data + our indexed series in parallel.
+  // We query both `year` and `year-1` because multi-cour series often start in the
+  // previous year (e.g. Re:Zero S4 started 2024 but airs in spring 2025).
+  // pageSize 300 ensures we cover all indexed series without pagination gaps.
+  const fallback = { data: [] as import("@/lib/types").Series[], total: 0, page: 1, pageSize: 300 };
+  const [anilistData, ourSeriesCurrent, ourSeriesPrev] = await Promise.all([
     getSeasonalAnime(season, year),
-    getSeries({ year, pageSize: 50, sort: "score" }).catch(() => ({
-      data: [],
-      total: 0,
-      page: 1,
-      pageSize: 50,
-    })),
+    getSeries({ year, pageSize: 300, sort: "score" }).catch(() => fallback),
+    getSeries({ year: year - 1, pageSize: 300, sort: "score" }).catch(() => fallback),
   ]);
+
+  // Merge both year results (deduplicate by slug)
+  const seenSlugs = new Set<string>();
+  const allSeries = [...ourSeriesCurrent.data, ...ourSeriesPrev.data].filter((s) => {
+    if (seenSlugs.has(s.slug)) return false;
+    seenSlugs.add(s.slug);
+    return true;
+  });
 
   // Match each AniList entry against our DB
   const matched = anilistData.map((media) => {
     const found =
-      ourSeries.data.find((s) =>
+      allSeries.find((s) =>
         titlesMatch(media, s.title, s.titleRomaji, s.titleNative),
       ) ?? null;
     return { media, match: found };
