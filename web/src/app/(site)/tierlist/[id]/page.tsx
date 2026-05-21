@@ -109,8 +109,7 @@ export default async function TierListDetailPage({ params }: Props) {
           )}
         </div>
       ) : (
-        {/* overflow-visible so TierPickerOnEntry dropdowns aren't clipped */}
-        <div className="rounded-xl border border-neutral-800">
+        <div className="rounded-xl border border-neutral-800">{/* overflow-visible: no overflow-hidden so TierPickerOnEntry dropdowns aren't clipped */}
           {TIERS.map((tier, idx) => {
             const entries = byTier[tier];
             const colors = TIER_COLORS[tier];
