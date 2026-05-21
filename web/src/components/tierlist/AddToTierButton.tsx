@@ -2,6 +2,7 @@
 
 import { TIERS, TIER_COLORS, type Tier, type TierListSummary } from "@/lib/tierlist";
 import { useSession } from "next-auth/react";
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
 interface Props {
@@ -110,9 +111,9 @@ export default function AddToTierButton({ seriesSlug, seriesTitle, coverUrl }: P
           ) : lists.length === 0 ? (
             <div className="px-3 py-4 text-sm text-neutral-500 text-center">
               No tenés tier lists.<br />
-              <a href="/tierlist" className="text-indigo-400 hover:text-indigo-300 underline text-xs mt-1 inline-block">
+              <Link href="/tierlist" className="text-indigo-400 hover:text-indigo-300 underline text-xs mt-1 inline-block">
                 Crear una →
-              </a>
+              </Link>
             </div>
           ) : (
             lists.map((list) => {
