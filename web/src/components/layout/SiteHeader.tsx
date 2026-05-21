@@ -1,3 +1,4 @@
+import UserButton from "@/components/auth/UserButton";
 import Link from "next/link";
 import Image from "next/image";
 import SearchBar from "./SearchBar";
@@ -23,9 +24,10 @@ export default function SiteHeader() {
         {/* Nav (desktop + mobile hamburger) */}
         <NavMenu />
 
-        {/* Search — pushed to the right */}
-        <div className="flex-1 flex justify-end">
+        {/* Search + user — pushed to the right */}
+        <div className="flex-1 flex items-center justify-end gap-2">
           <SearchBar />
+          <UserButton />
         </div>
       </div>
 

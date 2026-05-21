@@ -95,6 +95,13 @@ jobs:
           NEXT_PUBLIC_AD_PROVIDER: "stub"
           NEXT_PUBLIC_DISQUS_SHORTNAME: "test"
           NEXT_PUBLIC_COMMENT_PROVIDER: "disqus"
+          # Auth.js — dummy values for build (not used at build time, only at runtime)
+          AUTH_SECRET: "ci-build-secret-placeholder-32chars"
+          AUTH_GOOGLE_ID: "placeholder"
+          AUTH_GOOGLE_SECRET: "placeholder"
+          AUTH_DISCORD_ID: "placeholder"
+          AUTH_DISCORD_SECRET: "placeholder"
+          NEXTAUTH_DATABASE_URL: ""
 
   # ─── Guard: skip migration if DATABASE_URL not configured ───
   check-secrets:
@@ -207,6 +214,21 @@ jobs:
           printf 'adsterra' | vercel env add NEXT_PUBLIC_AD_PROVIDER production --force --token=${{ secrets.VERCEL_TOKEN }}
           printf 'disqus' | vercel env add NEXT_PUBLIC_COMMENT_PROVIDER production --force --token=${{ secrets.VERCEL_TOKEN }}
           printf 'sheicobanime-vercel-app' | vercel env add NEXT_PUBLIC_DISQUS_SHORTNAME production --force --token=${{ secrets.VERCEL_TOKEN }}
+          # Auth.js — only push if secrets are configured (skip if empty)
+          if [ -n "${{ secrets.AUTH_SECRET }}" ]; then
+            printf '%s' "${{ secrets.AUTH_SECRET }}" | vercel env add AUTH_SECRET production --force --token=${{ secrets.VERCEL_TOKEN }}
+          fi
+          if [ -n "${{ secrets.AUTH_GOOGLE_ID }}" ]; then
+            printf '%s' "${{ secrets.AUTH_GOOGLE_ID }}" | vercel env add AUTH_GOOGLE_ID production --force --token=${{ secrets.VERCEL_TOKEN }}
+            printf '%s' "${{ secrets.AUTH_GOOGLE_SECRET }}" | vercel env add AUTH_GOOGLE_SECRET production --force --token=${{ secrets.VERCEL_TOKEN }}
+          fi
+          if [ -n "${{ secrets.AUTH_DISCORD_ID }}" ]; then
+            printf '%s' "${{ secrets.AUTH_DISCORD_ID }}" | vercel env add AUTH_DISCORD_ID production --force --token=${{ secrets.VERCEL_TOKEN }}
+            printf '%s' "${{ secrets.AUTH_DISCORD_SECRET }}" | vercel env add AUTH_DISCORD_SECRET production --force --token=${{ secrets.VERCEL_TOKEN }}
+          fi
+          if [ -n "${{ secrets.NEXTAUTH_DATABASE_URL }}" ]; then
+            printf '%s' "${{ secrets.NEXTAUTH_DATABASE_URL }}" | vercel env add NEXTAUTH_DATABASE_URL production --force --token=${{ secrets.VERCEL_TOKEN }}
+          fi
         env:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
