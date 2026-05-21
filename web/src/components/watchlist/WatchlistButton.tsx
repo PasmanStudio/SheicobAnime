@@ -52,7 +52,7 @@ export default function WatchlistButton({ seriesSlug, seriesTitle, coverUrl }: P
     setOpen(false);
     setLoading(true);
     try {
-      await fetch("/api/watchlist", {
+      const res = await fetch("/api/watchlist", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -62,9 +62,12 @@ export default function WatchlistButton({ seriesSlug, seriesTitle, coverUrl }: P
           status: newStatus,
         }),
       });
-      setCurrentStatus(newStatus);
+      // Only update UI if server confirmed the save (avoid false optimistic update)
+      if (res.ok) {
+        setCurrentStatus(newStatus);
+      }
     } catch {
-      // silently fail — state will still show optimistic update
+      // network error — don't update UI
     } finally {
       setLoading(false);
     }
