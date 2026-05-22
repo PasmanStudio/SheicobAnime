@@ -87,7 +87,7 @@ export default async function TemporadaPage({ searchParams }: Props) {
   // server-to-server (low latency) and all searches fire in parallel.
   //
   const unmatched = firstPass.filter((m) => m.match === null);
-  let fallbackMap = new Map<number, Series>(); // AniList media.id → matched Series
+  const fallbackMap = new Map<number, Series>(); // AniList media.id → matched Series
 
   if (unmatched.length > 0) {
     const searches = await Promise.all(
