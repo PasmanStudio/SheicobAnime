@@ -3,6 +3,8 @@ import { getDb } from "@/lib/db";
 import type { ListDetail } from "@/lib/lists";
 import EditListNameButton from "@/components/lists/EditListNameButton";
 import RemoveFromListButton from "@/components/lists/RemoveFromListButton";
+import ShareButtons from "./ShareButtons";
+import ListViewTracker from "./ListViewTracker";
 import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
@@ -16,7 +18,7 @@ async function getListDetail(id: string): Promise<ListDetail | null> {
   try {
     const db = getDb();
     const { rows } = await db.query(
-      `SELECT id, name, description, is_public, user_id, created_at, updated_at
+      `SELECT id, name, description, is_public, user_id, views, created_at, updated_at
        FROM user_lists WHERE id = $1`,
       [id],
     );
@@ -58,6 +60,9 @@ export default async function ListaDetailPage({ params }: Props) {
 
   return (
     <div className="container mx-auto px-4 py-8 max-w-5xl">
+      {/* View tracker — increments counter once per visit (public lists only) */}
+      {list.is_public && !isOwner && <ListViewTracker listId={list.id} />}
+
       {/* Header */}
       <div className="mb-6">
         <div className="flex items-start gap-3 flex-wrap mb-1">
@@ -73,29 +78,45 @@ export default async function ListaDetailPage({ params }: Props) {
         {list.description && (
           <p className="text-sm text-neutral-400 mb-2">{list.description}</p>
         )}
-        <div className="flex items-center gap-3 text-xs text-neutral-500">
+        <div className="flex flex-wrap items-center gap-3 text-xs text-neutral-500">
           <span>
             {list.items.length === 0
               ? "Sin animes"
               : `${list.items.length} anime${list.items.length !== 1 ? "s" : ""}`}
           </span>
           {list.is_public && (
-            <span className="px-2 py-0.5 rounded-full bg-green-900/40 text-green-400 border border-green-800/50">
-              Pública
-            </span>
+            <>
+              <span className="px-2 py-0.5 rounded-full bg-green-900/40 text-green-400 border border-green-800/50">
+                Pública
+              </span>
+              <span className="flex items-center gap-1">
+                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                  <circle cx="12" cy="12" r="3" />
+                </svg>
+                {list.views.toLocaleString("es-AR")} vistas
+              </span>
+            </>
           )}
         </div>
       </div>
 
-      {/* Back link */}
-      {isOwner && (
-        <Link
-          href="/listas"
-          className="inline-flex items-center gap-1.5 text-xs text-neutral-500 hover:text-neutral-300 transition-colors mb-6"
-        >
-          ← Mis listas
-        </Link>
-      )}
+      {/* Back link + share */}
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
+        {isOwner ? (
+          <Link
+            href="/listas"
+            className="inline-flex items-center gap-1.5 text-xs text-neutral-500 hover:text-neutral-300 transition-colors"
+          >
+            ← Mis listas
+          </Link>
+        ) : (
+          <div />
+        )}
+        {list.is_public && (
+          <ShareButtons listId={list.id} listName={list.name} />
+        )}
+      </div>
 
       {/* Items grid */}
       {list.items.length === 0 ? (

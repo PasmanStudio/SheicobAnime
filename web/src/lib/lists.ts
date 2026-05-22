@@ -5,6 +5,7 @@ export interface ListSummary {
   is_public: boolean;
   item_count: number;
   preview_covers: string[];
+  views: number;
   created_at: string;
   updated_at: string;
 }
