@@ -1,6 +1,7 @@
 import { auth } from "@/lib/auth";
 import { getDb } from "@/lib/db";
 import { WATCH_STATUS_ICONS, WATCH_STATUS_LABELS, type WatchEntry, type WatchStatus } from "@/lib/watchlist";
+import type { ListSummary } from "@/lib/lists";
 import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
@@ -86,6 +87,32 @@ async function getRecentWatchlist(userId: string, limit = 6): Promise<WatchEntry
   }
 }
 
+async function getPublicLists(userId: string): Promise<ListSummary[]> {
+  try {
+    const db = getDb();
+    const { rows } = await db.query<ListSummary>(
+      `SELECT l.id, l.name, l.description, l.is_public, l.views,
+              l.created_at, l.updated_at,
+              COUNT(i.list_id)::int AS item_count,
+              ARRAY(
+                SELECT i2.cover_url FROM user_list_items i2
+                WHERE i2.list_id = l.id AND i2.cover_url IS NOT NULL
+                ORDER BY i2.added_at DESC LIMIT 3
+              ) AS preview_covers
+       FROM user_lists l
+       LEFT JOIN user_list_items i ON i.list_id = l.id
+       WHERE l.user_id = $1 AND l.is_public = true
+       GROUP BY l.id
+       ORDER BY l.views DESC, l.updated_at DESC
+       LIMIT 6`,
+      [userId],
+    );
+    return rows;
+  } catch {
+    return [];
+  }
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 interface Props {
@@ -111,9 +138,10 @@ export default async function UsuarioPage({ params }: Props) {
   const joinedYear = new Date(user.created_at).getFullYear();
 
   // Only fetch stats if we know the user exists
-  const [stats, recentWatchlist] = await Promise.all([
+  const [stats, recentWatchlist, publicLists] = await Promise.all([
     getUserStats(user.id),
     getRecentWatchlist(user.id),
+    getPublicLists(user.id),
   ]);
 
   return (
@@ -261,6 +289,61 @@ export default async function UsuarioPage({ params }: Props) {
               Explorar directorio →
             </Link>
           )}
+        </div>
+      )}
+
+      {/* Public playlists */}
+      {publicLists.length > 0 && (
+        <div className="mt-6">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-sm font-semibold text-white">📋 Playlists públicas</h2>
+            {isOwn && (
+              <Link href="/listas" className="text-xs text-indigo-400 hover:text-indigo-300">
+                Administrar →
+              </Link>
+            )}
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {publicLists.map((lst) => (
+              <Link
+                key={lst.id}
+                href={`/listas/${lst.id}`}
+                className="group flex gap-3 rounded-xl bg-neutral-900 border border-neutral-800 hover:border-neutral-600 transition-all p-3"
+              >
+                {/* Cover mosaic */}
+                <div className="shrink-0 w-16 h-16 rounded-lg overflow-hidden bg-neutral-800 grid grid-cols-2 gap-px">
+                  {lst.preview_covers.slice(0, 4).map((url, i) => (
+                    <div key={i} className="relative overflow-hidden">
+                      <Image src={url} alt="" fill sizes="32px" className="object-cover" />
+                    </div>
+                  ))}
+                  {lst.preview_covers.length === 0 && (
+                    <div className="col-span-2 row-span-2 flex items-center justify-center text-neutral-600 text-2xl">
+                      📋
+                    </div>
+                  )}
+                </div>
+                {/* Info */}
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-white group-hover:text-indigo-300 transition-colors line-clamp-1">
+                    {lst.name}
+                  </p>
+                  {lst.description && (
+                    <p className="text-xs text-neutral-500 line-clamp-1 mt-0.5">{lst.description}</p>
+                  )}
+                  <div className="flex items-center gap-3 mt-1.5 text-xs text-neutral-600">
+                    <span>{lst.item_count} anime{lst.item_count !== 1 ? "s" : ""}</span>
+                    <span className="flex items-center gap-1">
+                      <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" />
+                      </svg>
+                      {lst.views.toLocaleString("es-AR")}
+                    </span>
+                  </div>
+                </div>
+              </Link>
+            ))}
+          </div>
         </div>
       )}
     </div>
