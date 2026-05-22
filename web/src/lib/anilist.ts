@@ -159,17 +159,25 @@ export function titlesMatch(
   ourTitleRomaji: string | null,
   ourTitleNative: string | null,
 ): boolean {
+  // Normalize and filter: drop empty strings that result from titles that are
+  // purely Japanese/CJK characters (they collapse to "" after normalization).
+  // Without this filter, two all-CJK titles both normalize to "" and "" === ""
+  // causes every Japanese-native-titled anime to false-match each other.
   const candidates = [
     anilist.title.romaji,
     anilist.title.english,
     anilist.title.native,
   ]
     .filter((t): t is string => Boolean(t))
-    .map(normalize);
+    .map(normalize)
+    .filter((t) => t.length >= 4);
 
   const ours = [ourTitle, ourTitleRomaji, ourTitleNative]
     .filter((t): t is string => Boolean(t))
-    .map(normalize);
+    .map(normalize)
+    .filter((t) => t.length >= 4);
+
+  if (candidates.length === 0 || ours.length === 0) return false;
 
   return candidates.some((c) =>
     ours.some(
