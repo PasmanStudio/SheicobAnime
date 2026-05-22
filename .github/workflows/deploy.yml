@@ -214,6 +214,7 @@ jobs:
           printf 'adsterra' | vercel env add NEXT_PUBLIC_AD_PROVIDER production --force --token=${{ secrets.VERCEL_TOKEN }}
           printf 'disqus' | vercel env add NEXT_PUBLIC_COMMENT_PROVIDER production --force --token=${{ secrets.VERCEL_TOKEN }}
           printf 'sheicobanime-vercel-app' | vercel env add NEXT_PUBLIC_DISQUS_SHORTNAME production --force --token=${{ secrets.VERCEL_TOKEN }}
+          printf 'https://discord.gg/yVaQtGfE' | vercel env add NEXT_PUBLIC_DISCORD_INVITE production --force --token=${{ secrets.VERCEL_TOKEN }}
           # Auth.js — only push if secrets are configured (skip if empty)
           if [ -n "${{ secrets.AUTH_SECRET }}" ]; then
             printf '%s' "${{ secrets.AUTH_SECRET }}" | vercel env add AUTH_SECRET production --force --token=${{ secrets.VERCEL_TOKEN }}
