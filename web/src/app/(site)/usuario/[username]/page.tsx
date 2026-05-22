@@ -5,6 +5,7 @@ import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import ProfileEditModal from "./ProfileEditModal";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -147,9 +148,11 @@ export default async function UsuarioPage({ params }: Props) {
             </div>
 
             {isOwn && (
-              <button className="shrink-0 px-4 py-1.5 rounded-lg border border-neutral-700 text-sm text-neutral-300 hover:text-white hover:border-neutral-500 transition-colors">
-                Editar perfil
-              </button>
+              <ProfileEditModal
+                currentName={user.name}
+                currentUsername={user.username}
+                currentBio={user.bio}
+              />
             )}
           </div>
 
