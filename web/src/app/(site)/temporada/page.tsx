@@ -49,18 +49,30 @@ export default async function TemporadaPage({ searchParams }: Props) {
   const { season, year } = resolveParams(sp);
   const { season: currentSeason, year: currentYear } = getCurrentSeason();
 
-  // Fetch AniList seasonal data + our full indexed catalogue in parallel.
-  // We do NOT filter by year: multi-cour series are often stored under a different
-  // year than the season they're currently airing in (e.g. Re:Zero S4 in DB as 2024
-  // but airs spring 2026). Title matching handles the correlation instead.
-  // pageSize: 500 relies on the raised MaxPageSize in SeriesEndpoints.
+  // Fetch AniList seasonal data + our indexed catalogue in parallel.
+  //
+  // Two fetches to cover both the current season and historical browsing:
+  //   1. status=ongoing — all currently airing series (typically ~100). New 4th-season
+  //      entries have score=null so they'd be invisible in a score-sorted query, but
+  //      they ARE ongoing, so this fetch catches them all regardless of score.
+  //   2. sort=score&pageSize=500 — top 500 by score. Covers popular completed series
+  //      when browsing past seasons (Spring 2023, etc.).
+  //
+  // The two sets are merged and deduplicated by slug so each series is only matched once.
   const fallback = { data: [] as import("@/lib/types").Series[], total: 0, page: 1, pageSize: 500 };
-  const [anilistData, ourSeriesResult] = await Promise.all([
+  const [anilistData, ongoingResult, topByScoreResult] = await Promise.all([
     getSeasonalAnime(season, year),
+    getSeries({ pageSize: 500, status: "ongoing" }).catch(() => fallback),
     getSeries({ pageSize: 500, sort: "score" }).catch(() => fallback),
   ]);
 
-  const allSeries = ourSeriesResult.data;
+  // Merge: ongoing first (priority), then top-by-score, deduplicate by slug
+  const seenSlugs = new Set<string>();
+  const allSeries = [...ongoingResult.data, ...topByScoreResult.data].filter((s) => {
+    if (seenSlugs.has(s.slug)) return false;
+    seenSlugs.add(s.slug);
+    return true;
+  });
 
   // Match each AniList entry against our DB
   const matched = anilistData.map((media) => {
