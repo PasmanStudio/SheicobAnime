@@ -10,7 +10,8 @@ import {
   titlesMatch,
   type AniListSeason,
 } from "@/lib/anilist";
-import { getSeries } from "@/lib/api";
+import { getSeries, searchSeries } from "@/lib/api";
+import type { Series } from "@/lib/types";
 import type { Metadata } from "next";
 import Link from "next/link";
 
@@ -49,39 +50,71 @@ export default async function TemporadaPage({ searchParams }: Props) {
   const { season, year } = resolveParams(sp);
   const { season: currentSeason, year: currentYear } = getCurrentSeason();
 
-  // Fetch AniList seasonal data + our indexed catalogue in parallel.
+  // ── Phase 1: broad pre-fetch in parallel ─────────────────────────────────────
   //
-  // Two fetches to cover both the current season and historical browsing:
-  //   1. status=ongoing — all currently airing series (typically ~100). New 4th-season
-  //      entries have score=null so they'd be invisible in a score-sorted query, but
-  //      they ARE ongoing, so this fetch catches them all regardless of score.
-  //   2. sort=score&pageSize=500 — top 500 by score. Covers popular completed series
-  //      when browsing past seasons (Spring 2023, etc.).
+  // Two catalogue fetches to cover the most common cases:
+  //   1. status=ongoing — all currently airing series (~87). New seasonal entries
+  //      have score=null so they're invisible in score-sorted queries.
+  //   2. sort=score&pageSize=500 — top 500 by score. Covers popular completed
+  //      series when browsing past seasons.
   //
-  // The two sets are merged and deduplicated by slug so each series is only matched once.
-  const fallback = { data: [] as import("@/lib/types").Series[], total: 0, page: 1, pageSize: 500 };
+  const fallback = { data: [] as Series[], total: 0, page: 1, pageSize: 500 };
   const [anilistData, ongoingResult, topByScoreResult] = await Promise.all([
     getSeasonalAnime(season, year),
     getSeries({ pageSize: 500, status: "ongoing" }).catch(() => fallback),
     getSeries({ pageSize: 500, sort: "score" }).catch(() => fallback),
   ]);
 
-  // Merge: ongoing first (priority), then top-by-score, deduplicate by slug
+  // Merge and deduplicate by slug (ongoing takes priority)
   const seenSlugs = new Set<string>();
-  const allSeries = [...ongoingResult.data, ...topByScoreResult.data].filter((s) => {
+  const prefetched = [...ongoingResult.data, ...topByScoreResult.data].filter((s) => {
     if (seenSlugs.has(s.slug)) return false;
     seenSlugs.add(s.slug);
     return true;
   });
 
-  // Match each AniList entry against our DB
-  const matched = anilistData.map((media) => {
-    const found =
-      allSeries.find((s) =>
-        titlesMatch(media, s.title, s.titleRomaji, s.titleNative),
-      ) ?? null;
-    return { media, match: found };
-  });
+  // ── Phase 2: first-pass title matching ────────────────────────────────────────
+  const firstPass = anilistData.map((media) => ({
+    media,
+    match: prefetched.find((s) => titlesMatch(media, s.title, s.titleRomaji, s.titleNative)) ?? null,
+  }));
+
+  // ── Phase 3: search fallback for unmatched entries ────────────────────────────
+  //
+  // Many indexed series are status=completed with score=null (e.g. recently
+  // finished shows), so they don't appear in either pre-fetch. For each AniList
+  // entry still unmatched, we run a targeted search against our DB. This runs
+  // server-to-server (low latency) and all searches fire in parallel.
+  //
+  const unmatched = firstPass.filter((m) => m.match === null);
+  let fallbackMap = new Map<number, Series>(); // AniList media.id → matched Series
+
+  if (unmatched.length > 0) {
+    const searches = await Promise.all(
+      unmatched.map(async ({ media }) => {
+        const query = media.title.english ?? media.title.romaji;
+        if (!query) return null;
+        const results = await searchSeries({ q: query, pageSize: 5 }).catch(
+          () => ({ data: [] as Series[] }),
+        );
+        const found = results.data.find((s) =>
+          titlesMatch(media, s.title, s.titleRomaji, s.titleNative),
+        );
+        return found ? { id: media.id, series: found } : null;
+      }),
+    );
+
+    for (const hit of searches) {
+      if (hit) fallbackMap.set(hit.id, hit.series);
+    }
+  }
+
+  // ── Final: combine both passes ────────────────────────────────────────────────
+  const matched = firstPass.map((m) =>
+    m.match !== null
+      ? m
+      : { media: m.media, match: fallbackMap.get(m.media.id) ?? null },
+  );
 
   const availableCount = matched.filter((m) => m.match !== null).length;
   const seasonNav = getSeasonNav(year);
