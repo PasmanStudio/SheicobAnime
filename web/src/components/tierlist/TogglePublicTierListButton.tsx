@@ -4,11 +4,11 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 
 interface Props {
-  listId: string;
+  tierListId: string;
   initialIsPublic: boolean;
 }
 
-export default function TogglePublicButton({ listId, initialIsPublic }: Props) {
+export default function TogglePublicTierListButton({ tierListId, initialIsPublic }: Props) {
   const router = useRouter();
   const [isPublic, setIsPublic] = useState(initialIsPublic);
   const [loading, setLoading] = useState(false);
@@ -16,14 +16,14 @@ export default function TogglePublicButton({ listId, initialIsPublic }: Props) {
   const toggle = async () => {
     setLoading(true);
     try {
-      const res = await fetch(`/api/lists/${listId}`, {
-        method: "PATCH",
+      const res = await fetch(`/api/tierlist/${tierListId}`, {
+        method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ is_public: !isPublic }),
       });
       if (res.ok) {
         setIsPublic((v) => !v);
-        // Refresh RSC so share buttons appear/disappear
+        // Refresh the RSC so share buttons appear/disappear
         router.refresh();
       }
     } catch {

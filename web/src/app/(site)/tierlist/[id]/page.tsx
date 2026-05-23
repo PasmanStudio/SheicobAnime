@@ -7,6 +7,7 @@ import RemoveFromTierButton from "@/components/tierlist/RemoveFromTierButton";
 import { encodeId, decodeId, isUuid } from "@/lib/short-id";
 import { siteUrl } from "@/lib/site-url";
 import ShareButtons from "@/components/share/ShareButtons";
+import TogglePublicTierListButton from "@/components/tierlist/TogglePublicTierListButton";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
@@ -140,17 +141,20 @@ export default async function TierListDetailPage({ params }: Props) {
               </span>
             )}
           </p>
-          {/* Owner share + public toggle row */}
-          {isOwner && list.is_public && (
-            <div className="ml-auto">
-              <ShareButtons
-                url={shareUrl}
-                text={`Mirá la tier list "${list.name}" en SheicobAnime 🏆`}
+          {/* Owner: toggle public/private + share buttons */}
+          {isOwner && (
+            <div className="ml-auto flex items-center gap-2 flex-wrap">
+              <TogglePublicTierListButton
+                tierListId={list.id}
+                initialIsPublic={list.is_public}
               />
+              {list.is_public && (
+                <ShareButtons
+                  url={shareUrl}
+                  text={`Mirá la tier list "${list.name}" en SheicobAnime 🏆`}
+                />
+              )}
             </div>
-          )}
-          {isOwner && !list.is_public && (
-            <span className="text-xs text-neutral-600">Solo vos podés verla</span>
           )}
         </div>
       </div>
