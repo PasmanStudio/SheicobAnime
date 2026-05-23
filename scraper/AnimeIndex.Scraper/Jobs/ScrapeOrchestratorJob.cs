@@ -3,6 +3,7 @@ using AnimeIndex.Api.Infrastructure.Scraping;
 using AnimeIndex.Scraper.Infrastructure;
 using AnimeIndex.Scraper.Infrastructure.Discord;
 using AnimeIndex.Scraper.Infrastructure.Instagram;
+using AnimeIndex.Scraper.Infrastructure.Telegram;
 using Hangfire;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -29,6 +30,7 @@ public class ScrapeOrchestratorJob(
     DeadLetterAlerter alerter,
     InstagramPublisherService instagramPublisher,
     DiscordPublisherService discordPublisher,
+    TelegramPublisherService telegramPublisher,
     IServiceScopeFactory scopeFactory,
     IHostApplicationLifetime lifetime,
     ILogger<ScrapeOrchestratorJob> logger)
@@ -85,6 +87,16 @@ public class ScrapeOrchestratorJob(
                 catch (Exception dcEx)
                 {
                     logger.LogError(dcEx, "Discord publishing encountered an unhandled error (non-critical)");
+                }
+
+                // Best-effort Telegram publishing — never fails the scrape job
+                try
+                {
+                    await telegramPublisher.PublishNewEpisodesAsync(ct);
+                }
+                catch (Exception tgEx)
+                {
+                    logger.LogError(tgEx, "Telegram publishing encountered an unhandled error (non-critical)");
                 }
             }
             else

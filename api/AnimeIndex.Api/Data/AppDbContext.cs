@@ -15,6 +15,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<WatchProgress> WatchProgress => Set<WatchProgress>();
     public DbSet<InstagramPost> InstagramPosts => Set<InstagramPost>();
     public DbSet<DiscordPost> DiscordPosts => Set<DiscordPost>();
+    public DbSet<TelegramPost> TelegramPosts => Set<TelegramPost>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -187,6 +188,27 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
 
             e.HasIndex(p => p.EpisodeId).HasDatabaseName("idx_instagram_posts_episode");
             e.HasIndex(p => p.CreatedAt).HasDatabaseName("idx_instagram_posts_created");
+
+            e.HasOne(p => p.Episode)
+                .WithMany()
+                .HasForeignKey(p => p.EpisodeId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ─── TelegramPost ─────────────────────────────────
+        modelBuilder.Entity<TelegramPost>(e =>
+        {
+            e.ToTable("telegram_posts");
+            e.HasKey(p => p.Id);
+            e.Property(p => p.Id).HasDefaultValueSql("gen_random_uuid()");
+            e.Property(p => p.Status).IsRequired().HasDefaultValue("published");
+            e.Property(p => p.CreatedAt).HasDefaultValueSql("now()");
+
+            e.ToTable(t => t.HasCheckConstraint("CK_telegram_posts_status",
+                "status IN ('published','failed')"));
+
+            e.HasIndex(p => p.EpisodeId).HasDatabaseName("idx_telegram_posts_episode");
+            e.HasIndex(p => p.CreatedAt).HasDatabaseName("idx_telegram_posts_created");
 
             e.HasOne(p => p.Episode)
                 .WithMany()
