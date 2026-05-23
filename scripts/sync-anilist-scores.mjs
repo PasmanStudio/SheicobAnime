@@ -34,9 +34,20 @@ const END_YEAR    = new Date().getFullYear() + 1;
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-/** Same normalization as web/src/lib/anilist.ts */
+/** Decode HTML entities stored literally in our DB (e.g. &#039; → ', &amp; → &) */
+function decodeHtml(t) {
+  return t
+    .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(parseInt(code, 10)))
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'");
+}
+
+/** Same normalization as web/src/lib/anilist.ts, plus HTML entity decode */
 function normalize(t) {
-  return t.toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
+  return decodeHtml(t).toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
 }
 
 function titlesMatch(anilist, ourTitle, ourRomaji, ourNative) {
@@ -200,9 +211,9 @@ async function main() {
   console.log(`\n② Fetching AniList by year (${START_YEAR}→${END_YEAR - 1}) — ~10–15 min...`);
   const anilistAll = await fetchAllAniList();
 
-  console.log('\n③ Matching...');
+  console.log('\n③ Matching (pass 1 — bulk AniList data)...');
   const matched   = [];
-  const unmatched = [];
+  let   stillUnmatched = [];
 
   for (const s of ourSeries) {
     const hit = anilistAll.find(a =>
@@ -217,9 +228,87 @@ async function main() {
         score:        (rawScore / 10).toFixed(1),
       });
     } else {
-      unmatched.push(s);
+      stillUnmatched.push(s);
     }
   }
+  console.log(`  Pass 1: ${matched.length} matched, ${stillUnmatched.length} remaining`);
+
+  // ── Pass 2: individual AniList search for unmatched ──
+  // Handles: HTML entities in titles, donghua without seasonYear, title differences
+  if (stillUnmatched.length > 0) {
+    console.log(`\n④ Pass 2 — individual AniList search for ${stillUnmatched.length} unmatched series (~${Math.ceil(stillUnmatched.length * 0.7 / 60)} min)...`);
+
+    const SEARCH_QUERY = `
+      query ($search: String) {
+        Page(perPage: 5) {
+          media(type: ANIME, search: $search) {
+            id title { romaji english native } averageScore meanScore
+          }
+        }
+      }`;
+
+    let searchHits = 0;
+    const finalUnmatched = [];
+
+    for (let i = 0; i < stillUnmatched.length; i++) {
+      const s = stillUnmatched[i];
+      // Use the most descriptive title for searching
+      const searchQuery = s.titleRomaji
+        ? decodeHtml(s.titleRomaji).split(':')[0].trim()   // e.g. "Heaven Official's Blessing"
+        : s.title.split(':')[0].trim();
+
+      process.stdout.write(`\r  [${i + 1}/${stillUnmatched.length}] Buscando: ${searchQuery.slice(0, 40).padEnd(40)}`);
+
+      try {
+        const resp = await fetch(ANILIST_URL, {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+          body:    JSON.stringify({ query: SEARCH_QUERY, variables: { search: searchQuery } }),
+        });
+        totalRequests++;
+
+        if (resp.status === 429) {
+          process.stdout.write(' [rate-limited, 65s...]');
+          await sleep(65_000);
+          i--; // retry same series
+          continue;
+        }
+
+        if (resp.ok) {
+          const json = await resp.json();
+          const results = json.data?.Page?.media ?? [];
+          const hit = results.find(a =>
+            (a.averageScore ?? a.meanScore ?? 0) > 0 &&
+            titlesMatch(a, s.title, s.titleRomaji, s.titleNative)
+          );
+          if (hit) {
+            const rawScore = hit.averageScore ?? hit.meanScore;
+            matched.push({
+              slug:         s.slug,
+              ourTitle:     s.title,
+              anilistTitle: hit.title.romaji ?? hit.title.english ?? hit.title.native,
+              score:        (rawScore / 10).toFixed(1),
+            });
+            searchHits++;
+          } else {
+            finalUnmatched.push(s);
+          }
+        } else {
+          finalUnmatched.push(s);
+        }
+      } catch {
+        finalUnmatched.push(s);
+      }
+
+      // 700ms between requests to respect rate limit
+      await sleep(700);
+    }
+
+    stillUnmatched = finalUnmatched;
+    console.log(`\n  Pass 2: +${searchHits} matched via search, ${stillUnmatched.length} genuinely unmatched`);
+  }
+
+  const unmatched = stillUnmatched;
 
   // ── SQL output ──
   const lines = [
