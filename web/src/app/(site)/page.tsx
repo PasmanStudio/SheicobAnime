@@ -94,6 +94,16 @@ export default async function HomePage() {
                 <span className="absolute top-2 left-2 bg-amber-500 text-black text-xs font-extrabold w-7 h-7 flex items-center justify-center rounded-md shadow-lg">
                   #{i + 1}
                 </span>
+                {/* Score badge */}
+                {s.score !== null && (
+                  <span className={`absolute top-2 right-2 bg-black/75 text-xs font-bold px-1.5 py-0.5 rounded ${
+                    s.score >= 8 ? "text-green-400" :
+                    s.score >= 6 ? "text-amber-400" :
+                                   "text-neutral-400"
+                  }`}>
+                    ★ {s.score.toFixed(1)}
+                  </span>
+                )}
                 {/* Title on image */}
                 <div className="absolute bottom-0 left-0 right-0 p-2.5">
                   <p className="text-sm font-semibold text-white line-clamp-2 leading-snug drop-shadow-lg">
