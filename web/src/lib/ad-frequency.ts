@@ -26,14 +26,16 @@ function getCooldownMs(): number {
 export function canShowInterstitial(): boolean {
   if (globalThis.window === undefined) return false;
 
-  // Never show interstitial on touch/mobile — AdSlot scripts inside it
-  // attach global click interceptors that open popups on every tap.
+  // Never show the interstitial overlay on touch/mobile.
+  // It's fullscreen and if invoke.js intercepts the close-button tap the
+  // user gets trapped with no way out — worse than any banner.
   if (
     window.matchMedia("(pointer: coarse)").matches ||
     window.innerWidth < 768
   ) {
     return false;
   }
+
 
   // Don't show on first visit ever
   const firstVisit = localStorage.getItem(FIRST_VISIT_KEY);
