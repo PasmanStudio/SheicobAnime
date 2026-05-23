@@ -26,8 +26,13 @@ export default function AdsterraGlobalAds() {
       process.env.NEXT_PUBLIC_ADSTERRA_SOCIALBAR_SCRIPT ||
       "https://pl29138491.profitablecpmratenetwork.com/81/0e/8b/810e8b5ee34d29a8061284101b4768c6.js";
 
-    // Load Popunder script (fires once per session)
-    if (popunderSrc) {
+    // Detect touch/mobile — popunder opens a new window on every click,
+    // which is catastrophic on mobile. Disable it for touch devices entirely.
+    const isTouchDevice =
+      window.matchMedia("(pointer: coarse)").matches || window.innerWidth < 768;
+
+    // Load Popunder script — DESKTOP ONLY
+    if (popunderSrc && !isTouchDevice) {
       const popScript = document.createElement("script");
       popScript.src = popunderSrc;
       popScript.async = true;
@@ -35,7 +40,7 @@ export default function AdsterraGlobalAds() {
       document.body.appendChild(popScript);
     }
 
-    // Load Social Bar script (notification-style overlay)
+    // Load Social Bar script (notification-style overlay — safe for mobile)
     if (socialBarSrc) {
       const sbScript = document.createElement("script");
       sbScript.src = socialBarSrc;
