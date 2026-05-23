@@ -119,7 +119,7 @@ export default async function TierListDetailPage({ params }: Props) {
           {list.is_public && !isOwner && (
             <ShareButtons
               url={shareUrl}
-              text={`Mirá la tier list "${list.name}" en SheicobAnime 🏆`}
+              text={`Mirá la tier list "${list.name}" en SheicobAnime`}
             />
           )}
         </div>
@@ -151,7 +151,7 @@ export default async function TierListDetailPage({ params }: Props) {
               {list.is_public && (
                 <ShareButtons
                   url={shareUrl}
-                  text={`Mirá la tier list "${list.name}" en SheicobAnime 🏆`}
+                  text={`Mirá la tier list "${list.name}" en SheicobAnime`}
                 />
               )}
             </div>
