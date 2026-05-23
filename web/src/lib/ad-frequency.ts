@@ -26,6 +26,15 @@ function getCooldownMs(): number {
 export function canShowInterstitial(): boolean {
   if (globalThis.window === undefined) return false;
 
+  // Never show interstitial on touch/mobile — AdSlot scripts inside it
+  // attach global click interceptors that open popups on every tap.
+  if (
+    window.matchMedia("(pointer: coarse)").matches ||
+    window.innerWidth < 768
+  ) {
+    return false;
+  }
+
   // Don't show on first visit ever
   const firstVisit = localStorage.getItem(FIRST_VISIT_KEY);
   if (!firstVisit) {

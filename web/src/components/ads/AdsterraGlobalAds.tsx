@@ -26,13 +26,20 @@ export default function AdsterraGlobalAds() {
       process.env.NEXT_PUBLIC_ADSTERRA_SOCIALBAR_SCRIPT ||
       "https://pl29138491.profitablecpmratenetwork.com/81/0e/8b/810e8b5ee34d29a8061284101b4768c6.js";
 
-    // Detect touch/mobile — popunder opens a new window on every click,
-    // which is catastrophic on mobile. Disable it for touch devices entirely.
+    // On touch/mobile ALL Adsterra global scripts are disabled.
+    // Popunder and Social Bar both attach global click/tap interceptors that
+    // open new browser windows on every touch event — completely breaking
+    // mobile navigation. Desktop-only.
     const isTouchDevice =
       window.matchMedia("(pointer: coarse)").matches || window.innerWidth < 768;
 
+    if (isTouchDevice) {
+      loaded.current = true; // mark as handled so we don't retry
+      return;
+    }
+
     // Load Popunder script — DESKTOP ONLY
-    if (popunderSrc && !isTouchDevice) {
+    if (popunderSrc) {
       const popScript = document.createElement("script");
       popScript.src = popunderSrc;
       popScript.async = true;
@@ -40,7 +47,7 @@ export default function AdsterraGlobalAds() {
       document.body.appendChild(popScript);
     }
 
-    // Load Social Bar script (notification-style overlay — safe for mobile)
+    // Load Social Bar script — DESKTOP ONLY
     if (socialBarSrc) {
       const sbScript = document.createElement("script");
       sbScript.src = socialBarSrc;

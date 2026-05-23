@@ -57,14 +57,25 @@ function AdSkeleton() {
 export default function AdSlot({ placement, className }: AdSlotProps) {
   const [mounted, setMounted] = useState(false);
   const [hasConsent, setHasConsent] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
 
   useEffect(() => {
     setMounted(true);
     setHasConsent(hasAdConsent());
+    // Adsterra banner scripts (invoke.js) attach global click interceptors that
+    // open popup windows on every tap — disable all banner ads on touch devices.
+    setIsMobile(
+      window.matchMedia("(pointer: coarse)").matches || window.innerWidth < 768,
+    );
   }, []);
 
   // SSR: render nothing to avoid hydration issues
   if (!mounted) {
+    return null;
+  }
+
+  // Mobile: skip all ad scripts to prevent popup hijacking on tap
+  if (isMobile) {
     return null;
   }
 
