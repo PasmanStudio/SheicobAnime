@@ -80,6 +80,8 @@ jobs:
           Discord__SiteUrl:    ${{ secrets.INSTAGRAM_SITE_URL }}
           # ── Telegram publishing (optional — skipped if not set) ──
           # Bot token from @BotFather. Channel must have the bot as admin.
-          Telegram__BotToken:  ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          Telegram__ChannelId: "@sheicobanime"
-          Telegram__SiteUrl:   ${{ secrets.INSTAGRAM_SITE_URL }}
+          Telegram__BotToken:      ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          Telegram__ChannelId:     "@sheicobanime"
+          Telegram__SiteUrl:       ${{ secrets.INSTAGRAM_SITE_URL }}
+          # Max episodes to post per run — enough to cover a heavy scrape day
+          Telegram__MaxPostsPerRun: "25"
