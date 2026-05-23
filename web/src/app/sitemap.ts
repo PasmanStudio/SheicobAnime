@@ -1,10 +1,11 @@
 import type { MetadataRoute } from "next";
 import { getSeries, getGenres } from "@/lib/api";
+import { siteUrl as getSiteUrl } from "@/lib/site-url";
 
 export const dynamic = "force-dynamic";
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
-  const baseUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://sheicobanime.com";
+  const baseUrl = getSiteUrl();
 
   // Static pages
   const staticPages: MetadataRoute.Sitemap = [

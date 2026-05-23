@@ -5,6 +5,7 @@ import DirectEpisodePlayer from "@/components/player/DirectEpisodePlayer";
 import EpisodeSidebar from "@/components/player/EpisodeSidebar";
 import MarkWatchedButton from "@/components/watchlist/MarkWatchedButton";
 import { ApiError, getEpisodeBySlug, getEpisodeMirrorsBySlug, getSeriesEpisodes } from "@/lib/api";
+import { siteUrl } from "@/lib/site-url";
 import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
@@ -72,8 +73,7 @@ export default async function EpisodePage({ params }: Readonly<Props>) {
     ? `Episodio ${episode.episodeNumber}: ${episode.title}`
     : `Episodio ${episode.episodeNumber}`;
 
-  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://sheicobanime.vercel.app";
-  const pageUrl = `${siteUrl}/series/${slug}/${episode.episodeNumber}`;
+  const pageUrl = `${siteUrl()}/series/${slug}/${episode.episodeNumber}`;
 
   return (
     <div className="container mx-auto px-4 py-6 max-w-6xl">
