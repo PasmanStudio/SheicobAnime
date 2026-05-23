@@ -2,13 +2,19 @@ const INTERSTITIAL_KEY = "sheicob_interstitial_ts";
 const INACTIVITY_SESSION_KEY = "sheicob_inactivity_shown";
 const FIRST_VISIT_KEY = "sheicob_first_visit";
 
-const DEFAULT_COOLDOWN_MS = 300_000; // 5 minutes
+const DEFAULT_COOLDOWN_MS        = 300_000;  // 5 min — desktop
+const DEFAULT_COOLDOWN_MOBILE_MS = 600_000;  // 10 min — mobile/touch
 
 function getCooldownMs(): number {
   const env = process.env.NEXT_PUBLIC_INTERSTITIAL_COOLDOWN_MS;
   if (env) {
     const parsed = Number.parseInt(env, 10);
     if (!Number.isNaN(parsed) && parsed > 0) return parsed;
+  }
+  // Give mobile users double the breathing room
+  if (typeof window !== "undefined" &&
+      (window.matchMedia("(pointer: coarse)").matches || window.innerWidth < 768)) {
+    return DEFAULT_COOLDOWN_MOBILE_MS;
   }
   return DEFAULT_COOLDOWN_MS;
 }
