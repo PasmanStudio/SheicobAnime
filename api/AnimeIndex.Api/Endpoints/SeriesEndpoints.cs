@@ -63,7 +63,8 @@ public static class SeriesEndpoints
 
         query = sort switch
         {
-            "score" => query.OrderByDescending(s => s.Score).ThenBy(s => s.Title),
+            // NULLS LAST: series with a real score appear first, null-score series at the end
+            "score" => query.OrderByDescending(s => s.Score.HasValue).ThenByDescending(s => s.Score).ThenBy(s => s.Title),
             "year" => query.OrderByDescending(s => s.Year).ThenByDescending(s => s.UpdatedAt),
             "title" => query.OrderBy(s => s.Title),
             "title_desc" => query.OrderByDescending(s => s.Title),
