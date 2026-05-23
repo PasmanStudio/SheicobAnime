@@ -20,23 +20,32 @@ export async function GET() {
     const { rows: pingRows } = await db.query(`SELECT 1 AS ok`);
     checks.ping = pingRows[0]?.ok === 1;
 
-    // 2. Auth tables exist?
+    // 2. Tables exist?
+    const EXPECTED_TABLES = [
+      "users", "sessions", "accounts",
+      "user_lists", "user_list_items",
+      "user_tier_lists", "user_tier_entries",
+      "user_watch_entries", "user_episode_history",
+    ];
     const { rows: tableRows } = await db.query<{ tablename: string }>(
       `SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename = ANY($1)`,
-      [["users", "sessions", "accounts", "user_lists"]],
+      [EXPECTED_TABLES],
     );
-    const tableNames = tableRows.map((r) => r.tablename);
-    checks.tableUsers = tableNames.includes("users");
-    checks.tableSessions = tableNames.includes("sessions");
-    checks.tableAccounts = tableNames.includes("accounts");
-    checks.tableUserLists = tableNames.includes("user_lists");
+    const tableNames = new Set(tableRows.map((r) => r.tablename));
+    for (const t of EXPECTED_TABLES) {
+      checks[`table_${t}`] = tableNames.has(t);
+    }
 
-    // 3. user_lists has views column?
-    const { rows: colRows } = await db.query(
-      `SELECT column_name FROM information_schema.columns
-       WHERE table_name = 'user_lists' AND column_name = 'views'`,
+    // 3. Column checks
+    const { rows: colRows } = await db.query<{ table_name: string; column_name: string }>(
+      `SELECT table_name, column_name FROM information_schema.columns
+       WHERE table_name IN ('user_lists', 'user_tier_lists')
+         AND column_name IN ('views', 'is_public')`,
     );
-    checks.columnListViews = colRows.length > 0;
+    const cols = new Set(colRows.map((r) => `${r.table_name}.${r.column_name}`));
+    checks["col_user_lists.views"]          = cols.has("user_lists.views");
+    checks["col_user_lists.is_public"]      = cols.has("user_lists.is_public");
+    checks["col_user_tier_lists.is_public"] = cols.has("user_tier_lists.is_public");
 
     // 4. Count rows (non-sensitive counts only)
     const { rows: userCount } = await db.query<{ count: string }>(
@@ -49,6 +58,14 @@ export async function GET() {
     );
     checks.activeSessions = Number(sessionCount[0]?.count ?? 0);
 
+    // 5. Tier list count
+    if (tableNames.has("user_tier_lists")) {
+      const { rows: tlCount } = await db.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count FROM user_tier_lists`,
+      );
+      checks.tierListCount = Number(tlCount[0]?.count ?? 0);
+    }
+
   } catch (err) {
     checks.error = err instanceof Error ? err.message : String(err);
     checks.ping = false;
@@ -57,8 +74,9 @@ export async function GET() {
 
   const allOk =
     checks.ping === true &&
-    checks.tableUsers === true &&
-    checks.tableSessions === true;
+    checks["table_users"] === true &&
+    checks["table_sessions"] === true &&
+    checks["table_user_tier_lists"] === true;
 
   return NextResponse.json(checks, { status: allOk ? 200 : 503 });
 }

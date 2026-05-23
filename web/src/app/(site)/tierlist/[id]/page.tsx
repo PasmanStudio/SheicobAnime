@@ -29,7 +29,10 @@ async function getTierList(id: string): Promise<(TierListRow & { entries: TierEn
        FROM user_tier_lists WHERE id = $1`,
       [id],
     );
-    if (rows.length === 0) return null;
+    if (rows.length === 0) {
+      console.warn(`[getTierList] id=${id} not found in DB`);
+      return null;
+    }
     const { rows: entries } = await db.query<TierEntry>(
       `SELECT tier_list_id, series_slug, series_title, cover_url, tier, position, added_at
        FROM user_tier_entries
@@ -38,7 +41,8 @@ async function getTierList(id: string): Promise<(TierListRow & { entries: TierEn
       [id],
     );
     return { ...rows[0], entries };
-  } catch {
+  } catch (err) {
+    console.error(`[getTierList] DB error for id=${id}:`, err);
     return null;
   }
 }
@@ -55,7 +59,12 @@ export default async function TierListDetailPage({ params }: Props) {
   const [list, session] = await Promise.all([getTierList(id), auth()]);
 
   if (!list) notFound();
-  if (!list.is_public && list.user_id !== session?.user?.id) notFound();
+  if (!list.is_public && list.user_id !== session?.user?.id) {
+    console.warn(
+      `[tierlist/${id}] access denied: is_public=${list.is_public} list.user_id=${list.user_id} session.user.id=${session?.user?.id ?? "null"}`,
+    );
+    notFound();
+  }
 
   const isOwner = session?.user?.id === list.user_id;
 
