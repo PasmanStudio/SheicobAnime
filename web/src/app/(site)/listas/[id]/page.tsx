@@ -120,7 +120,7 @@ export default async function ListaDetailPage({ params }: Props) {
             <div />
           )}
           {list.is_public && !isOwner && (
-            <ShareButtons url={shareUrl} text={`Mirá la lista "${list.name}" en SheicobAnime 📋`} />
+            <ShareButtons url={shareUrl} text={`Mirá la lista "${list.name}" en SheicobAnime`} />
           )}
         </div>
 
@@ -165,7 +165,7 @@ export default async function ListaDetailPage({ params }: Props) {
             <div className="ml-auto flex items-center gap-2">
               <TogglePublicButton listId={list.id} initialIsPublic={list.is_public} />
               {list.is_public && (
-                <ShareButtons url={shareUrl} text={`Mirá la lista "${list.name}" en SheicobAnime 📋`} />
+                <ShareButtons url={shareUrl} text={`Mirá la lista "${list.name}" en SheicobAnime`} />
               )}
             </div>
           )}
