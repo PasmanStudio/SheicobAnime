@@ -8,6 +8,7 @@ import TogglePublicButton from "@/components/lists/TogglePublicButton";
 import ShareButtons from "@/components/share/ShareButtons";
 import { siteUrl } from "@/lib/site-url";
 import ListViewTracker from "./ListViewTracker";
+import AdSlot from "@/components/ads/AdSlot";
 import { encodeId, decodeId, isUuid } from "@/lib/short-id";
 import type { Metadata } from "next";
 import Image from "next/image";
@@ -197,6 +198,11 @@ export default async function ListaDetailPage({ params }: Props) {
         </div>
       </div>
 
+      {/* Ad — top */}
+      <div className="my-4 flex justify-center">
+        <AdSlot placement="profile_top" />
+      </div>
+
       {/* Owner: add anime button */}
       {isOwner && (
         <div className="mb-6">
@@ -253,6 +259,11 @@ export default async function ListaDetailPage({ params }: Props) {
           ))}
         </div>
       )}
+
+      {/* Ad — bottom */}
+      <div className="mt-8 flex justify-center">
+        <AdSlot placement="profile_bottom" />
+      </div>
     </div>
   );
 }

@@ -8,6 +8,7 @@ import { encodeId, decodeId, isUuid } from "@/lib/short-id";
 import { siteUrl } from "@/lib/site-url";
 import ShareButtons from "@/components/share/ShareButtons";
 import TogglePublicTierListButton from "@/components/tierlist/TogglePublicTierListButton";
+import AdSlot from "@/components/ads/AdSlot";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
@@ -186,6 +187,11 @@ export default async function TierListDetailPage({ params }: Props) {
         </div>
       </div>
 
+      {/* Ad — top */}
+      <div className="mb-4 flex justify-center">
+        <AdSlot placement="profile_top" />
+      </div>
+
       {/* Owner: add button */}
       {isOwner && (
         <div className="mb-6">
@@ -278,6 +284,11 @@ export default async function TierListDetailPage({ params }: Props) {
           })}
         </div>
       )}
+
+      {/* Ad — bottom */}
+      <div className="mt-8 flex justify-center">
+        <AdSlot placement="profile_bottom" />
+      </div>
     </div>
   );
 }
