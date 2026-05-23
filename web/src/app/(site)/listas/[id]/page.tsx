@@ -1,8 +1,10 @@
 import { auth } from "@/lib/auth";
 import { getDb } from "@/lib/db";
 import type { ListDetail } from "@/lib/lists";
+import AddSeriesModal from "@/components/lists/AddSeriesModal";
 import EditListNameButton from "@/components/lists/EditListNameButton";
 import RemoveFromListButton from "@/components/lists/RemoveFromListButton";
+import TogglePublicButton from "@/components/lists/TogglePublicButton";
 import ShareButtons from "./ShareButtons";
 import ListViewTracker from "./ListViewTracker";
 import type { Metadata } from "next";
@@ -18,12 +20,25 @@ async function getListDetail(id: string): Promise<ListDetail | null> {
   try {
     const db = getDb();
     const { rows } = await db.query(
-      `SELECT id, name, description, is_public, user_id, views, created_at, updated_at
+      `SELECT id, name, description, is_public, user_id, created_at, updated_at
        FROM user_lists WHERE id = $1`,
       [id],
     );
     if (rows.length === 0) return null;
-    const list = rows[0] as ListDetail;
+
+    // Fetch views separately — column was added by a later migration;
+    // default to 0 so the page never crashes if the column isn't there yet.
+    let views = 0;
+    try {
+      const { rows: vRows } = await db.query(
+        `SELECT views FROM user_lists WHERE id = $1`,
+        [id],
+      );
+      views = (vRows[0]?.views as number) ?? 0;
+    } catch {
+      // views column not yet present — safe fallback to 0
+    }
+
     const { rows: items } = await db.query(
       `SELECT series_slug, series_title, cover_url, added_at
        FROM user_list_items
@@ -31,8 +46,9 @@ async function getListDetail(id: string): Promise<ListDetail | null> {
        ORDER BY added_at DESC`,
       [id],
     );
-    return { ...list, items };
-  } catch {
+    return { ...rows[0], views, items } as ListDetail;
+  } catch (err) {
+    console.error("[getListDetail] Error fetching list:", err);
     return null;
   }
 }
@@ -58,14 +74,34 @@ export default async function ListaDetailPage({ params }: Props) {
 
   const isOwner = session?.user?.id === list.user_id;
 
+  const existingSlugs = list.items.map((i) => i.series_slug);
+
   return (
     <div className="container mx-auto px-4 py-8 max-w-5xl">
       {/* View tracker — increments counter once per visit (public lists only) */}
       {list.is_public && !isOwner && <ListViewTracker listId={list.id} />}
 
       {/* Header */}
-      <div className="mb-6">
-        <div className="flex items-start gap-3 flex-wrap mb-1">
+      <div className="mb-4">
+        {/* Back link row */}
+        <div className="flex items-center justify-between mb-3">
+          {isOwner ? (
+            <Link
+              href="/listas"
+              className="inline-flex items-center gap-1.5 text-xs text-neutral-500 hover:text-neutral-300 transition-colors"
+            >
+              ← Mis listas
+            </Link>
+          ) : (
+            <div />
+          )}
+          {list.is_public && !isOwner && (
+            <ShareButtons listId={list.id} listName={list.name} />
+          )}
+        </div>
+
+        {/* Title row */}
+        <div className="flex items-start gap-3 flex-wrap mb-2">
           <h1 className="text-2xl font-bold text-white flex-1 min-w-0 break-words">{list.name}</h1>
           {isOwner && (
             <EditListNameButton
@@ -75,58 +111,60 @@ export default async function ListaDetailPage({ params }: Props) {
             />
           )}
         </div>
+
         {list.description && (
-          <p className="text-sm text-neutral-400 mb-2">{list.description}</p>
+          <p className="text-sm text-neutral-400 mb-3">{list.description}</p>
         )}
-        <div className="flex flex-wrap items-center gap-3 text-xs text-neutral-500">
-          <span>
+
+        {/* Meta + owner actions row */}
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="text-xs text-neutral-500">
             {list.items.length === 0
               ? "Sin animes"
               : `${list.items.length} anime${list.items.length !== 1 ? "s" : ""}`}
           </span>
-          {list.is_public && (
-            <>
-              <span className="px-2 py-0.5 rounded-full bg-green-900/40 text-green-400 border border-green-800/50">
-                Pública
-              </span>
-              <span className="flex items-center gap-1">
-                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-                  <circle cx="12" cy="12" r="3" />
-                </svg>
-                {list.views.toLocaleString("es-AR")} vistas
-              </span>
-            </>
+
+          {list.is_public ? (
+            <span className="flex items-center gap-1 text-xs text-neutral-500">
+              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                <circle cx="12" cy="12" r="3" />
+              </svg>
+              {list.views.toLocaleString("es-AR")} vistas
+            </span>
+          ) : isOwner ? (
+            <span className="text-xs text-neutral-600">Solo vos podés verla</span>
+          ) : null}
+
+          {/* Owner actions */}
+          {isOwner && (
+            <div className="ml-auto flex items-center gap-2">
+              <TogglePublicButton listId={list.id} initialIsPublic={list.is_public} />
+              {list.is_public && (
+                <ShareButtons listId={list.id} listName={list.name} />
+              )}
+            </div>
           )}
         </div>
       </div>
 
-      {/* Back link + share */}
-      <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
-        {isOwner ? (
-          <Link
-            href="/listas"
-            className="inline-flex items-center gap-1.5 text-xs text-neutral-500 hover:text-neutral-300 transition-colors"
-          >
-            ← Mis listas
-          </Link>
-        ) : (
-          <div />
-        )}
-        {list.is_public && (
-          <ShareButtons listId={list.id} listName={list.name} />
-        )}
-      </div>
+      {/* Owner: add anime button */}
+      {isOwner && (
+        <div className="mb-6">
+          <AddSeriesModal listId={list.id} existingSlugs={existingSlugs} />
+        </div>
+      )}
 
       {/* Items grid */}
       {list.items.length === 0 ? (
         <div className="text-center py-20">
           <p className="text-5xl mb-4">📋</p>
-          <p className="text-neutral-400 mb-1">Esta lista está vacía.</p>
+          <p className="text-neutral-400 mb-2">Esta lista está vacía.</p>
           {isOwner && (
             <p className="text-sm text-neutral-500">
-              Andá a cualquier serie y usá el botón{" "}
-              <span className="text-neutral-300">📋 Listas</span> para agregarla acá.
+              Usá el botón <span className="text-neutral-300">Agregar anime</span> de arriba,
+              o andá a cualquier serie y usá el botón{" "}
+              <span className="text-neutral-300">📋 Listas</span>.
             </p>
           )}
         </div>

@@ -1,6 +1,7 @@
 import { auth } from "@/lib/auth";
 import { getDb } from "@/lib/db";
 import { TIERS, TIER_COLORS, type Tier, type TierEntry } from "@/lib/tierlist";
+import AddToTierModal from "@/components/tierlist/AddToTierModal";
 import TierPickerOnEntry from "@/components/tierlist/TierPickerOnEntry";
 import RemoveFromTierButton from "@/components/tierlist/RemoveFromTierButton";
 import type { Metadata } from "next";
@@ -65,6 +66,7 @@ export default async function TierListDetailPage({ params }: Props) {
   }
 
   const totalEntries = list.entries.length;
+  const existingSlugs = list.entries.map((e) => e.series_slug);
 
   return (
     <div className="container mx-auto px-4 py-8 max-w-5xl">
@@ -78,7 +80,7 @@ export default async function TierListDetailPage({ params }: Props) {
             ← Mis Tier Lists
           </Link>
         )}
-        <div className="flex items-center gap-3 flex-wrap">
+        <div className="flex items-center gap-3 flex-wrap mb-1">
           <h1 className="text-2xl font-bold text-white flex-1 min-w-0">{list.name}</h1>
           {list.is_public && (
             <span className="text-xs px-2 py-0.5 rounded-full bg-green-900/40 text-green-400 border border-green-800/50">
@@ -86,7 +88,7 @@ export default async function TierListDetailPage({ params }: Props) {
             </span>
           )}
         </div>
-        <p className="text-sm text-neutral-500 mt-1">
+        <p className="text-sm text-neutral-500">
           {totalEntries === 0 ? "Sin animes" : `${totalEntries} anime${totalEntries !== 1 ? "s" : ""}`}
           {isOwner && (
             <span className="ml-2 text-neutral-600">
@@ -96,15 +98,23 @@ export default async function TierListDetailPage({ params }: Props) {
         </p>
       </div>
 
+      {/* Owner: add button */}
+      {isOwner && (
+        <div className="mb-6">
+          <AddToTierModal tierListId={list.id} existingSlugs={existingSlugs} />
+        </div>
+      )}
+
       {/* Tier list grid */}
       {totalEntries === 0 ? (
         <div className="text-center py-20">
           <p className="text-5xl mb-4">🏆</p>
-          <p className="text-neutral-400 mb-1">Esta tier list está vacía.</p>
+          <p className="text-neutral-400 mb-2">Esta tier list está vacía.</p>
           {isOwner && (
             <p className="text-sm text-neutral-500">
-              Andá a cualquier serie y usá el botón{" "}
-              <span className="text-neutral-300">🏆 Tier List</span> para agregarla.
+              Usá el botón <span className="text-neutral-300">Agregar anime</span> de arriba,
+              o andá a cualquier serie y usá el botón{" "}
+              <span className="text-neutral-300">🏆 Tier List</span>.
             </p>
           )}
         </div>
