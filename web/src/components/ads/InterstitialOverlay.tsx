@@ -47,18 +47,21 @@ export default function InterstitialOverlay({
       className="fixed inset-0 z-50 bg-black/90 flex flex-col items-center justify-center w-full h-full max-w-none max-h-none m-0 p-0 border-none"
       aria-label="Advertisement"
     >
-      {/* Close / Countdown */}
-      <div className="absolute top-4 right-4">
+      {/* Close / Countdown — top-right on desktop, also mirrored bottom-center on mobile */}
+      <div
+        className="absolute top-0 right-0 flex items-start justify-end p-4"
+        style={{ paddingTop: "max(1rem, env(safe-area-inset-top, 1rem))" }}
+      >
         {canClose ? (
           <button
             onClick={onClose}
-            className="min-w-[44px] min-h-[44px] px-4 py-2 bg-white text-black rounded-md font-semibold text-sm hover:bg-neutral-200 transition-colors focus:outline-none focus:ring-2 focus:ring-white"
+            className="min-w-[56px] min-h-[44px] px-4 py-2 bg-white text-black rounded-lg font-semibold text-sm hover:bg-neutral-200 transition-colors focus:outline-none focus:ring-2 focus:ring-white shadow-lg"
             aria-label="Cerrar anuncio"
           >
             Cerrar ✕
           </button>
         ) : (
-          <span className="px-4 py-2 bg-neutral-800 text-neutral-300 rounded-md text-sm">
+          <span className="px-4 py-2 bg-neutral-800 text-neutral-300 rounded-lg text-sm tabular-nums">
             Cerrar en {secondsLeft}s
           </span>
         )}
@@ -69,6 +72,22 @@ export default function InterstitialOverlay({
         <AdSlot placement="episode_above_player" className="pointer-events-auto" />
         <AdSlot placement="episode_below_player" className="pointer-events-auto" />
       </div>
+
+      {/* Bottom close button — always visible on mobile once countdown ends */}
+      {canClose && (
+        <div
+          className="absolute bottom-0 left-0 right-0 flex justify-center pb-6 sm:hidden"
+          style={{ paddingBottom: "max(1.5rem, env(safe-area-inset-bottom, 1.5rem))" }}
+        >
+          <button
+            onClick={onClose}
+            className="px-8 py-3 bg-white text-black rounded-full font-semibold text-base shadow-xl focus:outline-none focus:ring-2 focus:ring-white active:scale-95 transition-transform"
+            aria-label="Cerrar anuncio"
+          >
+            Cerrar ✕
+          </button>
+        </div>
+      )}
     </dialog>
   );
 }

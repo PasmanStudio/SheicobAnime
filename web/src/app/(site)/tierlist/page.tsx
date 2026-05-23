@@ -2,8 +2,11 @@ import { auth } from "@/lib/auth";
 import { getDb } from "@/lib/db";
 import type { TierListSummary } from "@/lib/tierlist";
 import CreateTierListButton from "@/components/tierlist/CreateTierListButton";
+import DeleteTierListButton from "@/components/tierlist/DeleteTierListButton";
 import type { Metadata } from "next";
 import Link from "next/link";
+
+export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
   title: "Mis Tier Lists — SheicobAnime",
@@ -69,44 +72,48 @@ export default async function TierListPage() {
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
           {lists.map((list) => (
-            <Link
-              key={list.id}
-              href={`/tierlist/${list.id}`}
-              className="group flex flex-col bg-neutral-900 border border-neutral-800 rounded-xl overflow-hidden hover:border-neutral-600 transition-all"
-            >
-              {/* Tier badge preview */}
-              <div className="flex h-14 overflow-hidden">
-                {(["S", "A", "B", "C", "D", "F"] as const).map((tier, i) => (
-                  <div
-                    key={tier}
-                    className={`flex-1 flex items-center justify-center text-sm font-extrabold
-                      ${tier === "S" ? "bg-red-600 text-white" :
-                        tier === "A" ? "bg-orange-500 text-white" :
-                        tier === "B" ? "bg-yellow-500 text-neutral-900" :
-                        tier === "C" ? "bg-green-600 text-white" :
-                        tier === "D" ? "bg-blue-600 text-white" :
-                        "bg-neutral-600 text-neutral-200"}`}
-                    style={{ borderRight: i < 5 ? "1px solid rgba(0,0,0,0.2)" : undefined }}
-                  >
-                    {tier}
-                  </div>
-                ))}
-              </div>
+            <div key={list.id} className="relative group">
+              {/* Delete button — appears on hover */}
+              <DeleteTierListButton tierListId={list.id} tierListName={list.name} />
 
-              <div className="p-3 flex flex-col gap-1">
-                <p className="text-sm font-semibold text-white line-clamp-1">{list.name}</p>
-                <div className="flex items-center justify-between mt-1">
-                  <span className="text-xs text-neutral-500">
-                    {list.entry_count === 0
-                      ? "Sin animes"
-                      : `${list.entry_count} anime${list.entry_count !== 1 ? "s" : ""}`}
-                  </span>
-                  <span className="text-xs text-indigo-400 group-hover:text-indigo-300 transition-colors">
-                    Ver →
-                  </span>
+              <Link
+                href={`/tierlist/${list.id}`}
+                className="flex flex-col bg-neutral-900 border border-neutral-800 rounded-xl overflow-hidden hover:border-neutral-600 transition-all"
+              >
+                {/* Tier badge preview */}
+                <div className="flex h-14 overflow-hidden">
+                  {(["S", "A", "B", "C", "D", "F"] as const).map((tier, i) => (
+                    <div
+                      key={tier}
+                      className={`flex-1 flex items-center justify-center text-sm font-extrabold
+                        ${tier === "S" ? "bg-red-600 text-white" :
+                          tier === "A" ? "bg-orange-500 text-white" :
+                          tier === "B" ? "bg-yellow-500 text-neutral-900" :
+                          tier === "C" ? "bg-green-600 text-white" :
+                          tier === "D" ? "bg-blue-600 text-white" :
+                          "bg-neutral-600 text-neutral-200"}`}
+                      style={{ borderRight: i < 5 ? "1px solid rgba(0,0,0,0.2)" : undefined }}
+                    >
+                      {tier}
+                    </div>
+                  ))}
                 </div>
-              </div>
-            </Link>
+
+                <div className="p-3 flex flex-col gap-1">
+                  <p className="text-sm font-semibold text-white line-clamp-1">{list.name}</p>
+                  <div className="flex items-center justify-between mt-1">
+                    <span className="text-xs text-neutral-500">
+                      {list.entry_count === 0
+                        ? "Sin animes"
+                        : `${list.entry_count} anime${list.entry_count !== 1 ? "s" : ""}`}
+                    </span>
+                    <span className="text-xs text-indigo-400 group-hover:text-indigo-300 transition-colors">
+                      Ver →
+                    </span>
+                  </div>
+                </div>
+              </Link>
+            </div>
           ))}
         </div>
       )}
