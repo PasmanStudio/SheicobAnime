@@ -10,7 +10,10 @@ interface Props {
 export default function ShareButtons({ listId, listName }: Props) {
   const [copied, setCopied] = useState(false);
 
-  const url = `${typeof window !== "undefined" ? window.location.origin : "https://sheicobanime.com"}/listas/${listId}`;
+  // Use the current page URL (already contains the short ID after any UUID redirect)
+  const url = typeof window !== "undefined"
+    ? window.location.href
+    : `https://sheicobanime.vercel.app/listas/${listId}`;
   const text = `Mirá mi lista "${listName}" en SheicobAnime`;
 
   const handleCopy = async () => {

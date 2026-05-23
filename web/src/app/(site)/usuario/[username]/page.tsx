@@ -1,11 +1,12 @@
 import { auth } from "@/lib/auth";
 import { getDb } from "@/lib/db";
+import { encodeId } from "@/lib/short-id";
 import { WATCH_STATUS_ICONS, WATCH_STATUS_LABELS, type WatchEntry, type WatchStatus } from "@/lib/watchlist";
 import type { ListSummary } from "@/lib/lists";
 import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import ProfileEditModal from "./ProfileEditModal";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -133,6 +134,11 @@ export default async function UsuarioPage({ params }: Props) {
   const [user, session] = await Promise.all([getUserBySlug(username), auth()]);
 
   if (!user) notFound();
+
+  // Redirect UUID-based profile URLs to the username form
+  if (UUID_RE.test(username) && user.username) {
+    redirect(`/usuario/${user.username}`);
+  }
 
   const isOwn = session?.user?.id === user.id;
   const displayName = user.name ?? user.username ?? username;
@@ -308,7 +314,7 @@ export default async function UsuarioPage({ params }: Props) {
             {publicLists.map((lst) => (
               <Link
                 key={lst.id}
-                href={`/listas/${lst.id}`}
+                href={`/listas/${encodeId(lst.id)}`}
                 className="group flex gap-3 rounded-xl bg-neutral-900 border border-neutral-800 hover:border-neutral-600 transition-all p-3"
               >
                 {/* Cover mosaic */}

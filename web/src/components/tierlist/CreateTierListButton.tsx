@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
+import { encodeId } from "@/lib/short-id";
 
 export default function CreateTierListButton() {
   const router = useRouter();
@@ -36,7 +37,7 @@ export default function CreateTierListButton() {
         return;
       }
       const list = (await res.json()) as { id: string };
-      router.push(`/tierlist/${list.id}`);
+      router.push(`/tierlist/${encodeId(list.id)}`);
     } catch {
       setError("Error de conexión");
     } finally {

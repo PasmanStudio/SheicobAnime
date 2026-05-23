@@ -1,5 +1,6 @@
 import { auth } from "@/lib/auth";
 import { getDb } from "@/lib/db";
+import { encodeId } from "@/lib/short-id";
 import type { TierListSummary } from "@/lib/tierlist";
 import CreateTierListButton from "@/components/tierlist/CreateTierListButton";
 import DeleteTierListButton from "@/components/tierlist/DeleteTierListButton";
@@ -77,7 +78,7 @@ export default async function TierListPage() {
               <DeleteTierListButton tierListId={list.id} tierListName={list.name} />
 
               <Link
-                href={`/tierlist/${list.id}`}
+                href={`/tierlist/${encodeId(list.id)}`}
                 className="flex flex-col bg-neutral-900 border border-neutral-800 rounded-xl overflow-hidden hover:border-neutral-600 transition-all"
               >
                 {/* Tier badge preview */}

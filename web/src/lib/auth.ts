@@ -44,9 +44,11 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   },
 
   callbacks: {
-    // Attach user.id to the session so client can use it
+    // Attach user.id and username to the session so client can use them
     session({ session, user }) {
       if (user?.id) session.user.id = user.id;
+      const dbUser = user as { username?: string | null };
+      if (dbUser?.username) session.user.username = dbUser.username;
       return session;
     },
   },
