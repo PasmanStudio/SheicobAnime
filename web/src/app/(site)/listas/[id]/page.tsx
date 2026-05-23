@@ -84,7 +84,7 @@ export default async function ListaDetailPage({ params }: Props) {
   if (!realId) notFound();
 
   let list: Awaited<ReturnType<typeof getListDetail>>;
-  let session: Awaited<ReturnType<typeof auth>>;
+  let session: import("next-auth").Session | null;
   try {
     [list, session] = await Promise.all([getListDetail(realId), auth()]);
   } catch (err) {
