@@ -20,6 +20,8 @@ interface Props {
   params: Promise<{ id: string }>;
 }
 
+class DbError extends Error {}
+
 async function getListDetail(id: string): Promise<ListDetail | null> {
   try {
     const db = getDb();
@@ -53,7 +55,7 @@ async function getListDetail(id: string): Promise<ListDetail | null> {
     return { ...rows[0], views, items } as ListDetail;
   } catch (err) {
     console.error("[getListDetail] Error fetching list:", err);
-    return null;
+    throw new DbError("db_unavailable");
   }
 }
 
@@ -80,7 +82,30 @@ export default async function ListaDetailPage({ params }: Props) {
   const realId = decodeId(id);
   if (!realId) notFound();
 
-  const [list, session] = await Promise.all([getListDetail(realId), auth()]);
+  let list: Awaited<ReturnType<typeof getListDetail>>;
+  let session: Awaited<ReturnType<typeof auth>>;
+  try {
+    [list, session] = await Promise.all([getListDetail(realId), auth()]);
+  } catch (err) {
+    if (err instanceof DbError) {
+      return (
+        <div className="container mx-auto px-4 py-20 max-w-xl text-center">
+          <p className="text-5xl mb-4">⚠️</p>
+          <h1 className="text-xl font-bold text-white mb-2">Error temporal</h1>
+          <p className="text-neutral-400 mb-6 text-sm">
+            No se pudo conectar a la base de datos. Esto es momentáneo, intentá de nuevo en unos segundos.
+          </p>
+          <Link
+            href={`/listas/${id}`}
+            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium transition-colors text-sm"
+          >
+            Reintentar
+          </Link>
+        </div>
+      );
+    }
+    throw err;
+  }
 
   if (!list) notFound();
 

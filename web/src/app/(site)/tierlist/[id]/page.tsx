@@ -27,6 +27,9 @@ interface TierListRow {
   updated_at: string;
 }
 
+// Sentinel to distinguish "not found" from "DB error"
+class DbError extends Error {}
+
 async function getTierList(id: string): Promise<(TierListRow & { entries: TierEntry[] }) | null> {
   try {
     const db = getDb();
@@ -49,7 +52,7 @@ async function getTierList(id: string): Promise<(TierListRow & { entries: TierEn
     return { ...rows[0], entries };
   } catch (err) {
     console.error(`[getTierList] DB error for id=${id}:`, err);
-    return null;
+    throw new DbError("db_unavailable");
   }
 }
 
@@ -73,7 +76,31 @@ export default async function TierListDetailPage({ params }: Props) {
   const realId = decodeId(id);
   if (!realId) notFound();
 
-  const [list, session] = await Promise.all([getTierList(realId), auth()]);
+  let list: Awaited<ReturnType<typeof getTierList>>;
+  let session: Awaited<ReturnType<typeof auth>>;
+  try {
+    [list, session] = await Promise.all([getTierList(realId), auth()]);
+  } catch (err) {
+    if (err instanceof DbError) {
+      // Transient DB error — show a retryable error page instead of 404
+      return (
+        <div className="container mx-auto px-4 py-20 max-w-xl text-center">
+          <p className="text-5xl mb-4">⚠️</p>
+          <h1 className="text-xl font-bold text-white mb-2">Error temporal</h1>
+          <p className="text-neutral-400 mb-6 text-sm">
+            No se pudo conectar a la base de datos. Esto es momentáneo, intentá de nuevo en unos segundos.
+          </p>
+          <Link
+            href={`/tierlist/${id}`}
+            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium transition-colors text-sm"
+          >
+            Reintentar
+          </Link>
+        </div>
+      );
+    }
+    throw err;
+  }
 
   if (!list) notFound();
   if (!list.is_public && list.user_id !== session?.user?.id) {
