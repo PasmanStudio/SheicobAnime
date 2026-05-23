@@ -8,6 +8,7 @@ import {
   type WatchEntry,
   type WatchStatus,
 } from "@/lib/watchlist";
+import AdSlot from "@/components/ads/AdSlot";
 import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
@@ -116,6 +117,11 @@ export default async function GuardadoPage({ searchParams }: Props) {
         ))}
       </div>
 
+      {/* Ad — top */}
+      <div className="mb-6 flex justify-center">
+        <AdSlot placement="profile_top" />
+      </div>
+
       {/* Grid */}
       {entries.length === 0 ? (
         <div className="text-center py-16">
@@ -162,6 +168,11 @@ export default async function GuardadoPage({ searchParams }: Props) {
           ))}
         </div>
       )}
+
+      {/* Ad — bottom */}
+      <div className="mt-8 flex justify-center">
+        <AdSlot placement="profile_bottom" />
+      </div>
     </div>
   );
 }

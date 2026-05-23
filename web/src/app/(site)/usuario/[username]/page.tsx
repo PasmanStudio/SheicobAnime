@@ -8,6 +8,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import ProfileEditModal from "./ProfileEditModal";
+import AdSlot from "@/components/ads/AdSlot";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -240,6 +241,11 @@ export default async function UsuarioPage({ params }: Props) {
         </div>
       )}
 
+      {/* Ad — top */}
+      <div className="mt-6 flex justify-center">
+        <AdSlot placement="profile_top" />
+      </div>
+
       {/* Recent watchlist */}
       {recentWatchlist.length > 0 && (
         <div className="mt-6">
@@ -353,6 +359,11 @@ export default async function UsuarioPage({ params }: Props) {
           </div>
         </div>
       )}
+
+      {/* Ad — bottom */}
+      <div className="mt-8 flex justify-center">
+        <AdSlot placement="profile_bottom" />
+      </div>
     </div>
   );
 }

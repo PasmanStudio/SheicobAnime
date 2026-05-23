@@ -4,6 +4,7 @@ import { encodeId } from "@/lib/short-id";
 import type { TierListSummary } from "@/lib/tierlist";
 import CreateTierListButton from "@/components/tierlist/CreateTierListButton";
 import DeleteTierListButton from "@/components/tierlist/DeleteTierListButton";
+import AdSlot from "@/components/ads/AdSlot";
 import type { Metadata } from "next";
 import Link from "next/link";
 
@@ -62,6 +63,11 @@ export default async function TierListPage() {
         <CreateTierListButton />
       </div>
 
+      {/* Ad — top */}
+      <div className="mb-6 flex justify-center">
+        <AdSlot placement="profile_top" />
+      </div>
+
       {lists.length === 0 ? (
         <div className="text-center py-20">
           <p className="text-5xl mb-4">🏆</p>
@@ -118,6 +124,11 @@ export default async function TierListPage() {
           ))}
         </div>
       )}
+
+      {/* Ad — bottom */}
+      <div className="mt-8 flex justify-center">
+        <AdSlot placement="profile_bottom" />
+      </div>
     </div>
   );
 }

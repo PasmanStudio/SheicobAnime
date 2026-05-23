@@ -3,6 +3,7 @@ import { getDb } from "@/lib/db";
 import { encodeId } from "@/lib/short-id";
 import type { ListSummary } from "@/lib/lists";
 import CreateListButton from "@/components/lists/CreateListButton";
+import AdSlot from "@/components/ads/AdSlot";
 import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
@@ -65,6 +66,11 @@ export default async function ListasPage() {
       <div className="flex items-center justify-between mb-6 gap-4 flex-wrap">
         <h1 className="text-2xl font-bold text-white">Mis listas</h1>
         <CreateListButton />
+      </div>
+
+      {/* Ad — top */}
+      <div className="mb-6 flex justify-center">
+        <AdSlot placement="profile_top" />
       </div>
 
       {/* Grid */}
@@ -140,6 +146,11 @@ export default async function ListasPage() {
           ))}
         </div>
       )}
+
+      {/* Ad — bottom */}
+      <div className="mt-8 flex justify-center">
+        <AdSlot placement="profile_bottom" />
+      </div>
     </div>
   );
 }

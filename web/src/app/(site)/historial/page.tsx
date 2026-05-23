@@ -1,6 +1,7 @@
 import { auth } from "@/lib/auth";
 import { getDb } from "@/lib/db";
 import type { EpisodeHistoryEntry } from "@/lib/watchlist";
+import AdSlot from "@/components/ads/AdSlot";
 import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
@@ -78,6 +79,11 @@ export default async function HistorialPage() {
         )}
       </div>
 
+      {/* Ad — top */}
+      <div className="mb-6 flex justify-center">
+        <AdSlot placement="profile_top" />
+      </div>
+
       {history.length === 0 ? (
         <div className="text-center py-16">
           <p className="text-5xl mb-4">🕐</p>
@@ -136,6 +142,11 @@ export default async function HistorialPage() {
           ))}
         </div>
       )}
+
+      {/* Ad — bottom */}
+      <div className="mt-8 flex justify-center">
+        <AdSlot placement="profile_bottom" />
+      </div>
     </div>
   );
 }

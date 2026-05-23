@@ -29,7 +29,9 @@ export type AdPlacement =
   | "directory_bottom"
   | "genres_top"
   | "genre_top"
-  | "genre_bottom";
+  | "genre_bottom"
+  | "profile_top"
+  | "profile_bottom";
 
 export interface AdPlacementConfig {
   /** Adsterra native banner zone ID (legacy — not used with real Adsterra) */
@@ -194,6 +196,20 @@ export const AD_CONFIG: Record<AdPlacement, AdPlacementConfig> = {
     width: 728,
     height: 90,
     description: "Banner at bottom of individual genre page",
+  },
+  profile_top: {
+    adsterraZone: process.env.NEXT_PUBLIC_ADSTERRA_ZONE_PROFILE_TOP ?? "",
+    propellerZone: process.env.NEXT_PUBLIC_PROPELLER_ZONE_PROFILE_TOP ?? "",
+    width: 728,
+    height: 90,
+    description: "Banner at top of user profile, lists, tier lists, history and watchlist pages",
+  },
+  profile_bottom: {
+    adsterraZone: process.env.NEXT_PUBLIC_ADSTERRA_ZONE_PROFILE_BOTTOM ?? "",
+    propellerZone: process.env.NEXT_PUBLIC_PROPELLER_ZONE_PROFILE_BOTTOM ?? "",
+    width: 728,
+    height: 90,
+    description: "Banner at bottom of user profile, lists, tier lists, history and watchlist pages",
   },
 };
 
