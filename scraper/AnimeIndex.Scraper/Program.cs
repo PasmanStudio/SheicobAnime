@@ -3,6 +3,7 @@ using AnimeIndex.Api.Infrastructure.Scraping;
 using AnimeIndex.Scraper.Infrastructure;
 using AnimeIndex.Scraper.Infrastructure.Discord;
 using AnimeIndex.Scraper.Infrastructure.Instagram;
+using AnimeIndex.Scraper.Infrastructure.Telegram;
 using AnimeIndex.Scraper.Jobs;
 using AnimeIndex.Scraper.Strategies;
 using Hangfire;
@@ -102,10 +103,20 @@ try
     builder.Configuration.GetSection("Discord").Bind(discordSettings);
     builder.Services.AddSingleton(discordSettings);
 
+    // ─── Telegram settings ─────────────────────────────────
+    var telegramSettings = new TelegramSettings();
+    builder.Configuration.GetSection("Telegram").Bind(telegramSettings);
+    builder.Services.AddSingleton(telegramSettings);
+
     // ─── HTTP clients ─────────────────────────────────────
     builder.Services.AddHttpClient("discord", c =>
     {
         c.Timeout = TimeSpan.FromSeconds(15);
+        c.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", "SheicobAnime-Scraper/1.0");
+    });
+    builder.Services.AddHttpClient("telegram", c =>
+    {
+        c.Timeout = TimeSpan.FromSeconds(30);
         c.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", "SheicobAnime-Scraper/1.0");
     });
     builder.Services.AddHttpClient("instagram-graph", c =>
@@ -151,6 +162,10 @@ try
     // ─── Discord publishing services ───────────────────────
     builder.Services.AddScoped<DiscordWebhookClient>();
     builder.Services.AddScoped<DiscordPublisherService>();
+
+    // ─── Telegram publishing services ──────────────────────
+    builder.Services.AddScoped<TelegramBotClient>();
+    builder.Services.AddScoped<TelegramPublisherService>();
 
     // ─── Instagram publishing services ────────────────────
     builder.Services.AddScoped<MetaGraphApiClient>();
