@@ -81,6 +81,43 @@ export async function PUT(req: Request, { params }: RouteContext) {
   }
 }
 
+// PATCH /api/lists/[id] — partial update (toggle is_public)
+// Body: { is_public: boolean }
+export async function PATCH(req: Request, { params }: RouteContext) {
+  const { id } = await params;
+  const session = await auth();
+  if (!session?.user?.id)
+    return NextResponse.json({ error: "No autorizado" }, { status: 401 });
+
+  const db = getDb();
+
+  const { rows } = await db.query(
+    `SELECT user_id FROM user_lists WHERE id = $1`,
+    [id],
+  );
+  if (rows.length === 0)
+    return NextResponse.json({ error: "Lista no encontrada" }, { status: 404 });
+  if ((rows[0] as { user_id: string }).user_id !== session.user.id)
+    return NextResponse.json({ error: "No autorizado" }, { status: 403 });
+
+  const body = (await req.json()) as { is_public?: boolean };
+  if (typeof body.is_public !== "boolean")
+    return NextResponse.json({ error: "is_public (boolean) es requerido" }, { status: 400 });
+
+  try {
+    const { rows: updated } = await db.query(
+      `UPDATE user_lists
+       SET is_public = $1, updated_at = now()
+       WHERE id = $2
+       RETURNING id, name, is_public`,
+      [body.is_public, id],
+    );
+    return NextResponse.json(updated[0]);
+  } catch {
+    return NextResponse.json({ error: "Error al actualizar la lista" }, { status: 500 });
+  }
+}
+
 // DELETE /api/lists/[id] — delete list
 export async function DELETE(_req: Request, { params }: RouteContext) {
   const { id } = await params;
