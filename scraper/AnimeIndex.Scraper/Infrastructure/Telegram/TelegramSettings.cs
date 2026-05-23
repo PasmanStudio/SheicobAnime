@@ -19,7 +19,7 @@ public class TelegramSettings
     public string SiteUrl { get; set; } = "https://sheicobanime.vercel.app";
 
     /// <summary>Max episodes to post per scraper run (avoids flooding the channel).</summary>
-    public int MaxPostsPerRun { get; set; } = 10;
+    public int MaxPostsPerRun { get; set; } = 25;
 
     public bool IsConfigured => !string.IsNullOrWhiteSpace(BotToken);
 }
