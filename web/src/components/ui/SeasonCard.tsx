@@ -53,7 +53,11 @@ export default function SeasonCard({ media, match }: SeasonCardProps) {
 
         {/* Score */}
         {score && (
-          <span className="absolute top-1.5 right-1.5 bg-black/70 text-indigo-400 text-xs font-semibold px-1.5 py-0.5 rounded">
+          <span className={`absolute top-1.5 right-1.5 bg-black/75 text-xs font-bold px-1.5 py-0.5 rounded ${
+            parseFloat(score) >= 8 ? "text-green-400" :
+            parseFloat(score) >= 6 ? "text-amber-400" :
+                                     "text-neutral-400"
+          }`}>
             ★ {score}
           </span>
         )}
