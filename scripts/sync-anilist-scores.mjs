@@ -161,16 +161,29 @@ async function fetchOurSeries() {
   let page = 1;
 
   while (true) {
-    const resp = await fetch(`${API_BASE}/series?page=${page}&pageSize=500`);
-    if (!resp.ok) throw new Error(`Our API HTTP ${resp.status} (page ${page})`);
+    let resp;
+    // Render free tier cold-starts take up to 60s — retry on 502/503
+    for (let attempt = 1; attempt <= 6; attempt++) {
+      resp = await fetch(`${API_BASE}/series?page=${page}&pageSize=500`);
+      if (resp.ok) break;
+      if (resp.status === 502 || resp.status === 503) {
+        process.stdout.write(`\r  API devolvió ${resp.status} (Render despertando...) intento ${attempt}/6, esperando ${attempt * 10}s...`);
+        await sleep(attempt * 10_000);
+      } else {
+        throw new Error(`Our API HTTP ${resp.status} (page ${page})`);
+      }
+    }
+    if (!resp.ok) throw new Error(`Our API HTTP ${resp.status} tras 6 intentos — verificá que la API esté corriendo`);
+
     const data = await resp.json();
     all.push(...data.data);
+    process.stdout.write(`\r  Our API: ${all.length} series (página ${page})   `);
     if (data.data.length < 500) break;
     page++;
     await sleep(300);
   }
 
-  console.log(`  Done: ${all.length} series in our DB`);
+  console.log(`\n  Done: ${all.length} series en nuestra BD`);
   return all;
 }
 
