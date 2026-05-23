@@ -78,7 +78,7 @@ export default async function TierListDetailPage({ params }: Props) {
   if (!realId) notFound();
 
   let list: Awaited<ReturnType<typeof getTierList>>;
-  let session: Awaited<ReturnType<typeof auth>>;
+  let session: import("next-auth").Session | null;
   try {
     [list, session] = await Promise.all([getTierList(realId), auth()]);
   } catch (err) {
