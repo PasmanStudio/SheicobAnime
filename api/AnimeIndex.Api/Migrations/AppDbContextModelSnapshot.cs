@@ -506,6 +506,57 @@ namespace AnimeIndex.Api.Migrations
                     b.ToTable("series_genres", (string)null);
                 });
 
+            modelBuilder.Entity("AnimeIndex.Api.Data.Entities.TelegramPost", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id")
+                        .HasDefaultValueSql("gen_random_uuid()");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<string>("ErrorMessage")
+                        .HasColumnType("text")
+                        .HasColumnName("error_message");
+
+                    b.Property<Guid>("EpisodeId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("episode_id");
+
+                    b.Property<DateTime?>("PublishedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("published_at");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text")
+                        .HasDefaultValue("published")
+                        .HasColumnName("status");
+
+                    b.Property<string>("TelegramMessageId")
+                        .HasColumnType("text")
+                        .HasColumnName("telegram_message_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CreatedAt")
+                        .HasDatabaseName("idx_telegram_posts_created");
+
+                    b.HasIndex("EpisodeId")
+                        .HasDatabaseName("idx_telegram_posts_episode");
+
+                    b.ToTable("telegram_posts", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_telegram_posts_status", "status IN ('published','failed')");
+                        });
+                });
+
             modelBuilder.Entity("AnimeIndex.Api.Data.Entities.WatchProgress", b =>
                 {
                     b.Property<Guid>("DeviceId")
@@ -623,6 +674,17 @@ namespace AnimeIndex.Api.Migrations
                     b.Navigation("Genre");
 
                     b.Navigation("Series");
+                });
+
+            modelBuilder.Entity("AnimeIndex.Api.Data.Entities.TelegramPost", b =>
+                {
+                    b.HasOne("AnimeIndex.Api.Data.Entities.Episode", "Episode")
+                        .WithMany()
+                        .HasForeignKey("EpisodeId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Episode");
                 });
 
             modelBuilder.Entity("AnimeIndex.Api.Data.Entities.WatchProgress", b =>
