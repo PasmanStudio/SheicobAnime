@@ -12,6 +12,7 @@ const NAV_LINKS = [
 ] as const;
 
 const DISCORD_INVITE = process.env.NEXT_PUBLIC_DISCORD_INVITE ?? "";
+const TELEGRAM_CHANNEL = process.env.NEXT_PUBLIC_TELEGRAM_CHANNEL ?? "";
 
 export default function NavMenu() {
   const pathname = usePathname();
@@ -97,6 +98,20 @@ export default function NavMenu() {
                 {label}
               </Link>
             ))}
+            {TELEGRAM_CHANNEL && (
+              <Link
+                href={TELEGRAM_CHANNEL}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={() => setOpen(false)}
+                className="px-3 py-2.5 rounded-md text-sm font-medium text-neutral-400 hover:text-[#2AABEE] hover:bg-neutral-800/60 transition-colors flex items-center gap-2"
+              >
+                <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.562 8.248-1.97 9.289c-.145.658-.537.818-1.084.508l-3-2.21-1.447 1.394c-.16.16-.295.295-.605.295l.213-3.053 5.56-5.023c.242-.213-.054-.333-.373-.12L7.19 14.447l-2.95-.924c-.64-.203-.654-.64.136-.948l11.526-4.445c.537-.194 1.006.131.66.118z" />
+                </svg>
+                Telegram
+              </Link>
+            )}
             {DISCORD_INVITE && (
               <Link
                 href={DISCORD_INVITE}
