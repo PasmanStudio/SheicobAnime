@@ -10,7 +10,9 @@ import ListViewTracker from "./ListViewTracker";
 import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
+
+export const dynamic = "force-dynamic";
 
 interface Props {
   params: Promise<{ id: string }>;
@@ -70,7 +72,13 @@ export default async function ListaDetailPage({ params }: Props) {
   if (!list) notFound();
 
   // Private list — only the owner can view
-  if (!list.is_public && list.user_id !== session?.user?.id) notFound();
+  if (!list.is_public && list.user_id !== session?.user?.id) {
+    if (!session?.user?.id) {
+      // auth() returned null — private list, unauthenticated → ask to sign in
+      redirect(`/?callbackUrl=/listas/${id}`);
+    }
+    notFound();
+  }
 
   const isOwner = session?.user?.id === list.user_id;
 

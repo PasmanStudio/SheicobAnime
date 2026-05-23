@@ -6,7 +6,9 @@ import TierPickerOnEntry from "@/components/tierlist/TierPickerOnEntry";
 import RemoveFromTierButton from "@/components/tierlist/RemoveFromTierButton";
 import type { Metadata } from "next";
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
+
+export const dynamic = "force-dynamic";
 
 interface Props {
   params: Promise<{ id: string }>;
@@ -60,8 +62,13 @@ export default async function TierListDetailPage({ params }: Props) {
 
   if (!list) notFound();
   if (!list.is_public && list.user_id !== session?.user?.id) {
+    if (!session?.user?.id) {
+      // auth() returned null — private list, unauthenticated → ask to sign in
+      console.warn(`[tierlist/${id}] no session, redirecting to sign-in`);
+      redirect(`/?callbackUrl=/tierlist/${id}`);
+    }
     console.warn(
-      `[tierlist/${id}] access denied: is_public=${list.is_public} list.user_id=${list.user_id} session.user.id=${session?.user?.id ?? "null"}`,
+      `[tierlist/${id}] access denied: is_public=${list.is_public} list.user_id=${list.user_id} session.user.id=${session.user.id}`,
     );
     notFound();
   }
