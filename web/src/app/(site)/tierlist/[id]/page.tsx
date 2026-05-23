@@ -4,6 +4,7 @@ import { TIERS, TIER_COLORS, type Tier, type TierEntry } from "@/lib/tierlist";
 import AddToTierModal from "@/components/tierlist/AddToTierModal";
 import TierPickerOnEntry from "@/components/tierlist/TierPickerOnEntry";
 import RemoveFromTierButton from "@/components/tierlist/RemoveFromTierButton";
+import { encodeId, decodeId, isUuid } from "@/lib/short-id";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
@@ -51,21 +52,32 @@ async function getTierList(id: string): Promise<(TierListRow & { entries: TierEn
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { id } = await params;
-  const list = await getTierList(id);
+  const realId = isUuid(id) ? id : (decodeId(id) ?? id);
+  const list = await getTierList(realId);
   if (!list) return { title: "Tier List — SheicobAnime" };
   return { title: `${list.name} — SheicobAnime` };
 }
 
 export default async function TierListDetailPage({ params }: Props) {
   const { id } = await params;
-  const [list, session] = await Promise.all([getTierList(id), auth()]);
+
+  // Redirect old UUID URLs to short-ID form
+  if (isUuid(id)) {
+    redirect(`/tierlist/${encodeId(id)}`);
+  }
+
+  // Decode short ID to real UUID for DB lookup
+  const realId = decodeId(id);
+  if (!realId) notFound();
+
+  const [list, session] = await Promise.all([getTierList(realId), auth()]);
 
   if (!list) notFound();
   if (!list.is_public && list.user_id !== session?.user?.id) {
     if (!session?.user?.id) {
       // auth() returned null — private list, unauthenticated → ask to sign in
       console.warn(`[tierlist/${id}] no session, redirecting to sign-in`);
-      redirect(`/?callbackUrl=/tierlist/${id}`);
+      redirect(`/?callbackUrl=/tierlist/${encodeId(realId!)}`);
     }
     console.warn(
       `[tierlist/${id}] access denied: is_public=${list.is_public} list.user_id=${list.user_id} session.user.id=${session.user.id}`,

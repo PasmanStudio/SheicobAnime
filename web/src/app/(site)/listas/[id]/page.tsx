@@ -7,6 +7,7 @@ import RemoveFromListButton from "@/components/lists/RemoveFromListButton";
 import TogglePublicButton from "@/components/lists/TogglePublicButton";
 import ShareButtons from "./ShareButtons";
 import ListViewTracker from "./ListViewTracker";
+import { encodeId, decodeId, isUuid } from "@/lib/short-id";
 import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
@@ -57,7 +58,8 @@ async function getListDetail(id: string): Promise<ListDetail | null> {
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { id } = await params;
-  const list = await getListDetail(id);
+  const realId = isUuid(id) ? id : (decodeId(id) ?? id);
+  const list = await getListDetail(realId);
   if (!list) return { title: "Lista no encontrada — SheicobAnime" };
   return {
     title: `${list.name} — SheicobAnime`,
@@ -67,7 +69,17 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
 export default async function ListaDetailPage({ params }: Props) {
   const { id } = await params;
-  const [list, session] = await Promise.all([getListDetail(id), auth()]);
+
+  // Redirect old UUID URLs to short-ID form
+  if (isUuid(id)) {
+    redirect(`/listas/${encodeId(id)}`);
+  }
+
+  // Decode short ID to real UUID for DB lookup
+  const realId = decodeId(id);
+  if (!realId) notFound();
+
+  const [list, session] = await Promise.all([getListDetail(realId), auth()]);
 
   if (!list) notFound();
 

@@ -1,5 +1,6 @@
 import { auth } from "@/lib/auth";
 import { getDb } from "@/lib/db";
+import { encodeId } from "@/lib/short-id";
 import type { ListSummary } from "@/lib/lists";
 import CreateListButton from "@/components/lists/CreateListButton";
 import type { Metadata } from "next";
@@ -80,7 +81,7 @@ export default async function ListasPage() {
           {lists.map((list) => (
             <Link
               key={list.id}
-              href={`/listas/${list.id}`}
+              href={`/listas/${encodeId(list.id)}`}
               className="group flex flex-col bg-neutral-900 border border-neutral-800 rounded-xl overflow-hidden hover:border-neutral-600 transition-all"
             >
               {/* Cover previews */}

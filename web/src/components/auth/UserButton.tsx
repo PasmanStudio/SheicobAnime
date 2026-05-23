@@ -86,7 +86,7 @@ export default function UserButton() {
           {/* Menu items */}
           <nav className="py-1">
             <Link
-              href={`/usuario/${user.id}`}
+              href={`/usuario/${user.username ?? user.id}`}
               onClick={() => setDropdownOpen(false)}
               className="flex items-center gap-2.5 px-4 py-2.5 text-sm text-neutral-300 hover:text-white hover:bg-neutral-800 transition-colors"
             >
