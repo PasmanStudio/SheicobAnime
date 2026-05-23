@@ -5,7 +5,8 @@ import AddSeriesModal from "@/components/lists/AddSeriesModal";
 import EditListNameButton from "@/components/lists/EditListNameButton";
 import RemoveFromListButton from "@/components/lists/RemoveFromListButton";
 import TogglePublicButton from "@/components/lists/TogglePublicButton";
-import ShareButtons from "./ShareButtons";
+import ShareButtons from "@/components/share/ShareButtons";
+import { siteUrl } from "@/lib/site-url";
 import ListViewTracker from "./ListViewTracker";
 import { encodeId, decodeId, isUuid } from "@/lib/short-id";
 import type { Metadata } from "next";
@@ -83,6 +84,9 @@ export default async function ListaDetailPage({ params }: Props) {
 
   if (!list) notFound();
 
+  // Build the canonical share URL once (server-side, uses the short ID form)
+  const shareUrl = `${siteUrl()}/listas/${encodeId(list.id)}`;
+
   // Private list — only the owner can view
   if (!list.is_public && list.user_id !== session?.user?.id) {
     if (!session?.user?.id) {
@@ -116,7 +120,7 @@ export default async function ListaDetailPage({ params }: Props) {
             <div />
           )}
           {list.is_public && !isOwner && (
-            <ShareButtons listId={list.id} listName={list.name} />
+            <ShareButtons url={shareUrl} text={`Mirá la lista "${list.name}" en SheicobAnime 📋`} />
           )}
         </div>
 
@@ -161,7 +165,7 @@ export default async function ListaDetailPage({ params }: Props) {
             <div className="ml-auto flex items-center gap-2">
               <TogglePublicButton listId={list.id} initialIsPublic={list.is_public} />
               {list.is_public && (
-                <ShareButtons listId={list.id} listName={list.name} />
+                <ShareButtons url={shareUrl} text={`Mirá la lista "${list.name}" en SheicobAnime 📋`} />
               )}
             </div>
           )}

@@ -5,6 +5,8 @@ import AddToTierModal from "@/components/tierlist/AddToTierModal";
 import TierPickerOnEntry from "@/components/tierlist/TierPickerOnEntry";
 import RemoveFromTierButton from "@/components/tierlist/RemoveFromTierButton";
 import { encodeId, decodeId, isUuid } from "@/lib/short-id";
+import { siteUrl } from "@/lib/site-url";
+import ShareButtons from "@/components/share/ShareButtons";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
@@ -95,19 +97,32 @@ export default async function TierListDetailPage({ params }: Props) {
 
   const totalEntries = list.entries.length;
   const existingSlugs = list.entries.map((e) => e.series_slug);
+  const shareUrl = `${siteUrl()}/tierlist/${encodeId(list.id)}`;
 
   return (
     <div className="container mx-auto px-4 py-8 max-w-5xl">
       {/* Header */}
       <div className="mb-6">
-        {isOwner && (
-          <Link
-            href="/tierlist"
-            className="inline-flex items-center gap-1.5 text-xs text-neutral-500 hover:text-neutral-300 transition-colors mb-4"
-          >
-            ← Mis Tier Lists
-          </Link>
-        )}
+        {/* Back link row */}
+        <div className="flex items-center justify-between mb-3">
+          {isOwner ? (
+            <Link
+              href="/tierlist"
+              className="inline-flex items-center gap-1.5 text-xs text-neutral-500 hover:text-neutral-300 transition-colors"
+            >
+              ← Mis Tier Lists
+            </Link>
+          ) : (
+            <div />
+          )}
+          {list.is_public && !isOwner && (
+            <ShareButtons
+              url={shareUrl}
+              text={`Mirá la tier list "${list.name}" en SheicobAnime 🏆`}
+            />
+          )}
+        </div>
+
         <div className="flex items-center gap-3 flex-wrap mb-1">
           <h1 className="text-2xl font-bold text-white flex-1 min-w-0">{list.name}</h1>
           {list.is_public && (
@@ -116,14 +131,28 @@ export default async function TierListDetailPage({ params }: Props) {
             </span>
           )}
         </div>
-        <p className="text-sm text-neutral-500">
-          {totalEntries === 0 ? "Sin animes" : `${totalEntries} anime${totalEntries !== 1 ? "s" : ""}`}
-          {isOwner && (
-            <span className="ml-2 text-neutral-600">
-              · Hacé click en un anime para cambiar su tier
-            </span>
+        <div className="flex flex-wrap items-center gap-3">
+          <p className="text-sm text-neutral-500">
+            {totalEntries === 0 ? "Sin animes" : `${totalEntries} anime${totalEntries !== 1 ? "s" : ""}`}
+            {isOwner && (
+              <span className="ml-2 text-neutral-600">
+                · Hacé click en un anime para cambiar su tier
+              </span>
+            )}
+          </p>
+          {/* Owner share + public toggle row */}
+          {isOwner && list.is_public && (
+            <div className="ml-auto">
+              <ShareButtons
+                url={shareUrl}
+                text={`Mirá la tier list "${list.name}" en SheicobAnime 🏆`}
+              />
+            </div>
           )}
-        </p>
+          {isOwner && !list.is_public && (
+            <span className="text-xs text-neutral-600">Solo vos podés verla</span>
+          )}
+        </div>
       </div>
 
       {/* Owner: add button */}
