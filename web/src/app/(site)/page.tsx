@@ -68,7 +68,7 @@ export default async function HomePage() {
             Ver todo →
           </Link>
         </div>
-        <div className="flex gap-3 overflow-x-auto pb-3 scrollbar-thin scrollbar-track-neutral-800 scrollbar-thumb-neutral-600">
+        <div className="flex gap-3 overflow-x-auto pb-2 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
           {topRated.data.map((s, i) => (
             <Link
               key={s.id}
