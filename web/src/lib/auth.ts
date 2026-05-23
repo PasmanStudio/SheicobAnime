@@ -50,4 +50,21 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       return session;
     },
   },
+
+  events: {
+    // Log auth events to Vercel function logs so we can diagnose issues
+    async signIn({ user, account, isNewUser }) {
+      console.log(`[Auth] signIn: userId=${user?.id} provider=${account?.provider} isNew=${isNewUser}`);
+    },
+    async signOut(message) {
+      const token = "token" in message ? message.token : message.session;
+      console.log(`[Auth] signOut: token=${JSON.stringify(token)?.slice(0, 40)}`);
+    },
+    async createUser({ user }) {
+      console.log(`[Auth] createUser: userId=${user.id} email=${user.email}`);
+    },
+    async session({ session }) {
+      console.log(`[Auth] session: userId=${session?.user?.id} expires=${session?.expires}`);
+    },
+  },
 });

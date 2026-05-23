@@ -42,7 +42,8 @@ async function getUserBySlug(slug: string): Promise<DbUser | null> {
       [slug],
     );
     return rows[0] ?? null;
-  } catch {
+  } catch (err) {
+    console.error("[getUserBySlug] DB error for slug=%s:", slug, err);
     return null;
   }
 }
