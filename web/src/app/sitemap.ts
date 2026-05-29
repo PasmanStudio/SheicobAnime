@@ -20,7 +20,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   ];
 
   // ── All series pages (paginated) ──────────────────────────────────────────
-  let seriesPages: MetadataRoute.Sitemap = [];
+  const seriesPages: MetadataRoute.Sitemap = [];
   try {
     let page = 1;
     let total = Infinity;
