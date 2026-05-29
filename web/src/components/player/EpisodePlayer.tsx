@@ -57,7 +57,7 @@ interface EpisodePlayerProps {
 export default function EpisodePlayer({
   mirrors,
   episodeTitle,
-  seriesTitle,
+  seriesTitle: _seriesTitle,
   episodeId,
   posterUrl,
 }: EpisodePlayerProps) {
