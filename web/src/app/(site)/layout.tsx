@@ -2,6 +2,7 @@ import AdsterraGlobalAds from "@/components/ads/AdsterraGlobalAds";
 import ConsentBanner from "@/components/ads/ConsentBanner";
 import AuthProvider from "@/components/auth/AuthProvider";
 import SiteHeader from "@/components/layout/SiteHeader";
+import { siteUrl } from "@/lib/site-url";
 import type { Metadata, Viewport } from "next";
 import localFont from "next/font/local";
 import "../globals.css";
@@ -24,6 +25,7 @@ export const viewport: Viewport = {
 };
 
 export const metadata: Metadata = {
+  metadataBase: new URL(siteUrl()),
   title: {
     default: "SheicobAnime — Watch Anime Online",
     template: "%s | SheicobAnime",
@@ -33,6 +35,14 @@ export const metadata: Metadata = {
     icon: "/favicon.png",
     shortcut: "/favicon.png",
     apple: "/favicon.png",
+  },
+  openGraph: {
+    siteName: "SheicobAnime",
+    locale: "es_AR",
+  },
+  twitter: {
+    card: "summary_large_image",
+    site: "@sheicobanime",
   },
 };
 

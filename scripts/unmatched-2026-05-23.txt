@@ -1,0 +1,36 @@
+# Series sin match en AniList — 2026-05-23
+# Columnas: slug | title | titleRomaji
+
+tian-guan-cifu-short-films	Tian Guan Cifu Short Films	Heaven Official&#039;s Blessing Short Films
+k-project	K	K
+buki-yo-saraba	Buki yo Saraba	A Farewell to Arms
+pokemon-xy-new-year-special	Pokemon XY: New Year Special	
+pokemon-xy-pikachu-the-movie-1-jikan-special	Pokemon XY: Cosplay Pikachu Special	
+ku-pao-ying-xiong	Ku Pao Ying Xiong	
+quanzhi-fashi-ii	Quanzhi Fashi II	Full-Time Magister 2nd Season
+aishen-qiaokeli-ingii	Aishen Qiaokeli-ing...II	Cupid’s Chocolates II
+wei-kanjian-erduo-la	Hora Mimi ga Mieteru yo	
+quanzhi-fashi-iii	Quanzhi Fashi III	Full-Time Magister 3rd Season
+mo-dao-zu-shi-xian-yun-pian	Mo Dao Zu Shi: Xian Yun Pian	The Founder of Diabolism Season 2
+wu-liuqi-zui-qiang-fa-xing-shi	Wu Liuqi: Zui Qiang Fa Xing Shi	Scissor Seven (2019)
+quanzhi-fashi-iv	Quanzhi Fashi IV	Full-Time Magister 4th Season
+wu-liuqi-xuanwu-guo-pian	Wu Liuqi: Xuanwu Guo Pian	Scissor Seven (2021)
+quanzhi-fashi-v	Quanzhi Fashi V	Full-Time Magister 5th Season
+mo-dao-zu-shi-wanjie-pian	Mo Dao Zu Shi: Wanjie Pian	The Founder of Diabolism Season 3
+zanting-rang-wo-cha-gonglue	Zanting! Rang Wo Cha Gonglue	Pause! Let Me Check the Walkthrough First
+tuanzimen-de-shiming	Tuanzimen de Shiming	Buddies for Bud
+bai-yao-pu-3rd-season	Bai Yao Pu 3rd Season	Fairies Albums 3
+wulin-buer-zhoukan	Wulin Buer Zhoukan	The Martial Weekly
+chang-jian-feng-yun-2nd-season	Chang Jian Feng Yun 2nd Season	Long Sword, Wind and Cloud 2nd Season
+quanzhi-fashi-vi	Quanzhi Fashi VI	Full-Time Magister 6th Season
+gaishi-dizun	Gaishi Dizun	The Galaxy Emperor
+bai-yao-pu-4th-season	Bai Yao Pu 4th Season	Fairies Albums 4
+bai-jia-jue-zhi-jianghu-gui-shi-lu	Bai Jia Jue Zhi: Jianghu Gui Shi Lu	
+cong-gu-huo-niao-kaishi-long-cheng-fengyun	Cong Gu Huo Niao Kaishi: Long Cheng Fengyun	Purgatory Walkers
+quanzhi-fashi-tebie-pian-shenmi-weituo	Quanzhi Fashi Tebie Pian: Shenmi Weituo	
+hu-he-yao-shi-lu	Hu He Yao Shi Lu	Tiger Crane
+wangu-zui-qiang-zong	Wangu Zui Qiang Zong	The Strongest Sect of All Ages
+quanqiu-gao-wu	Quanqiu Gao Wu	World&amp;#039;s Best Martial Artist
+twins-hinahima	Twins Hinahima	
+tong-ling-fei-2nd-season	Tong Ling Fei 2nd Season	Psychic Princess Season 2
+bai-yao-pu-5th-season	Bai Yao Pu 5th Season	Fairies Albums 5
