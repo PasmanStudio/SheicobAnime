@@ -151,6 +151,7 @@ public sealed class SeekStreamingClient
             using var tusClient = _httpFactory.CreateClient("seek-tus");
 
             using var downloadReq = new HttpRequestMessage(HttpMethod.Get, directVideoUrl);
+            downloadReq.Headers.TryAddWithoutValidation("User-Agent", BrowserUserAgent);
             if (!string.IsNullOrEmpty(referer))
                 downloadReq.Headers.TryAddWithoutValidation("Referer", referer);
             using var downloadResp = await dlClient.SendAsync(
@@ -348,6 +349,11 @@ public sealed class SeekStreamingClient
     /// <summary>Builds the embed URL from a video ID.</summary>
     public string GetEmbedUrl(string videoId) => $"https://sheicobanime.seekplayer.me/#{videoId}";
 
+    // Browser UA sent on all CDN requests so mxcontent.net (mixdrop CDN) returns 200.
+    // Tested: HEAD/GET with UA → 200; without UA → 403 regardless of Referer.
+    private const string BrowserUserAgent =
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+
     /// <summary>
     /// Tries HEAD first (fast); if it fails or returns no Content-Length, falls back
     /// to GET Range:bytes=0-0 and reads the total size from Content-Range.
@@ -356,9 +362,12 @@ public sealed class SeekStreamingClient
     private async Task<long> GetFileSizeAsync(HttpClient client, string url, string? referer, CancellationToken ct)
     {
         // Strategy 1: HEAD
+        // Explicit UA on the request (belt+suspenders alongside the seek-download client's
+        // DefaultRequestHeaders) — mxcontent.net CDN returns 403 without a browser UA.
         try
         {
             using var req = new HttpRequestMessage(HttpMethod.Head, url);
+            req.Headers.TryAddWithoutValidation("User-Agent", BrowserUserAgent);
             if (!string.IsNullOrEmpty(referer))
                 req.Headers.TryAddWithoutValidation("Referer", referer);
             else if (Uri.TryCreate(url, UriKind.Absolute, out var uri))
@@ -366,6 +375,10 @@ public sealed class SeekStreamingClient
             using var resp = await client.SendAsync(req, ct);
             if (resp.IsSuccessStatusCode && resp.Content.Headers.ContentLength is long len and > 0)
                 return len;
+            if (!resp.IsSuccessStatusCode)
+                _logger.LogDebug(
+                    "SeekStreaming: HEAD {Status} for {Url} — trying Range GET",
+                    (int)resp.StatusCode, url);
         }
         catch (Exception ex) when (ex is not TaskCanceledException { CancellationToken.IsCancellationRequested: true })
         {
@@ -377,6 +390,7 @@ public sealed class SeekStreamingClient
         {
             using var req = new HttpRequestMessage(HttpMethod.Get, url);
             req.Headers.TryAddWithoutValidation("Range", "bytes=0-0");
+            req.Headers.TryAddWithoutValidation("User-Agent", BrowserUserAgent);
             if (!string.IsNullOrEmpty(referer))
                 req.Headers.TryAddWithoutValidation("Referer", referer);
             else if (Uri.TryCreate(url, UriKind.Absolute, out var uri))
@@ -393,6 +407,10 @@ public sealed class SeekStreamingClient
             // 200 OK (server ignores Range): Content-Length is the full file size
             if (resp.IsSuccessStatusCode && resp.Content.Headers.ContentLength is long cl and > 0)
                 return cl;
+            if (!resp.IsSuccessStatusCode)
+                _logger.LogDebug(
+                    "SeekStreaming: Range GET {Status} for {Url}",
+                    (int)resp.StatusCode, url);
         }
         catch (Exception ex) when (ex is not TaskCanceledException { CancellationToken.IsCancellationRequested: true })
         {
