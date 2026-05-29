@@ -3,9 +3,10 @@ import { withSentryConfig } from "@sentry/nextjs";
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   images: {
-    // Allow images from JKAnime CDN domains and Supabase storage.
-    // Next.js will auto-convert to WebP and cache on Vercel's edge CDN,
-    // eliminating repeated fetches to the origin CDN.
+    // Disable Vercel Image Optimization to avoid 402 errors on the free tier.
+    // Images are served directly from the origin CDN (cdn.jkdesa.com, etc.)
+    // which is fast enough for MVP. Re-enable if/when upgrading Vercel plan.
+    unoptimized: true,
     remotePatterns: [
       { protocol: "https", hostname: "cdn.jkdesa.com" },
       { protocol: "https", hostname: "**.jkdesa.com" },
