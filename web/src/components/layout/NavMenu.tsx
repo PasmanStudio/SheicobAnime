@@ -9,6 +9,7 @@ const NAV_LINKS = [
   { href: "/temporada", label: "Temporada" },
   { href: "/directory", label: "Directorio" },
   { href: "/genres", label: "Géneros" },
+  { href: "/ranking", label: "Ranking" },
 ] as const;
 
 const DISCORD_INVITE = process.env.NEXT_PUBLIC_DISCORD_INVITE ?? "";

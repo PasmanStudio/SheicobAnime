@@ -178,6 +178,7 @@ try
     builder.Services.AddScoped<UpsertPipelineService>();
     builder.Services.AddScoped<DeadLetterAlerter>();
     builder.Services.AddScoped<JkAnimeHttpClient>();
+    builder.Services.AddScoped<KatanimeHttpClient>();
     builder.Services.AddSingleton<SeekStreamingClient>();
     builder.Services.AddScoped<SeekStreamingUploadService>();
 
@@ -187,6 +188,9 @@ try
     builder.Services.AddSingleton<AnimeIndex.Api.Infrastructure.Resolvers.IHosterResolver, AnimeIndex.Api.Infrastructure.Resolvers.OkruResolver>();
     builder.Services.AddSingleton<AnimeIndex.Api.Infrastructure.Resolvers.IHosterResolver, AnimeIndex.Api.Infrastructure.Resolvers.StreamwishResolver>();
     builder.Services.AddSingleton<AnimeIndex.Api.Infrastructure.Resolvers.IHosterResolver, AnimeIndex.Api.Infrastructure.Resolvers.VidhideResolver>();
+    // Extra resolvers that katanime commonly exposes and that aren't IP-bound — high-value for the fallback.
+    builder.Services.AddSingleton<AnimeIndex.Api.Infrastructure.Resolvers.IHosterResolver, AnimeIndex.Api.Infrastructure.Resolvers.MediafireResolver>();
+    builder.Services.AddSingleton<AnimeIndex.Api.Infrastructure.Resolvers.IHosterResolver, AnimeIndex.Api.Infrastructure.Resolvers.MixdropResolver>();
     builder.Services.AddSingleton<AnimeIndex.Api.Infrastructure.Resolvers.ResolverRegistry>();
 
     // ─── Scrape strategies (all IScrapeStrategy impls) ────

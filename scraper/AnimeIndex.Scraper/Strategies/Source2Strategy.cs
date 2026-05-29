@@ -15,6 +15,7 @@ public sealed class Source2Strategy(
     UpsertPipelineService upsert,
     JkAnimeHttpClient http,
     SeekStreamingUploadService? seekStreaming,
+    KatanimeHttpClient? katanime,
     IServiceScopeFactory? scopeFactory,
     IConfiguration config,
     ILogger<Source2Strategy> logger) : IScrapeStrategy
@@ -34,7 +35,9 @@ public sealed class Source2Strategy(
         var noEpisodesCount = 0;
 
         // Accumulate upload targets during Phase 2; uploaded in parallel at the end.
-        var pendingUploads = new List<(Guid EpisodeId, List<string> MirrorUrls)>();
+        // Slug/episode/title travel with each item so the katanime fallback can locate
+        // the exact episode when jkanime yields nothing or every jkanime upload fails.
+        var pendingUploads = new List<(Guid EpisodeId, List<string> MirrorUrls, string Slug, short EpisodeNumber, string? Title)>();
 
         // ── Check blocked_slugs for this job's series ────────
         var job = await db.ScrapeJobs
@@ -232,8 +235,10 @@ public sealed class Source2Strategy(
                 }
 
                 // Queue for SeekStreaming upload — resolved and uploaded in parallel after Phase 2.
-                if (mirrorUrls.Count > 0 && seekStreaming is not null)
-                    pendingUploads.Add((episodeId, mirrorUrls.ToList()));
+                // Queue even when jkanime returned zero mirrors so the katanime fallback can still
+                // try this specific episode (covers the "jkanime blocked / had nothing" case).
+                if (seekStreaming is not null)
+                    pendingUploads.Add((episodeId, mirrorUrls.ToList(), slug, epNum, ep.Title));
 
                 // Heartbeat after every episode to prevent stuck-job detection
                 // killing active jobs that have many episodes.
@@ -260,6 +265,9 @@ public sealed class Source2Strategy(
                 .Select(e => new
                 {
                     e.Id,
+                    e.Series.Slug,
+                    e.EpisodeNumber,
+                    e.Title,
                     EmbedUrls = e.Mirrors
                         .Where(m => m.IsActive)
                         .OrderBy(m => m.Priority)
@@ -272,7 +280,7 @@ public sealed class Source2Strategy(
             foreach (var ep in retryEpisodes)
             {
                 if (alreadyQueued.Contains(ep.Id) || ep.EmbedUrls.Count == 0) continue;
-                pendingUploads.Add((ep.Id, ep.EmbedUrls));
+                pendingUploads.Add((ep.Id, ep.EmbedUrls, ep.Slug, ep.EpisodeNumber, ep.Title));
                 retryCount++;
             }
 
@@ -292,36 +300,46 @@ public sealed class Source2Strategy(
                 "SeekStreaming Phase A: resolving {Count} episode(s)",
                 pendingUploads.Count);
 
-            // Phase A: resolve embed URLs → direct MP4 URLs (sequential; each call is a
-            // short HTTP round-trip, so this adds ~1-2 s per episode, not the bottleneck).
-            var targets = new List<ResolvedUploadTarget>(pendingUploads.Count);
-            foreach (var (episodeId, mirrorUrls) in pendingUploads)
+            // Phase A: resolve jkanime embed URLs → ALL direct MP4 candidates per episode
+            // (sequential; each call is a short HTTP round-trip, ~1-2 s per episode).
+            // We keep the FULL ordered candidate list (not just the first) so Phase B can
+            // fall back to the next provider when an upload fails — e.g. mp4upload returns
+            // 403 from cloud IPs, or a file's transcoding times out, so we retry okru/voe.
+            // Episodes with zero jkanime candidates are kept too: Phase B sends them straight
+            // to the katanime fallback.
+            var workItems = new List<UploadWorkItem>(pendingUploads.Count);
+            foreach (var (episodeId, mirrorUrls, slug, epNum, title) in pendingUploads)
             {
                 if (ct.IsCancellationRequested) break;
-                using var scope = scopeFactory.CreateScope();
-                var svc = scope.ServiceProvider.GetRequiredService<SeekStreamingUploadService>();
-                var all = await svc.ResolveAllDirectUrlsAsync(episodeId, mirrorUrls, ct);
-                if (all.Count > 0) targets.Add(all[0]);
+                IReadOnlyList<ResolvedUploadTarget> all = [];
+                if (mirrorUrls.Count > 0)
+                {
+                    using var scope = scopeFactory.CreateScope();
+                    var svc = scope.ServiceProvider.GetRequiredService<SeekStreamingUploadService>();
+                    all = await svc.ResolveAllDirectUrlsAsync(episodeId, mirrorUrls, ct);
+                }
+                workItems.Add(new UploadWorkItem(episodeId, slug, epNum, title, all));
             }
 
+            var withCandidates = workItems.Count(w => w.JkCandidates.Count > 0);
             logger.LogInformation(
-                "SeekStreaming Phase B: uploading {Resolved}/{Total} episode(s) — maxParallel={Max}",
-                targets.Count, pendingUploads.Count, maxParallel);
+                "SeekStreaming Phase B: uploading {Total} episode(s) ({Resolved} with jkanime candidates, rest rely on katanime) — maxParallel={Max}",
+                workItems.Count, withCandidates, maxParallel);
 
-            // Phase B: upload all resolved targets in parallel.
+            // Phase B: upload each episode in parallel. Per episode we try the jkanime-resolved
+            // providers in priority order, STOP at the first success, and on total failure (or no
+            // jkanime candidates at all) fall back to katanime for that exact episode.
             var uploaded    = 0;
             var uploadFailed = 0;
             using var sem = new SemaphoreSlim(maxParallel, maxParallel);
 
-            var uploadTasks = targets.Select(async target =>
+            var uploadTasks = workItems.Select(async item =>
             {
                 await sem.WaitAsync(ct);
                 try
                 {
                     if (ct.IsCancellationRequested) return;
-                    using var scope = scopeFactory.CreateScope();
-                    var svc = scope.ServiceProvider.GetRequiredService<SeekStreamingUploadService>();
-                    var ok = await svc.UploadResolvedAsync(target, ct);
+                    var ok = await TryUploadEpisodeAsync(item, ct);
                     if (ok) Interlocked.Increment(ref uploaded);
                     else    Interlocked.Increment(ref uploadFailed);
                 }
@@ -350,6 +368,89 @@ public sealed class Source2Strategy(
             SeriesIndexed: seriesCount,
             EpisodesIndexed: episodeCount,
             MirrorsIndexed: mirrorCount);
+    }
+
+    // ── Upload (jkanime candidates → katanime fallback) ─────
+
+    /// <summary>One episode's upload work: its resolved jkanime candidates plus the
+    /// identity needed to locate the same episode on katanime if jkanime fails.</summary>
+    private sealed record UploadWorkItem(
+        Guid EpisodeId,
+        string Slug,
+        short EpisodeNumber,
+        string? Title,
+        IReadOnlyList<ResolvedUploadTarget> JkCandidates);
+
+    /// <summary>
+    /// Uploads one episode to SeekStreaming. Tries the jkanime-resolved candidates first
+    /// (priority order, stop at first success); if there are none or all of them fail, falls
+    /// back to katanime for that specific episode — fetch its players, persist them as mirrors,
+    /// then try uploading those in priority order. Returns true if any upload succeeded.
+    /// </summary>
+    private async Task<bool> TryUploadEpisodeAsync(UploadWorkItem item, CancellationToken ct)
+    {
+        if (scopeFactory is null) return false;
+
+        using var scope = scopeFactory.CreateScope();
+        var svc = scope.ServiceProvider.GetRequiredService<SeekStreamingUploadService>();
+
+        // 1. jkanime-resolved candidates, in priority order.
+        for (var i = 0; i < item.JkCandidates.Count; i++)
+        {
+            if (ct.IsCancellationRequested) return false;
+            var target = item.JkCandidates[i];
+            if (await svc.UploadResolvedAsync(target, ct)) return true;
+
+            var next = i + 1 < item.JkCandidates.Count ? item.JkCandidates[i + 1].Provider : "katanime";
+            logger.LogInformation(
+                "Episode {Id}: jkanime upload via {Provider} failed — falling back to {Next}",
+                target.EpisodeId, target.Provider, next);
+        }
+
+        // 2. katanime fallback for this exact episode.
+        if (katanime is null || ct.IsCancellationRequested) return false;
+
+        var kataUrls = await katanime.GetEpisodeMirrorUrlsAsync(item.Slug, item.EpisodeNumber, item.Title, ct);
+        if (kataUrls.Count == 0) return false;
+
+        // Persist katanime mirrors so the site has embed fallbacks even if the upload also fails.
+        await PersistKatanimeMirrorsAsync(scope, item.EpisodeId, kataUrls, ct);
+
+        var kataCandidates = await svc.ResolveAllDirectUrlsAsync(item.EpisodeId, kataUrls, ct);
+        for (var i = 0; i < kataCandidates.Count; i++)
+        {
+            if (ct.IsCancellationRequested) return false;
+            var target = kataCandidates[i];
+            if (await svc.UploadResolvedAsync(target, ct))
+            {
+                logger.LogInformation(
+                    "Episode {Id}: uploaded via katanime fallback ({Provider})",
+                    item.EpisodeId, target.Provider);
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>Upserts katanime-resolved provider embeds as mirrors (same filtering + priority as jkanime).</summary>
+    private static async Task PersistKatanimeMirrorsAsync(
+        IServiceScope scope, Guid episodeId, IReadOnlyList<string> urls, CancellationToken ct)
+    {
+        var upsertSvc = scope.ServiceProvider.GetRequiredService<UpsertPipelineService>();
+        foreach (var url in urls)
+        {
+            if (IsJkAnimeDomain(url)) continue;
+            var provider = ExtractProviderName(url);
+            if (BlockedProviders.Contains(provider)) continue;
+
+            await upsertSvc.UpsertMirrorAsync(new MirrorScrapedData(
+                EpisodeId: episodeId,
+                ProviderName: provider,
+                EmbedUrl: url,
+                QualityLabel: 720,
+                Priority: GetProviderPriority(provider)), ct);
+        }
     }
 
     // ── Directory browsing ──────────────────────────────────

@@ -1,9 +1,11 @@
 import AdSlot from "@/components/ads/AdSlot";
+import LikeButton from "@/components/likes/LikeButton";
 import AddToListButton from "@/components/lists/AddToListButton";
 import AddToTierButton from "@/components/tierlist/AddToTierButton";
 import Pagination from "@/components/ui/Pagination";
 import WatchlistButton from "@/components/watchlist/WatchlistButton";
 import { ApiError, getSeriesBySlug, getSeriesEpisodes } from "@/lib/api";
+import { siteUrl } from "@/lib/site-url";
 import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
@@ -20,15 +22,28 @@ export async function generateMetadata({ params }: Pick<Props, "params">): Promi
   try {
     const { slug } = await params;
     const series = await getSeriesBySlug(slug);
+    const desc =
+      series.synopsis?.slice(0, 160) ??
+      `Mirá ${series.title} online en SheicobAnime. Episodios subtitulados en español.`;
+    const canonical = `/series/${slug}`;
     return {
       title: series.title,
-      description:
-        series.synopsis?.slice(0, 160) ??
-        `Watch ${series.title} episodes online.`,
+      description: desc,
+      alternates: { canonical },
       openGraph: {
         title: series.title,
-        description: series.synopsis?.slice(0, 160) ?? "",
-        images: series.coverUrl ? [{ url: series.coverUrl }] : [],
+        description: desc,
+        type: "video.tv_show",
+        url: canonical,
+        images: series.coverUrl
+          ? [{ url: series.coverUrl, width: 460, height: 690, alt: series.title }]
+          : [],
+      },
+      twitter: {
+        card: "summary_large_image",
+        title: series.title,
+        description: desc,
+        images: series.coverUrl ? [series.coverUrl] : [],
       },
     };
   } catch {
@@ -52,8 +67,35 @@ export default async function SeriesPage({ params, searchParams }: Props) {
     throw err;
   }
 
+  // ── JSON-LD structured data ────────────────────────────────────────────────
+  const jsonLd: Record<string, unknown> = {
+    "@context": "https://schema.org",
+    "@type": series.type === "movie" ? "Movie" : "TVSeries",
+    name: series.title,
+    url: `${siteUrl()}/series/${slug}`,
+    ...(series.titleRomaji && series.titleRomaji !== series.title
+      ? { alternateName: series.titleRomaji }
+      : {}),
+    ...(series.synopsis ? { description: series.synopsis } : {}),
+    ...(series.coverUrl ? { image: series.coverUrl } : {}),
+    ...(series.genres.length > 0
+      ? { genre: series.genres.map((g) => g.name) }
+      : {}),
+    ...(series.episodeCount ? { numberOfEpisodes: series.episodeCount } : {}),
+    ...(series.year ? { startDate: String(series.year) } : {}),
+    ...(series.language ? { inLanguage: series.language } : {}),
+    ...(series.studio ? { productionCompany: { "@type": "Organization", name: series.studio } } : {}),
+  };
+
   return (
-    <div className="container mx-auto px-4 py-8">
+    <>
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{
+          __html: JSON.stringify(jsonLd).replace(/<\/script>/gi, "<\\/script>"),
+        }}
+      />
+      <div className="container mx-auto px-4 py-8">
       {/* Hero */}
       <div className="flex flex-col md:flex-row gap-6 mb-8 items-center md:items-start">
         {/* Cover */}
@@ -113,6 +155,11 @@ export default async function SeriesPage({ params, searchParams }: Props) {
 
           {/* Action buttons */}
           <div className="flex flex-wrap gap-2 justify-center md:justify-start">
+            <LikeButton
+              seriesSlug={slug}
+              seriesTitle={series.title}
+              coverUrl={series.coverUrl}
+            />
             <WatchlistButton
               seriesSlug={slug}
               seriesTitle={series.title}
@@ -272,5 +319,6 @@ export default async function SeriesPage({ params, searchParams }: Props) {
 
       <AdSlot placement="series_bottom" />
     </div>
+    </>
   );
 }
