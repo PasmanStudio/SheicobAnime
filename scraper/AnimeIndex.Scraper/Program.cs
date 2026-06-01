@@ -259,10 +259,14 @@ try
             "0 4 * * *", // 04:00 UTC daily
             new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc });
 
-        // Anime news RSS → Instagram: every hour (SomosKudasai posts ~7-10/day in bursts).
-        // MaxPerRun=1 means at most 1 post/hour → natural cadence, never looks spammy.
-        // Override via Hangfire:NewsJobCron (e.g. "0 * * * *" or "*/30 * * * *")
-        var newsCron = builder.Configuration["Hangfire:NewsJobCron"] ?? "0 * * * *";
+        // Anime news RSS → Instagram: each hour from 11:00–23:00 UTC = 8 AM–8 PM Argentina (UTC-3).
+        // No posts during madrugada. MaxPerRun=1 → at most 1 post/run.
+        // Override via Hangfire:NewsJobCron to adjust the window.
+        // Examples:
+        //   "0 11-23 * * *"   → 8 AM–8 PM Argentina (default)
+        //   "0 12-22 * * *"   → 9 AM–7 PM Argentina (narrower)
+        //   "0 11-23,0,1 * * *" → extend to midnight + 1 AM Argentina
+        var newsCron = builder.Configuration["Hangfire:NewsJobCron"] ?? "0 11-23 * * *";
         recurring.AddOrUpdate<AnimeNewsJob>(
             "anime-news",
             "scraper",
