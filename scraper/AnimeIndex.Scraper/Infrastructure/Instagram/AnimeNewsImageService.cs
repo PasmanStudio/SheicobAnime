@@ -37,14 +37,14 @@ public class AnimeNewsImageService(
         return stream is null ? null : SKBitmap.Decode(stream);
     });
 
-    public async Task<byte[]> GenerateStoryAsync(AnimeNewsItem item, string sourceDisplayName, CancellationToken ct = default)
-        => await GenerateAsync(item, sourceDisplayName, 1080, 1920, isStory: true, ct);
+    public async Task<byte[]> GenerateStoryAsync(AnimeNewsItem item, CancellationToken ct = default)
+        => await GenerateAsync(item, 1080, 1920, isStory: true, ct);
 
-    public async Task<byte[]> GenerateFeedAsync(AnimeNewsItem item, string sourceDisplayName, CancellationToken ct = default)
-        => await GenerateAsync(item, sourceDisplayName, 1080, 1080, isStory: false, ct);
+    public async Task<byte[]> GenerateFeedAsync(AnimeNewsItem item, CancellationToken ct = default)
+        => await GenerateAsync(item, 1080, 1080, isStory: false, ct);
 
     private async Task<byte[]> GenerateAsync(
-        AnimeNewsItem item, string sourceDisplayName,
+        AnimeNewsItem item,
         int width, int height, bool isStory, CancellationToken ct)
     {
         SKBitmap? photoBitmap = null;
@@ -76,7 +76,7 @@ public class AnimeNewsImageService(
         }
 
         DrawGradientOverlay(canvas, width, height, isStory);
-        DrawTextContent(canvas, item, sourceDisplayName, width, height, isStory);
+        DrawTextContent(canvas, item, width, height, isStory);
 
         using var image = surface.Snapshot();
         using var data  = image.Encode(SKEncodedImageFormat.Jpeg, 92);
@@ -147,21 +147,26 @@ public class AnimeNewsImageService(
         canvas.DrawRect(0, 0, width, height, vPaint);
     }
 
+    private const float BadgePadV  = 10f;  // vertical padding inside badge (unscaled)
+    private const float BadgeFontSize = 22f;
+
     private static void DrawTextContent(
-        SKCanvas canvas, AnimeNewsItem item, string sourceDisplayName,
+        SKCanvas canvas, AnimeNewsItem item,
         int width, int height, bool isStory)
     {
         float scale = width / 1080f;
         float x     = width * 0.07f;
 
         // ── "NOTICIAS" badge ─────────────────────────────────────────────
-        float badgeY = isStory ? height * 0.635f : height * 0.57f;
-        DrawBadge(canvas, "  📰  NOTICIAS  ", x, badgeY, scale);
+        float badgeY      = isStory ? height * 0.60f : height * 0.50f;
+        DrawBadge(canvas, "» NOTICIAS", x, badgeY, scale);
 
         // ── Headline ─────────────────────────────────────────────────────
-        float titleY    = badgeY + 18 * scale;
-        float titleSize = isStory ? 62 * scale : 54 * scale;
-        float afterTitle = DrawWrappedText(
+        // Title baseline = badge bottom edge + titleFontSize + gap
+        float badgeBottom = badgeY + BadgePadV * scale;
+        float titleSize   = isStory ? 62 * scale : 54 * scale;
+        float titleY      = badgeBottom + titleSize + 12 * scale;
+        float afterTitle  = DrawWrappedText(
             canvas, item.Title, x, titleY, titleSize,
             TextWhite, maxWidth: width * 0.86f, bold: true, maxLines: 3);
 
@@ -169,17 +174,11 @@ public class AnimeNewsImageService(
         if (!string.IsNullOrWhiteSpace(item.Summary))
         {
             float summarySize = 30 * scale;
-            float summaryY    = afterTitle + 10 * scale;
+            float summaryY    = afterTitle + 16 * scale;
             DrawWrappedText(
                 canvas, item.Summary, x, summaryY, summarySize,
                 TextGray, maxWidth: width * 0.86f, bold: false, maxLines: 2);
         }
-
-        // ── Source attribution ────────────────────────────────────────────
-        float sourceY    = isStory ? height * 0.915f : height * 0.885f;
-        float sourceSize = 24 * scale;
-        var sourceText   = $"Fuente: {sourceDisplayName}";
-        DrawText(canvas, sourceText, x, sourceY, sourceSize, new SKColor(0x99, 0x99, 0x99));
 
         // ── Branding mark (bottom-right) ──────────────────────────────────
         float brandY = height - 36 * scale;
@@ -188,10 +187,10 @@ public class AnimeNewsImageService(
 
     private static void DrawBadge(SKCanvas canvas, string text, float x, float y, float scale)
     {
-        using var font      = CreateFont(22 * scale, bold: true);
+        using var font      = CreateFont(BadgeFontSize * scale, bold: true);
         using var textPaint = new SKPaint { Color = TextWhite, IsAntialias = true };
         float textWidth = font.MeasureText(text);
-        float padH = 16 * scale, padV = 8 * scale, radius = 5 * scale;
+        float padH = 16 * scale, padV = BadgePadV * scale, radius = 5 * scale;
 
         using var bgPaint = new SKPaint { Color = BadgeBg, IsAntialias = true };
         var bgRect = new SKRoundRect(

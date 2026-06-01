@@ -89,17 +89,20 @@ public partial class AnimeNewsFeedService(
             }
         }
 
+        // Items without an image are saved as "skipped" — Instagram posts
+        // always need a photo to have visual impact.
         var entities = toInsert.Select(i => new AnimeNewsItem
         {
-            SourceKey   = i.SourceKey,
-            RssGuid     = i.RssGuid,
-            Title       = i.Title,
-            Summary     = i.Summary,
-            ImageUrl    = i.ImageUrl,
-            ArticleUrl  = i.ArticleUrl,
-            PublishedAt = i.PublishedAt,
-            FetchedAt   = DateTime.UtcNow,
-            IgPostStatus = "pending",
+            SourceKey    = i.SourceKey,
+            RssGuid      = i.RssGuid,
+            Title        = i.Title,
+            Summary      = i.Summary,
+            ImageUrl     = i.ImageUrl,
+            ArticleUrl   = i.ArticleUrl,
+            PublishedAt  = i.PublishedAt,
+            FetchedAt    = DateTime.UtcNow,
+            IgPostStatus = string.IsNullOrWhiteSpace(i.ImageUrl) ? "skipped" : "pending",
+            ErrorMessage = string.IsNullOrWhiteSpace(i.ImageUrl) ? "No image available" : null,
         }).ToList();
 
         db.AnimeNewsItems.AddRange(entities);
@@ -112,12 +115,17 @@ public partial class AnimeNewsFeedService(
         return entities;
     }
 
-    /// <summary>Returns pending items (up to MaxPerRun) ordered by publish date desc.</summary>
+    /// <summary>
+    /// Returns pending items that have an image (up to MaxPerRun), ordered by publish date desc.
+    /// Items without images are permanently skipped and never returned here.
+    /// </summary>
     public async Task<List<AnimeNewsItem>> GetPendingItemsAsync(CancellationToken ct = default)
     {
         var cutoff = DateTime.UtcNow.AddHours(-settings.MaxAgeHours);
         return await db.AnimeNewsItems
-            .Where(n => n.IgPostStatus == "pending" && n.PublishedAt >= cutoff)
+            .Where(n => n.IgPostStatus == "pending"
+                     && n.PublishedAt >= cutoff
+                     && n.ImageUrl != null)
             .OrderByDescending(n => n.PublishedAt)
             .Take(settings.MaxPerRun)
             .ToListAsync(ct);

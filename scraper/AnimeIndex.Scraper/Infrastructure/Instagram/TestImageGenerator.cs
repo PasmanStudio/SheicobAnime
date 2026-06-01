@@ -8,10 +8,13 @@ namespace AnimeIndex.Scraper.Infrastructure.Instagram;
 /// Generates sample Story and Feed images to disk for visual review.
 /// Invoked via: dotnet run --project scraper/AnimeIndex.Scraper -- --images
 /// Output: ./test-output/instagram/  (relative to working directory)
+/// Generates both episode images AND news images.
 /// </summary>
 public static class TestImageGenerator
 {
-    private static readonly (string Title, string Slug, string? CoverUrl, int Episode, string? EpTitle)[] Samples =
+    // ── Episode samples ───────────────────────────────────────────────────────
+
+    private static readonly (string Title, string Slug, string? CoverUrl, int Episode, string? EpTitle)[] EpisodeSamples =
     [
         (
             "Demon Slayer: Kimetsu no Yaiba",
@@ -36,42 +39,104 @@ public static class TestImageGenerator
         ),
     ];
 
+    // ── News samples — títulos en español al estilo SomosKudasai ─────────────
+    // Todas las noticias en español latinoamericano, todas con imagen.
+
+    private static readonly (string Slug, string Title, string? Summary, string? ImageUrl)[] NewsSamples =
+    [
+        (
+            "kudasai-cloverworks",
+            "CloverWorks prepara grandes anuncios para el Anime Expo 2026 el próximo 4 de julio",
+            "Se esperan nuevos tráilers y visuales oficiales para The Fragrant Flower Blooms With Dignity T2, My Dress-Up Darling T3, Bocchi the Rock! T2 y Rascal Does Not Dream of a Dear Friend.",
+            // Imagen real de SomosKudasai CDN
+            "https://cdn.somoskudasai.com/width=1280,height=720,quality=75,format=auto,fit=cover/2026/05/yakineko.jpg"
+        ),
+        (
+            "kudasai-mha-mundial",
+            "My Hero Academia se une a la Selección Japonesa de Fútbol para el Mundial 2026 con colección oficial",
+            "La franquicia reveló una colaboración especial con Samurai Blue que incluye productos oficiales bajo licencia, preventa online disponible y tiendas pop-up en Japón desde el 2 de junio.",
+            "https://cdn.myanimelist.net/images/anime/1171/109222.jpg"
+        ),
+        (
+            "kudasai-rezero-s4",
+            "Los fans de Re:Zero quedan impactados tras el capítulo 8 de la temporada 4 — Episodio recibe 9.9/10 en IMDb",
+            "El episodio muestra a Subaru recordando a sus padres mientras va iniciando su colapso mental. Los fans elogiaron la dirección y animación del estudio.",
+            "https://cdn.myanimelist.net/images/anime/1448/109314.jpg"
+        ),
+        (
+            "kudasai-titulo-largo",
+            "Ufotable anuncia oficialmente Fate/stay night: Heaven's Feel IV — Producción confirmada para el 2027",
+            "El estudio confirmó que la cuarta película de la trilogía Heaven's Feel está en producción temprana, con una ventana de estreno tentativa para finales del 2027.",
+            "https://cdn.myanimelist.net/images/anime/1813/95650.jpg"
+        ),
+    ];
+
     public static async Task RunAsync(IHttpClientFactory httpFactory, ILoggerFactory loggerFactory)
     {
         var outDir = Path.Combine(Directory.GetCurrentDirectory(), "test-output", "instagram");
         Directory.CreateDirectory(outDir);
 
-        var logger  = loggerFactory.CreateLogger<InstagramImageService>();
-        var service = new InstagramImageService(httpFactory, logger);
-        var total   = Stopwatch.StartNew();
+        var total = Stopwatch.StartNew();
 
-        Console.WriteLine($"\nGenerating {Samples.Length * 2} images → {outDir}\n");
+        // ── Episode images ────────────────────────────────────────────────────
+        Console.WriteLine($"\n═══ EPISODE IMAGES ({EpisodeSamples.Length * 2} files) ═══");
+        var epLogger  = loggerFactory.CreateLogger<InstagramImageService>();
+        var epService = new InstagramImageService(httpFactory, epLogger);
 
-        foreach (var (title, slug, coverUrl, ep, epTitle) in Samples)
+        foreach (var (title, slug, coverUrl, ep, epTitle) in EpisodeSamples)
         {
             var series  = MakeSeries(title, slug, coverUrl);
             var episode = MakeEpisode(series.Id, ep, epTitle);
 
-            // Feed (1080×1080)
             var sw = Stopwatch.StartNew();
-            var feedBytes = await service.GenerateFeedAsync(series, episode);
+            var feedBytes = await epService.GenerateFeedAsync(series, episode);
             sw.Stop();
             var feedPath = Path.Combine(outDir, $"{slug}-ep{ep}-feed.jpg");
             await File.WriteAllBytesAsync(feedPath, feedBytes);
             Console.WriteLine($"  [feed ] {title} ep{ep}  →  {feedBytes.Length / 1024} KB  ({sw.ElapsedMilliseconds} ms)");
 
-            // Story (1080×1920)
             sw.Restart();
-            var storyBytes = await service.GenerateStoryAsync(series, episode);
+            var storyBytes = await epService.GenerateStoryAsync(series, episode);
             sw.Stop();
             var storyPath = Path.Combine(outDir, $"{slug}-ep{ep}-story.jpg");
             await File.WriteAllBytesAsync(storyPath, storyBytes);
             Console.WriteLine($"  [story] {title} ep{ep}  →  {storyBytes.Length / 1024} KB  ({sw.ElapsedMilliseconds} ms)");
         }
 
+        // ── News images ───────────────────────────────────────────────────────
+        Console.WriteLine($"\n═══ NEWS IMAGES ({NewsSamples.Length * 2} files) ═══");
+        var newsLogger  = loggerFactory.CreateLogger<AnimeNewsImageService>();
+        var newsService = new AnimeNewsImageService(httpFactory, newsLogger);
+
+        foreach (var (slug, title, summary, imageUrl) in NewsSamples)
+        {
+            var newsItem = MakeNewsItem(title, summary, imageUrl);
+
+            var sw = Stopwatch.StartNew();
+            var feedBytes = await newsService.GenerateFeedAsync(newsItem);
+            sw.Stop();
+            var feedPath = Path.Combine(outDir, $"news-{slug}-feed.jpg");
+            await File.WriteAllBytesAsync(feedPath, feedBytes);
+            Console.WriteLine($"  [feed ] {title[..Math.Min(title.Length, 60)]}  →  {feedBytes.Length / 1024} KB  ({sw.ElapsedMilliseconds} ms)");
+
+            sw.Restart();
+            var storyBytes = await newsService.GenerateStoryAsync(newsItem);
+            sw.Stop();
+            var storyPath = Path.Combine(outDir, $"news-{slug}-story.jpg");
+            await File.WriteAllBytesAsync(storyPath, storyBytes);
+            Console.WriteLine($"  [story] {title[..Math.Min(title.Length, 60)]}  →  {storyBytes.Length / 1024} KB  ({sw.ElapsedMilliseconds} ms)");
+        }
+
         total.Stop();
         Console.WriteLine($"\nDone in {total.ElapsedMilliseconds} ms total.");
         Console.WriteLine($"Open: {outDir}\n");
+
+        // Auto-open the output folder on Windows
+        if (OperatingSystem.IsWindows())
+        {
+            try { System.Diagnostics.Process.Start("explorer.exe", outDir); }
+            catch { /* best-effort */ }
+        }
     }
 
     // ── Helpers ───────────────────────────────────────────────────────
@@ -93,5 +158,20 @@ public static class TestImageGenerator
         Title         = title,
         IsPublished   = true,
         CreatedAt     = DateTime.UtcNow
+    };
+
+    private static AnimeIndex.Api.Data.Entities.AnimeNewsItem MakeNewsItem(
+        string title, string? summary, string? imageUrl) => new()
+    {
+        Id           = Guid.NewGuid(),
+        SourceKey    = "test",
+        RssGuid      = Guid.NewGuid().ToString(),
+        Title        = title,
+        Summary      = summary,
+        ImageUrl     = imageUrl,
+        ArticleUrl   = "https://www.animenewsnetwork.com/news/test",
+        PublishedAt  = DateTime.UtcNow,
+        FetchedAt    = DateTime.UtcNow,
+        IgPostStatus = "pending",
     };
 }
