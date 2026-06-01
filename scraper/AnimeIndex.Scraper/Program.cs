@@ -12,6 +12,79 @@ using Microsoft.EntityFrameworkCore;
 using Serilog;
 using Serilog.Formatting.Json;
 
+// ── Anime news pipeline (lightweight, no Hangfire) ───────────────────────────
+// Usage: dotnet run --project scraper/AnimeIndex.Scraper -- --news
+// Designed for a dedicated GHA workflow that runs every hour.
+// Fetches RSS, scrapes full articles, posts 1 item to Instagram, exits.
+if (args.Contains("--news"))
+{
+    Log.Logger = new LoggerConfiguration()
+        .WriteTo.Console(new JsonFormatter())
+        .CreateBootstrapLogger();
+
+    try
+    {
+        var newsBuilder = Host.CreateApplicationBuilder(args);
+
+        newsBuilder.Services.AddSerilog((_, lc) => lc
+            .ReadFrom.Configuration(newsBuilder.Configuration)
+            .Enrich.FromLogContext()
+            .Enrich.WithProperty("Service", "news")
+            .WriteTo.Console(new JsonFormatter()));
+
+        // DB
+        var newsConnStr = newsBuilder.Configuration.GetConnectionString("DefaultConnection")
+                       ?? newsBuilder.Configuration["DATABASE_URL"]
+                       ?? throw new InvalidOperationException("Missing DATABASE_URL");
+        newsConnStr = NormalizePostgresConnectionString(newsConnStr);
+        newsBuilder.Services.AddDbContext<AppDbContext>(opts =>
+            opts.UseNpgsql(newsConnStr, o => o.EnableRetryOnFailure(3)));
+
+        // Settings
+        var newsIgSettings = new AnimeIndex.Scraper.Infrastructure.Instagram.InstagramSettings();
+        newsBuilder.Configuration.GetSection("Instagram").Bind(newsIgSettings);
+        newsBuilder.Services.AddSingleton(newsIgSettings);
+
+        var newsSettings = new AnimeIndex.Scraper.Infrastructure.AnimeNewsSettings();
+        newsBuilder.Configuration.GetSection("AnimeNews").Bind(newsSettings);
+        newsBuilder.Services.AddSingleton(newsSettings);
+
+        // HTTP clients
+        newsBuilder.Services.AddHttpClient("news-rss", c =>
+        {
+            c.Timeout = TimeSpan.FromSeconds(20);
+            c.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent",
+                "Mozilla/5.0 (compatible; SheicobAnime-NewsBot/1.0)");
+        });
+        newsBuilder.Services.AddHttpClient("instagram-graph", c => c.Timeout = TimeSpan.FromSeconds(30));
+        newsBuilder.Services.AddHttpClient("probe", c => c.Timeout = TimeSpan.FromSeconds(15));
+
+        // Services
+        newsBuilder.Services.AddScoped<AnimeIndex.Scraper.Infrastructure.AnimeNewsFeedService>();
+        newsBuilder.Services.AddScoped<AnimeIndex.Scraper.Infrastructure.Instagram.AnimeNewsImageService>();
+        newsBuilder.Services.AddScoped<AnimeIndex.Scraper.Infrastructure.Instagram.MetaGraphApiClient>();
+        newsBuilder.Services.AddScoped<AnimeIndex.Scraper.Infrastructure.Instagram.AnimeNewsPublisherService>();
+        newsBuilder.Services.AddScoped<AnimeIndex.Scraper.Jobs.AnimeNewsJob>();
+
+        var newsApp = newsBuilder.Build();
+        // Run as one-shot: build scope → run job → exit
+        await using var newsScope = newsApp.Services.CreateAsyncScope();
+        var newsJob = newsScope.ServiceProvider.GetRequiredService<AnimeIndex.Scraper.Jobs.AnimeNewsJob>();
+        using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(8)); // safety timeout
+        await newsJob.RunAsync(cts.Token);
+    }
+    catch (Exception ex)
+    {
+        Log.Fatal(ex, "News pipeline terminated unexpectedly");
+        throw;
+    }
+    finally
+    {
+        await Log.CloseAndFlushAsync();
+    }
+    return;
+}
+
 // ── Quick local image-generation test (no DB, no Hangfire, no Instagram creds) ──
 // Usage: dotnet run --project scraper/AnimeIndex.Scraper -- --images
 if (args.Contains("--images"))

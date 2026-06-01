@@ -1,0 +1,75 @@
+name: News — Anime RSS → Instagram
+
+# Runs every hour from 11:00–23:00 UTC = 8 AM–8 PM Argentina (UTC-3).
+# Each run fetches SomosKudasai RSS, picks 1 new article, posts feed + story.
+# Fast job: ~3–5 minutes total (RSS fetch + article scrape + 2 IG API calls).
+# No Hangfire — uses the standalone --news mode that exits after one post.
+
+on:
+  schedule:
+    # Every hour, hours 11–23 UTC (8 AM–8 PM Argentina UTC-3)
+    # GHA cron doesn't support ranges directly — list each hour explicitly.
+    - cron: '0 11 * * *'
+    - cron: '0 12 * * *'
+    - cron: '0 13 * * *'
+    - cron: '0 14 * * *'
+    - cron: '0 15 * * *'
+    - cron: '0 16 * * *'
+    - cron: '0 17 * * *'
+    - cron: '0 18 * * *'
+    - cron: '0 19 * * *'
+    - cron: '0 20 * * *'
+    - cron: '0 21 * * *'
+    - cron: '0 22 * * *'
+    - cron: '0 23 * * *'
+  workflow_dispatch:   # allow manual trigger from Actions tab
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  news:
+    name: Post anime news
+    runs-on: ubuntu-latest
+    timeout-minutes: 10   # safety cap — normal run is ~3–5 min
+
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: '9.x'
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-scraper-${{ hashFiles('scraper/**/*.csproj', 'api/AnimeIndex.Api/AnimeIndex.Api.csproj') }}
+          restore-keys: nuget-scraper-
+
+      - name: Restore
+        run: dotnet restore scraper/AnimeIndex.Scraper/AnimeIndex.Scraper.csproj
+
+      - name: Build
+        run: dotnet build scraper/AnimeIndex.Scraper/AnimeIndex.Scraper.csproj --no-restore -c Release
+
+      - name: Run news pipeline
+        run: dotnet run --project scraper/AnimeIndex.Scraper --no-build -c Release -- --news
+        env:
+          ASPNETCORE_ENVIRONMENT: Production
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # ── Instagram ──────────────────────────────────────────────────────
+          Instagram__AccessToken:  ${{ secrets.INSTAGRAM_ACCESS_TOKEN }}
+          Instagram__IgUserId:     ${{ secrets.INSTAGRAM_IG_USER_ID }}
+          Instagram__ImgBbApiKey:  ${{ secrets.IMGBB_API_KEY }}
+          Instagram__AppId:        ${{ secrets.INSTAGRAM_APP_ID }}
+          Instagram__AppSecret:    ${{ secrets.INSTAGRAM_APP_SECRET }}
+          Instagram__SiteUrl:      ${{ secrets.INSTAGRAM_SITE_URL }}
+          Instagram__Handle:       "sheicobanime"
+          # ── News settings (optional overrides) ────────────────────────────
+          # AnimeNews__MaxPerRun: "1"          # default: 1
+          # AnimeNews__MaxAgeHours: "48"       # default: 48
+          # To add more Spanish feeds without redeploying:
+          # AnimeNews__Feeds__1__Key: "otrosite"
+          # AnimeNews__Feeds__1__Url: "https://otrosite.com/feed/"
