@@ -98,6 +98,11 @@ try
     builder.Configuration.GetSection("Instagram").Bind(igSettings);
     builder.Services.AddSingleton(igSettings);
 
+    // ─── Anime news settings ───────────────────────────────
+    var animeNewsSettings = new AnimeIndex.Scraper.Infrastructure.AnimeNewsSettings();
+    builder.Configuration.GetSection("AnimeNews").Bind(animeNewsSettings);
+    builder.Services.AddSingleton(animeNewsSettings);
+
     // ─── Discord settings ──────────────────────────────────
     var discordSettings = new DiscordSettings();
     builder.Configuration.GetSection("Discord").Bind(discordSettings);
@@ -158,6 +163,14 @@ try
     {
         c.Timeout = TimeSpan.FromMinutes(90);
     });
+    // RSS feed fetcher — reads anime news XML feeds
+    builder.Services.AddHttpClient("news-rss", c =>
+    {
+        c.Timeout = TimeSpan.FromSeconds(20);
+        c.DefaultRequestHeaders.TryAddWithoutValidation(
+            "User-Agent",
+            "Mozilla/5.0 (compatible; SheicobAnime-NewsBot/1.0; +https://sheicobanime.vercel.app)");
+    });
 
     // ─── Discord publishing services ───────────────────────
     builder.Services.AddScoped<DiscordWebhookClient>();
@@ -172,6 +185,11 @@ try
     builder.Services.AddScoped<InstagramImageService>();
     builder.Services.AddScoped<CaptionGeneratorService>();
     builder.Services.AddScoped<InstagramPublisherService>();
+
+    // ─── Anime news RSS + Instagram news pipeline ─────────
+    builder.Services.AddScoped<AnimeIndex.Scraper.Infrastructure.AnimeNewsFeedService>();
+    builder.Services.AddScoped<AnimeIndex.Scraper.Infrastructure.Instagram.AnimeNewsImageService>();
+    builder.Services.AddScoped<AnimeIndex.Scraper.Infrastructure.Instagram.AnimeNewsPublisherService>();
 
     // ─── Scraper services ─────────────────────────────────
     builder.Services.AddScoped<MirrorProbeService>();
@@ -204,6 +222,7 @@ try
     builder.Services.AddScoped<BackfillJob>();
     builder.Services.AddScoped<WatchProgressCleanupJob>();
     builder.Services.AddScoped<MirrorHealthCheckJob>();
+    builder.Services.AddScoped<AnimeNewsJob>();
 
     var app = builder.Build();
 
@@ -238,6 +257,16 @@ try
             "scraper",
             job => job.RunAsync(CancellationToken.None),
             "0 4 * * *", // 04:00 UTC daily
+            new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc });
+
+        // Anime news RSS → Instagram: twice daily (10:00 UTC and 20:00 UTC)
+        // Override via Hangfire:NewsJobCron (e.g. "0 10,20 * * *")
+        var newsCron = builder.Configuration["Hangfire:NewsJobCron"] ?? "0 10,20 * * *";
+        recurring.AddOrUpdate<AnimeNewsJob>(
+            "anime-news",
+            "scraper",
+            job => job.RunAsync(CancellationToken.None),
+            newsCron,
             new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc });
 
         // Apply any pending EF Core migrations (safety net if deploy workflow skipped them)

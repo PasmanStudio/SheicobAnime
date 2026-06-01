@@ -1,0 +1,161 @@
+using AnimeIndex.Api.Data;
+using AnimeIndex.Api.Data.Entities;
+using Microsoft.Extensions.Logging;
+
+namespace AnimeIndex.Scraper.Infrastructure.Instagram;
+
+/// <summary>
+/// Publishes pending anime news items to Instagram as:
+///   • A single feed post (1080×1080)
+///   • A story (1080×1920)
+///
+/// One item = one feed post + one story (published in sequence).
+/// Errors are caught per-item so a failure on one doesn't block the rest.
+/// </summary>
+public class AnimeNewsPublisherService(
+    AppDbContext db,
+    InstagramSettings igSettings,
+    AnimeNewsSettings newsSettings,
+    MetaGraphApiClient api,
+    AnimeNewsImageService imageService,
+    ILogger<AnimeNewsPublisherService> logger)
+{
+    public async Task PublishPendingAsync(
+        IReadOnlyList<AnimeNewsItem> items, CancellationToken ct = default)
+    {
+        if (!igSettings.IsConfigured)
+        {
+            logger.LogInformation("Instagram not configured — skipping news publisher");
+            return;
+        }
+        if (items.Count == 0) return;
+
+        logger.LogInformation("AnimeNews: publishing {Count} news item(s) to Instagram", items.Count);
+
+        // Build source-key → displayName lookup
+        var displayNames = newsSettings.Feeds
+            .ToDictionary(f => f.Key, f => f.DisplayName, StringComparer.OrdinalIgnoreCase);
+
+        foreach (var item in items)
+        {
+            if (ct.IsCancellationRequested) break;
+            await PublishItemAsync(item, displayNames, ct);
+        }
+    }
+
+    private async Task PublishItemAsync(
+        AnimeNewsItem item,
+        Dictionary<string, string> displayNames,
+        CancellationToken ct)
+    {
+        var sourceDisplay = displayNames.GetValueOrDefault(item.SourceKey, item.SourceKey.ToUpperInvariant());
+
+        try
+        {
+            // ── Feed post ─────────────────────────────────────────────────
+            string? feedMediaId = null;
+            try
+            {
+                var feedBytes  = await imageService.GenerateFeedAsync(item, sourceDisplay, ct);
+                var feedFile   = $"news-{item.SourceKey}-{item.Id.ToString("N")[..8]}-feed.jpg";
+                var feedUrl    = await api.UploadImageToImgBbAsync(feedBytes, feedFile, ct);
+                var caption    = BuildCaption(item, sourceDisplay);
+                var containerId = await api.CreateSingleImageContainerAsync(feedUrl, caption, ct);
+                await api.WaitForContainerReadyAsync(containerId, ct);
+                feedMediaId = await api.PublishContainerAsync(containerId, ct);
+
+                logger.LogInformation(
+                    "AnimeNews: published feed post for [{Source}] {Title} → {MediaId}",
+                    item.SourceKey, Truncate(item.Title, 60), feedMediaId);
+
+                // First comment with article link
+                await TryPostCommentAsync(feedMediaId, $"🔗 Leer más: {item.ArticleUrl}", ct);
+            }
+            catch (Exception ex) when (ex is not TaskCanceledException { CancellationToken.IsCancellationRequested: true })
+            {
+                logger.LogWarning(ex,
+                    "AnimeNews: failed to publish feed post for {Title}", Truncate(item.Title, 60));
+            }
+
+            // ── Story ─────────────────────────────────────────────────────
+            string? storyMediaId = null;
+            try
+            {
+                var storyBytes  = await imageService.GenerateStoryAsync(item, sourceDisplay, ct);
+                var storyFile   = $"news-{item.SourceKey}-{item.Id.ToString("N")[..8]}-story.jpg";
+                var storyUrl    = await api.UploadImageToImgBbAsync(storyBytes, storyFile, ct);
+                var storyContainerId = await api.CreateStoryContainerAsync(storyUrl, item.ArticleUrl, ct);
+                await api.WaitForContainerReadyAsync(storyContainerId, ct);
+                storyMediaId = await api.PublishContainerAsync(storyContainerId, ct);
+
+                logger.LogInformation(
+                    "AnimeNews: published story for [{Source}] {Title} → {MediaId}",
+                    item.SourceKey, Truncate(item.Title, 60), storyMediaId);
+            }
+            catch (Exception ex) when (ex is not TaskCanceledException { CancellationToken.IsCancellationRequested: true })
+            {
+                logger.LogWarning(ex,
+                    "AnimeNews: failed to publish story for {Title}", Truncate(item.Title, 60));
+            }
+
+            // Mark as published (even if only one of the two formats succeeded)
+            var anyPublished = feedMediaId is not null || storyMediaId is not null;
+            item.IgPostStatus    = anyPublished ? "published" : "failed";
+            item.IgFeedMediaId   = feedMediaId;
+            item.IgStoryMediaId  = storyMediaId;
+            item.IgPostedAt      = anyPublished ? DateTime.UtcNow : null;
+        }
+        catch (Exception ex) when (ex is not TaskCanceledException { CancellationToken.IsCancellationRequested: true })
+        {
+            item.IgPostStatus   = "failed";
+            item.ErrorMessage   = ex.Message[..Math.Min(ex.Message.Length, 500)];
+            logger.LogError(ex, "AnimeNews: unexpected error publishing {Title}", Truncate(item.Title, 60));
+        }
+        finally
+        {
+            await db.SaveChangesAsync(CancellationToken.None);
+        }
+    }
+
+    // ── Caption ──────────────────────────────────────────────────────────────
+
+    private string BuildCaption(AnimeNewsItem item, string sourceDisplay)
+    {
+        var lines = new List<string>
+        {
+            $"📰 {item.Title}",
+            string.Empty,
+        };
+
+        if (!string.IsNullOrWhiteSpace(item.Summary))
+        {
+            lines.Add(item.Summary);
+            lines.Add(string.Empty);
+        }
+
+        lines.Add($"🔗 Link en bio  |  Fuente: {sourceDisplay}");
+        lines.Add(string.Empty);
+        lines.Add("#anime #animenoticias #otaku #animelatino #animeespañol #manga #sheicobanime");
+        lines.Add(string.Empty);
+        lines.Add($"@{igSettings.Handle}");
+
+        return string.Join("\n", lines);
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    private async Task TryPostCommentAsync(string mediaId, string comment, CancellationToken ct)
+    {
+        try
+        {
+            await api.PostCommentAsync(mediaId, comment, ct);
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "AnimeNews: could not post comment on {MediaId}", mediaId);
+        }
+    }
+
+    private static string Truncate(string s, int max) =>
+        s.Length <= max ? s : s[..max] + "…";
+}
