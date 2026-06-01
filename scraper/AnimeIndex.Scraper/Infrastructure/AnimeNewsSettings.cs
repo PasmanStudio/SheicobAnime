@@ -2,8 +2,11 @@ namespace AnimeIndex.Scraper.Infrastructure;
 
 public class AnimeNewsSettings
 {
-    /// <summary>Maximum news items to post to Instagram per run.</summary>
-    public int MaxPerRun { get; set; } = 3;
+    /// <summary>
+    /// Maximum news items to post per run.
+    /// With hourly cron this should be 1-2 — posting too many at once looks like spam.
+    /// </summary>
+    public int MaxPerRun { get; set; } = 1;
 
     /// <summary>Only consider news items published in the last N hours.</summary>
     public int MaxAgeHours { get; set; } = 48;

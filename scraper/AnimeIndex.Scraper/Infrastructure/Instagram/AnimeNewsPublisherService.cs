@@ -110,45 +110,29 @@ public class AnimeNewsPublisherService(
     // ── Caption ──────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Builds an Instagram caption using the full article body from RSS (stored in Summary).
-    /// Format mirrors accounts like pgn.pe / koryugi:
-    ///   @handle 👉 primer párrafo
-    ///   📌 párrafos siguientes (uno por bloque)
-    ///   hashtags
+    /// Builds the Instagram caption: title first, then full article body paragraphs,
+    /// then hashtags. Clean format — no repeated intro, no @handle prefix.
     /// </summary>
-    private string BuildCaption(AnimeNewsItem item)
+    private static string BuildCaption(AnimeNewsItem item)
     {
-        var lines = new List<string>();
+        var lines = new List<string>
+        {
+            item.Title,
+            string.Empty,
+        };
 
         if (!string.IsNullOrWhiteSpace(item.Summary))
         {
-            // StripHtml preserves paragraph structure with \n\n between blocks
             var paragraphs = item.Summary
                 .Split(["\n\n", "\n"], StringSplitOptions.RemoveEmptyEntries)
                 .Select(p => p.Trim())
-                .Where(p => p.Length > 0)
-                .ToList();
+                .Where(p => p.Length > 0);
 
-            if (paragraphs.Count > 0)
+            foreach (var p in paragraphs)
             {
-                lines.Add($"@{igSettings.Handle} 👉 {paragraphs[0]}");
-                lines.Add(string.Empty);
-                for (var i = 1; i < paragraphs.Count; i++)
-                {
-                    lines.Add($"📌 {paragraphs[i]}");
-                    lines.Add(string.Empty);
-                }
-            }
-            else
-            {
-                lines.Add($"@{igSettings.Handle} 👉 {item.Title}");
+                lines.Add(p);
                 lines.Add(string.Empty);
             }
-        }
-        else
-        {
-            lines.Add($"@{igSettings.Handle} 👉 {item.Title}");
-            lines.Add(string.Empty);
         }
 
         lines.Add("#animelatam #animenoticias #otaku #anime #animeespañol #manga #sheicobanime");

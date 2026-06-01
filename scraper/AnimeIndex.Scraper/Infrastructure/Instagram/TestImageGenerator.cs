@@ -138,6 +138,47 @@ public static class TestImageGenerator
             }
         }
 
+        // ── Real RSS item from SomosKudasai (live fetch) ─────────────────
+        Console.WriteLine("\n═══ REAL RSS ITEM (SomosKudasai live) ═══");
+        try
+        {
+            var dbLogger  = loggerFactory.CreateLogger<AnimeIndex.Scraper.Infrastructure.AnimeNewsFeedService>();
+            var feedSvc   = new RealFeedFetcher(httpFactory, dbLogger);
+            var liveItem  = await feedSvc.FetchLatestItemAsync();
+
+            if (liveItem is not null)
+            {
+                var sw = Stopwatch.StartNew();
+                var feedBytes = await newsService.GenerateFeedAsync(liveItem);
+                sw.Stop();
+                var feedPath = Path.Combine(outDir, "real-feed.jpg");
+                await File.WriteAllBytesAsync(feedPath, feedBytes);
+                Console.WriteLine($"  [feed ] {liveItem.Title[..Math.Min(liveItem.Title.Length, 70)]}");
+                Console.WriteLine($"  Image: {liveItem.ImageUrl?[..Math.Min(liveItem.ImageUrl?.Length ?? 0, 60)]}");
+                Console.WriteLine($"  Size: {feedBytes.Length / 1024} KB  ({sw.ElapsedMilliseconds} ms)");
+
+                sw.Restart();
+                var storyBytes = await newsService.GenerateStoryAsync(liveItem);
+                sw.Stop();
+                var storyPath = Path.Combine(outDir, "real-story.jpg");
+                await File.WriteAllBytesAsync(storyPath, storyBytes);
+                Console.WriteLine($"  [story] {storyBytes.Length / 1024} KB  ({sw.ElapsedMilliseconds} ms)");
+
+                Console.WriteLine("\n  ── Caption ─────────────────────────────────────");
+                foreach (var line in BuildSampleCaption(liveItem).Split('\n').Take(20))
+                    Console.WriteLine($"  {line}");
+                Console.WriteLine("  ────────────────────────────────────────────────\n");
+            }
+            else
+            {
+                Console.WriteLine("  (could not fetch live item — check network)");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"  Live fetch failed: {ex.Message}");
+        }
+
         total.Stop();
         Console.WriteLine($"\nDone in {total.ElapsedMilliseconds} ms total.");
         Console.WriteLine($"Open: {outDir}\n");
@@ -147,6 +188,82 @@ public static class TestImageGenerator
         {
             try { System.Diagnostics.Process.Start("explorer.exe", outDir); }
             catch { /* best-effort */ }
+        }
+    }
+
+    // ── Minimal live RSS fetcher for --images testing ─────────────────────────
+
+    private sealed class RealFeedFetcher(
+        IHttpClientFactory httpFactory,
+        ILogger<AnimeIndex.Scraper.Infrastructure.AnimeNewsFeedService> logger)
+    {
+        private static readonly System.Xml.Linq.XNamespace Media =
+            "http://search.yahoo.com/mrss/";
+
+        public async Task<AnimeIndex.Api.Data.Entities.AnimeNewsItem?> FetchLatestItemAsync()
+        {
+            using var http = httpFactory.CreateClient("news-rss");
+            using var resp = await http.GetAsync("https://somoskudasai.com/feed/");
+            if (!resp.IsSuccessStatusCode) return null;
+
+            var xml  = (await resp.Content.ReadAsStringAsync()).TrimStart('﻿', '​', '\r', '\n', ' ');
+            var doc  = System.Xml.Linq.XDocument.Parse(xml);
+            var item = doc.Root?.Descendants("item").FirstOrDefault();
+            if (item is null) return null;
+
+            var title    = item.Element("title")?.Value?.Trim() ?? "(sin título)";
+            var link     = item.Element("link")?.Value?.Trim() ?? string.Empty;
+            var imageUrl = item.Elements(Media + "content")
+                               .Select(e => (string?)e.Attribute("url"))
+                               .FirstOrDefault(u => !string.IsNullOrWhiteSpace(u))
+                        ?? item.Elements(Media + "thumbnail")
+                               .Select(e => (string?)e.Attribute("url"))
+                               .FirstOrDefault(u => !string.IsNullOrWhiteSpace(u));
+
+            // Fetch article page for full body
+            string? body = null;
+            if (!string.IsNullOrWhiteSpace(link))
+            {
+                try
+                {
+                    using var artResp = await http.GetAsync(link);
+                    if (artResp.IsSuccessStatusCode)
+                    {
+                        var html = await artResp.Content.ReadAsStringAsync();
+                        var paragraphs = System.Text.RegularExpressions.Regex.Matches(
+                                html, @"<p[^>]*>(.*?)</p>",
+                                System.Text.RegularExpressions.RegexOptions.IgnoreCase |
+                                System.Text.RegularExpressions.RegexOptions.Singleline)
+                            .Select(m => System.Text.RegularExpressions.Regex
+                                .Replace(m.Groups[1].Value, "<[^>]+>", " ").Trim())
+                            .Select(p => System.Net.WebUtility.HtmlDecode(p))
+                            .Where(p => p.Length > 60
+                                     && !p.Contains("var ")
+                                     && !p.Contains("function(")
+                                     && !p.Contains("Math.")
+                                     && !p.TrimStart().StartsWith("/*"))
+                            .Take(5)
+                            .ToList();
+                        body = paragraphs.Count > 0 ? string.Join("\n\n", paragraphs) : null;
+                    }
+                }
+                catch { /* best-effort */ }
+            }
+
+            logger.LogDebug("Live fetch: {Title}", title);
+            return new AnimeIndex.Api.Data.Entities.AnimeNewsItem
+            {
+                Id           = Guid.NewGuid(),
+                SourceKey    = "kudasai",
+                RssGuid      = link,
+                Title        = title,
+                Summary      = body,
+                ImageUrl     = imageUrl,
+                ArticleUrl   = link,
+                PublishedAt  = DateTime.UtcNow,
+                FetchedAt    = DateTime.UtcNow,
+                IgPostStatus = "pending",
+            };
         }
     }
 
@@ -173,20 +290,14 @@ public static class TestImageGenerator
 
     private static string BuildSampleCaption(AnimeIndex.Api.Data.Entities.AnimeNewsItem item)
     {
-        var lines = new List<string>();
+        var lines = new List<string> { item.Title, string.Empty };
         if (!string.IsNullOrWhiteSpace(item.Summary))
         {
-            var paragraphs = item.Summary
+            foreach (var p in item.Summary
                 .Split(["\n\n", "\n"], StringSplitOptions.RemoveEmptyEntries)
-                .Select(p => p.Trim()).Where(p => p.Length > 0).ToList();
-            if (paragraphs.Count > 0)
-            {
-                lines.Add($"@sheicobanime 👉 {paragraphs[0]}");
-                lines.Add(string.Empty);
-                for (var i = 1; i < paragraphs.Count; i++) { lines.Add($"📌 {paragraphs[i]}"); lines.Add(string.Empty); }
-            }
+                .Select(p => p.Trim()).Where(p => p.Length > 0))
+            { lines.Add(p); lines.Add(string.Empty); }
         }
-        else { lines.Add($"@sheicobanime 👉 {item.Title}"); lines.Add(string.Empty); }
         lines.Add("#animelatam #animenoticias #otaku #anime #animeespañol #manga #sheicobanime");
         return string.Join("\n", lines);
     }
