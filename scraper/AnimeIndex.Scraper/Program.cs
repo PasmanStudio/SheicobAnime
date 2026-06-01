@@ -71,8 +71,11 @@ if (args.Contains("--news"))
         newsBuilder.Services.AddScoped<AnimeIndex.Scraper.Jobs.AnimeNewsJob>();
 
         var newsApp = newsBuilder.Build();
-        // Run as one-shot: build scope → run job → exit
+        // Run as one-shot: migrate → run job → exit
         await using var newsScope = newsApp.Services.CreateAsyncScope();
+        // Apply pending migrations (creates anime_news_items if it doesn't exist yet)
+        var newsDb = newsScope.ServiceProvider.GetRequiredService<AppDbContext>();
+        await newsDb.Database.MigrateAsync();
         var newsJob = newsScope.ServiceProvider.GetRequiredService<AnimeIndex.Scraper.Jobs.AnimeNewsJob>();
         using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(8)); // safety timeout
         await newsJob.RunAsync(cts.Token);
