@@ -77,6 +77,10 @@ try
                 o.TracesSampleRate = 0.1; // 10% of transactions — free tier friendly
                 o.SendDefaultPii = false;
                 o.Environment = builder.Environment.EnvironmentName;
+                // OperationCanceledException = client closed the request (navigated away / tab closed).
+                // This is expected behavior, not an application error — filter it out to avoid noise.
+                o.SetBeforeSend((sentryEvent, hint) =>
+                    hint?.Exception is OperationCanceledException ? null : sentryEvent);
             });
             sentryEnabled = true;
         }
