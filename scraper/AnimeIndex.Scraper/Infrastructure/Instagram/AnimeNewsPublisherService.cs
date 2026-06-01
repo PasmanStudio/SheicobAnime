@@ -138,10 +138,20 @@ public class AnimeNewsPublisherService(
                 var chunk = p + "\n\n";
                 if (bodyBuilder.Length + chunk.Length > budget)
                 {
-                    // Fit as many chars as possible with "…"
+                    // Fit as many chars as possible — prefer sentence boundary, then word boundary
                     var remaining = budget - bodyBuilder.Length - 1;
                     if (remaining > 20)
-                        bodyBuilder.Append(p[..remaining].TrimEnd() + "…");
+                    {
+                        var slice = p[..Math.Min(remaining, p.Length)].TrimEnd();
+                        var sentenceEnd = slice.LastIndexOfAny(['.', '!', '?']);
+                        if (sentenceEnd > 10)
+                            bodyBuilder.Append(slice[..(sentenceEnd + 1)]);
+                        else
+                        {
+                            var lastSpace = slice.LastIndexOf(' ');
+                            bodyBuilder.Append((lastSpace > 0 ? slice[..lastSpace] : slice) + "…");
+                        }
+                    }
                     break;
                 }
                 bodyBuilder.Append(chunk);
