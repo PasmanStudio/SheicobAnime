@@ -22,6 +22,94 @@ namespace AnimeIndex.Api.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("AnimeIndex.Api.Data.Entities.AnimeNewsItem", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id")
+                        .HasDefaultValueSql("gen_random_uuid()");
+
+                    b.Property<string>("ArticleUrl")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("article_url");
+
+                    b.Property<string>("ErrorMessage")
+                        .HasColumnType("text")
+                        .HasColumnName("error_message");
+
+                    b.Property<DateTime>("FetchedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("fetched_at")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<string>("IgFeedMediaId")
+                        .HasColumnType("text")
+                        .HasColumnName("ig_feed_media_id");
+
+                    b.Property<DateTime?>("IgPostedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("ig_posted_at");
+
+                    b.Property<string>("IgPostStatus")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text")
+                        .HasDefaultValue("pending")
+                        .HasColumnName("ig_post_status");
+
+                    b.Property<string>("IgStoryMediaId")
+                        .HasColumnType("text")
+                        .HasColumnName("ig_story_media_id");
+
+                    b.Property<string>("ImageUrl")
+                        .HasColumnType("text")
+                        .HasColumnName("image_url");
+
+                    b.Property<DateTime>("PublishedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("published_at");
+
+                    b.Property<string>("RssGuid")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("rss_guid");
+
+                    b.Property<string>("SourceKey")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("source_key");
+
+                    b.Property<string>("Summary")
+                        .HasColumnType("text")
+                        .HasColumnName("summary");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("title");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("IgPostStatus")
+                        .HasDatabaseName("idx_anime_news_ig_status");
+
+                    b.HasIndex("PublishedAt")
+                        .HasDatabaseName("idx_anime_news_published_at");
+
+                    b.HasIndex("SourceKey", "RssGuid")
+                        .IsUnique()
+                        .HasDatabaseName("uq_anime_news_source_guid");
+
+                    b.ToTable("anime_news_items", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_anime_news_items_status",
+                                "ig_post_status IN ('pending','published','skipped','failed')");
+                        });
+                });
+
             modelBuilder.Entity("AnimeIndex.Api.Data.Entities.BlockedSlug", b =>
                 {
                     b.Property<string>("Slug")
