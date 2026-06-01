@@ -170,14 +170,14 @@ public class AnimeNewsImageService(
             canvas, item.Title, x, titleY, titleSize,
             TextWhite, maxWidth: width * 0.86f, bold: true, maxLines: 3);
 
-        // ── Summary (2 lines max) ─────────────────────────────────────────
+        // ── Summary (3 lines max, slightly smaller font for more content) ──
         if (!string.IsNullOrWhiteSpace(item.Summary))
         {
-            float summarySize = 30 * scale;
-            float summaryY    = afterTitle + 16 * scale;
+            float summarySize = 27 * scale;
+            float summaryY    = afterTitle + 14 * scale;
             DrawWrappedText(
                 canvas, item.Summary, x, summaryY, summarySize,
-                TextGray, maxWidth: width * 0.86f, bold: false, maxLines: 2);
+                TextGray, maxWidth: width * 0.86f, bold: false, maxLines: 3);
         }
 
         // ── Branding mark (bottom-right) ──────────────────────────────────
@@ -267,38 +267,56 @@ public class AnimeNewsImageService(
 
     private static List<string> WrapText(string text, SKFont font, float maxWidth, int maxLines)
     {
-        var words   = text.Split(' ');
+        // Use only the first line of the text (news summaries may have \n\n paragraph breaks;
+        // the image shows a short excerpt, the full body goes in the Instagram caption).
+        var firstParagraph = text.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                                 .FirstOrDefault() ?? text;
+
+        var words   = firstParagraph.Split(' ');
         var lines   = new List<string>();
         var current = "";
+        var moreContent = false;
 
-        foreach (var word in words)
+        for (var i = 0; i < words.Length; i++)
         {
-            if (lines.Count >= maxLines) break;
+            var word = words[i];
             var test = current.Length == 0 ? word : current + " " + word;
+
             if (font.MeasureText(test) > maxWidth && current.Length > 0)
             {
-                lines.Add(current);
-                current = word;
+                if (lines.Count < maxLines - 1)
+                {
+                    lines.Add(current);
+                    current = word;
+                }
+                else
+                {
+                    // Last allowed line — fit as much as possible + "…"
+                    moreContent = true;
+                    break;
+                }
             }
             else
             {
                 current = test;
             }
         }
-        if (current.Length > 0 && lines.Count < maxLines)
+
+        if (current.Length > 0)
         {
-            // Truncate last line with ellipsis if we hit the max
-            if (lines.Count == maxLines - 1 && font.MeasureText(current) > maxWidth)
-            {
-                while (current.Length > 0 && font.MeasureText(current + "…") > maxWidth)
-                    current = current[..^1];
-                lines.Add(current + "…");
-            }
-            else
+            if (!moreContent && lines.Count < maxLines)
             {
                 lines.Add(current);
             }
+            else
+            {
+                // Truncate last line to fit + "…"
+                while (current.Length > 0 && font.MeasureText(current + "…") > maxWidth)
+                    current = current[..^1].TrimEnd();
+                lines.Add(current + "…");
+            }
         }
+
         return lines;
     }
 }

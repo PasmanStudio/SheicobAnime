@@ -109,25 +109,49 @@ public class AnimeNewsPublisherService(
 
     // ── Caption ──────────────────────────────────────────────────────────────
 
+    /// <summary>
+    /// Builds an Instagram caption using the full article body from RSS (stored in Summary).
+    /// Format mirrors accounts like pgn.pe / koryugi:
+    ///   @handle 👉 primer párrafo
+    ///   📌 párrafos siguientes (uno por bloque)
+    ///   hashtags
+    /// </summary>
     private string BuildCaption(AnimeNewsItem item)
     {
-        var lines = new List<string>
-        {
-            $"📰 {item.Title}",
-            string.Empty,
-        };
+        var lines = new List<string>();
 
         if (!string.IsNullOrWhiteSpace(item.Summary))
         {
-            lines.Add(item.Summary);
+            // StripHtml preserves paragraph structure with \n\n between blocks
+            var paragraphs = item.Summary
+                .Split(["\n\n", "\n"], StringSplitOptions.RemoveEmptyEntries)
+                .Select(p => p.Trim())
+                .Where(p => p.Length > 0)
+                .ToList();
+
+            if (paragraphs.Count > 0)
+            {
+                lines.Add($"@{igSettings.Handle} 👉 {paragraphs[0]}");
+                lines.Add(string.Empty);
+                for (var i = 1; i < paragraphs.Count; i++)
+                {
+                    lines.Add($"📌 {paragraphs[i]}");
+                    lines.Add(string.Empty);
+                }
+            }
+            else
+            {
+                lines.Add($"@{igSettings.Handle} 👉 {item.Title}");
+                lines.Add(string.Empty);
+            }
+        }
+        else
+        {
+            lines.Add($"@{igSettings.Handle} 👉 {item.Title}");
             lines.Add(string.Empty);
         }
 
-        lines.Add("🔗 Más info — link en bio");
-        lines.Add(string.Empty);
-        lines.Add("#anime #animenoticias #otaku #animelatino #animelatam #manga #sheicobanime");
-        lines.Add(string.Empty);
-        lines.Add($"@{igSettings.Handle}");
+        lines.Add("#animelatam #animenoticias #otaku #anime #animeespañol #manga #sheicobanime");
 
         return string.Join("\n", lines);
     }

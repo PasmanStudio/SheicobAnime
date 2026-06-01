@@ -162,20 +162,24 @@ public partial class AnimeNewsFeedService(
         var items = new List<RssItem>();
         foreach (var item in root.Descendants("item"))
         {
-            var title     = item.Element("title")?.Value?.Trim();
-            var link      = item.Element("link")?.Value?.Trim()
-                         ?? item.Elements().FirstOrDefault(e => e.Name.LocalName == "link")?.Attribute("href")?.Value;
-            var guid      = item.Element("guid")?.Value?.Trim() ?? link;
-            var desc      = item.Element("description")?.Value;
-            var pubDate   = item.Element("pubDate")?.Value;
-            var imageUrl  = ExtractImageFromItem(item);
+            var title    = item.Element("title")?.Value?.Trim();
+            var link     = item.Element("link")?.Value?.Trim()
+                        ?? item.Elements().FirstOrDefault(e => e.Name.LocalName == "link")?.Attribute("href")?.Value;
+            var guid     = item.Element("guid")?.Value?.Trim() ?? link;
+            var pubDate  = item.Element("pubDate")?.Value;
+            var imageUrl = ExtractImageFromItem(item);
 
             if (string.IsNullOrWhiteSpace(title) || string.IsNullOrWhiteSpace(link) || string.IsNullOrWhiteSpace(guid))
                 continue;
 
+            // Prefer content:encoded (full article body) over description (excerpt).
+            // SomosKudasai and most WordPress feeds include the full HTML in content:encoded.
+            var body = item.Element(Content + "encoded")?.Value
+                    ?? item.Element("description")?.Value;
+
             items.Add(new RssItem(
                 feed.Key, guid, title,
-                StripHtml(desc, 250), imageUrl, link, ParseDate(pubDate)));
+                StripHtml(body, 2000), imageUrl, link, ParseDate(pubDate)));
         }
         return items;
     }
@@ -190,8 +194,8 @@ public partial class AnimeNewsFeedService(
                                .FirstOrDefault(e => (string?)e.Attribute("rel") != "enclosure")
                                ?.Attribute("href")?.Value?.Trim();
             var guid     = entry.Element(Atom + "id")?.Value?.Trim() ?? link;
-            var summary  = entry.Element(Atom + "summary")?.Value
-                        ?? entry.Element(Atom + "content")?.Value;
+            var summary  = entry.Element(Atom + "content")?.Value
+                        ?? entry.Element(Atom + "summary")?.Value;
             var updated  = entry.Element(Atom + "updated")?.Value
                         ?? entry.Element(Atom + "published")?.Value;
             var imageUrl = ExtractImageFromItem(entry);
@@ -260,9 +264,19 @@ public partial class AnimeNewsFeedService(
     private static string? StripHtml(string? html, int maxLen)
     {
         if (string.IsNullOrWhiteSpace(html)) return null;
-        var text = HtmlTagRegex().Replace(html, " ");
+
+        // Replace block-level tags with newlines to preserve paragraph structure.
+        var text = BlockTagRegex().Replace(html, "\n");
+        // Strip remaining inline tags
+        text = HtmlTagRegex().Replace(text, string.Empty);
         text = System.Net.WebUtility.HtmlDecode(text);
-        text = WhitespaceRegex().Replace(text, " ").Trim();
+        // Collapse runs of whitespace within each line, trim blank lines
+        var lines = text.Split('\n')
+            .Select(l => WhitespaceRegex().Replace(l, " ").Trim())
+            .Where(l => l.Length > 0)
+            .ToList();
+        text = string.Join("\n\n", lines);
+
         return text.Length <= maxLen ? text : text[..maxLen].TrimEnd() + "…";
     }
 
@@ -272,6 +286,9 @@ public partial class AnimeNewsFeedService(
         if (DateTimeOffset.TryParse(raw, out var dto)) return dto.UtcDateTime;
         return DateTime.UtcNow;
     }
+
+    [GeneratedRegex(@"<(?:br|p|div|h[1-6]|li|tr|blockquote|section|article)[^>]*>", RegexOptions.IgnoreCase)]
+    private static partial Regex BlockTagRegex();
 
     [GeneratedRegex(@"<img[^>]+src=[""']([^""']+)[""']", RegexOptions.IgnoreCase)]
     private static partial Regex ImgSrcRegex();
