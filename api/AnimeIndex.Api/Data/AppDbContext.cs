@@ -16,6 +16,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<InstagramPost> InstagramPosts => Set<InstagramPost>();
     public DbSet<DiscordPost> DiscordPosts => Set<DiscordPost>();
     public DbSet<TelegramPost> TelegramPosts => Set<TelegramPost>();
+    public DbSet<AnimeNewsItem> AnimeNewsItems => Set<AnimeNewsItem>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -235,6 +236,29 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
                 .WithMany()
                 .HasForeignKey(p => p.EpisodeId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ─── AnimeNewsItem ────────────────────────────────
+        modelBuilder.Entity<AnimeNewsItem>(e =>
+        {
+            e.ToTable("anime_news_items");
+            e.HasKey(n => n.Id);
+            e.Property(n => n.Id).HasDefaultValueSql("gen_random_uuid()");
+            e.Property(n => n.SourceKey).IsRequired();
+            e.Property(n => n.RssGuid).IsRequired();
+            e.Property(n => n.Title).IsRequired();
+            e.Property(n => n.ArticleUrl).IsRequired();
+            e.Property(n => n.IgPostStatus).IsRequired().HasDefaultValue("pending");
+            e.Property(n => n.FetchedAt).HasDefaultValueSql("now()");
+
+            e.ToTable(t => t.HasCheckConstraint("CK_anime_news_items_status",
+                "ig_post_status IN ('pending','published','skipped','failed')"));
+
+            e.HasIndex(n => new { n.SourceKey, n.RssGuid })
+                .IsUnique()
+                .HasDatabaseName("uq_anime_news_source_guid");
+            e.HasIndex(n => n.IgPostStatus).HasDatabaseName("idx_anime_news_ig_status");
+            e.HasIndex(n => n.PublishedAt).HasDatabaseName("idx_anime_news_published_at");
         });
 
         // Snake case naming convention for all columns
