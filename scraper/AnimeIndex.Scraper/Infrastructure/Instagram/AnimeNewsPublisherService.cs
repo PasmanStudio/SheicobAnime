@@ -109,19 +109,24 @@ public class AnimeNewsPublisherService(
 
     // ── Caption ──────────────────────────────────────────────────────────────
 
+    // Instagram caption limit is 2200 characters.
+    private const int IgCaptionMaxChars = 2200;
+    private const string Hashtags = "#animelatam #animenoticias #otaku #anime #animeespañol #manga #sheicobanime";
+
     /// <summary>
-    /// Builds the Instagram caption: title first, then full article body paragraphs,
-    /// then hashtags. Clean format — no repeated intro, no @handle prefix.
+    /// Builds the Instagram caption: title first, then article body paragraphs,
+    /// then hashtags. Truncates body paragraphs so the total stays under 2200 chars.
     /// </summary>
     private static string BuildCaption(AnimeNewsItem item)
     {
-        var lines = new List<string>
-        {
-            item.Title,
-            string.Empty,
-        };
+        // Fixed parts (title + blank + hashtags) — these are always included.
+        var header = item.Title + "\n\n";
+        var footer = "\n" + Hashtags;
+        var budget = IgCaptionMaxChars - header.Length - footer.Length;
 
-        if (!string.IsNullOrWhiteSpace(item.Summary))
+        var bodyBuilder = new System.Text.StringBuilder();
+
+        if (!string.IsNullOrWhiteSpace(item.Summary) && budget > 0)
         {
             var paragraphs = item.Summary
                 .Split(["\n\n", "\n"], StringSplitOptions.RemoveEmptyEntries)
@@ -130,14 +135,20 @@ public class AnimeNewsPublisherService(
 
             foreach (var p in paragraphs)
             {
-                lines.Add(p);
-                lines.Add(string.Empty);
+                var chunk = p + "\n\n";
+                if (bodyBuilder.Length + chunk.Length > budget)
+                {
+                    // Fit as many chars as possible with "…"
+                    var remaining = budget - bodyBuilder.Length - 1;
+                    if (remaining > 20)
+                        bodyBuilder.Append(p[..remaining].TrimEnd() + "…");
+                    break;
+                }
+                bodyBuilder.Append(chunk);
             }
         }
 
-        lines.Add("#animelatam #animenoticias #otaku #anime #animeespañol #manga #sheicobanime");
-
-        return string.Join("\n", lines);
+        return header + bodyBuilder.ToString().TrimEnd() + footer;
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
