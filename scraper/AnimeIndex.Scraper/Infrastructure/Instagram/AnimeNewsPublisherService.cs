@@ -15,7 +15,6 @@ namespace AnimeIndex.Scraper.Infrastructure.Instagram;
 public class AnimeNewsPublisherService(
     AppDbContext db,
     InstagramSettings igSettings,
-    AnimeNewsSettings newsSettings,
     MetaGraphApiClient api,
     AnimeNewsImageService imageService,
     ILogger<AnimeNewsPublisherService> logger)
@@ -32,34 +31,25 @@ public class AnimeNewsPublisherService(
 
         logger.LogInformation("AnimeNews: publishing {Count} news item(s) to Instagram", items.Count);
 
-        // Build source-key → displayName lookup
-        var displayNames = newsSettings.Feeds
-            .ToDictionary(f => f.Key, f => f.DisplayName, StringComparer.OrdinalIgnoreCase);
-
         foreach (var item in items)
         {
             if (ct.IsCancellationRequested) break;
-            await PublishItemAsync(item, displayNames, ct);
+            await PublishItemAsync(item, ct);
         }
     }
 
-    private async Task PublishItemAsync(
-        AnimeNewsItem item,
-        Dictionary<string, string> displayNames,
-        CancellationToken ct)
+    private async Task PublishItemAsync(AnimeNewsItem item, CancellationToken ct)
     {
-        var sourceDisplay = displayNames.GetValueOrDefault(item.SourceKey, item.SourceKey.ToUpperInvariant());
-
         try
         {
             // ── Feed post ─────────────────────────────────────────────────
             string? feedMediaId = null;
             try
             {
-                var feedBytes  = await imageService.GenerateFeedAsync(item, sourceDisplay, ct);
-                var feedFile   = $"news-{item.SourceKey}-{item.Id.ToString("N")[..8]}-feed.jpg";
-                var feedUrl    = await api.UploadImageToImgBbAsync(feedBytes, feedFile, ct);
-                var caption    = BuildCaption(item, sourceDisplay);
+                var feedBytes   = await imageService.GenerateFeedAsync(item, ct);
+                var feedFile    = $"news-{item.SourceKey}-{item.Id.ToString("N")[..8]}-feed.jpg";
+                var feedUrl     = await api.UploadImageToImgBbAsync(feedBytes, feedFile, ct);
+                var caption     = BuildCaption(item);
                 var containerId = await api.CreateSingleImageContainerAsync(feedUrl, caption, ct);
                 await api.WaitForContainerReadyAsync(containerId, ct);
                 feedMediaId = await api.PublishContainerAsync(containerId, ct);
@@ -81,8 +71,8 @@ public class AnimeNewsPublisherService(
             string? storyMediaId = null;
             try
             {
-                var storyBytes  = await imageService.GenerateStoryAsync(item, sourceDisplay, ct);
-                var storyFile   = $"news-{item.SourceKey}-{item.Id.ToString("N")[..8]}-story.jpg";
+                var storyBytes = await imageService.GenerateStoryAsync(item, ct);
+                var storyFile  = $"news-{item.SourceKey}-{item.Id.ToString("N")[..8]}-story.jpg";
                 var storyUrl    = await api.UploadImageToImgBbAsync(storyBytes, storyFile, ct);
                 var storyContainerId = await api.CreateStoryContainerAsync(storyUrl, item.ArticleUrl, ct);
                 await api.WaitForContainerReadyAsync(storyContainerId, ct);
@@ -119,7 +109,7 @@ public class AnimeNewsPublisherService(
 
     // ── Caption ──────────────────────────────────────────────────────────────
 
-    private string BuildCaption(AnimeNewsItem item, string sourceDisplay)
+    private string BuildCaption(AnimeNewsItem item)
     {
         var lines = new List<string>
         {
@@ -133,9 +123,9 @@ public class AnimeNewsPublisherService(
             lines.Add(string.Empty);
         }
 
-        lines.Add($"🔗 Link en bio  |  Fuente: {sourceDisplay}");
+        lines.Add("🔗 Más info — link en bio");
         lines.Add(string.Empty);
-        lines.Add("#anime #animenoticias #otaku #animelatino #animeespañol #manga #sheicobanime");
+        lines.Add("#anime #animenoticias #otaku #animelatino #animelatam #manga #sheicobanime");
         lines.Add(string.Empty);
         lines.Add($"@{igSettings.Handle}");
 
