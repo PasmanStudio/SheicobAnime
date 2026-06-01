@@ -75,17 +75,24 @@ public partial class AnimeNewsFeedService(
             return [];
         }
 
-        // Resolve images for items that don't have one yet (try og:image from article page)
-        foreach (var item in toInsert.Where(i => string.IsNullOrEmpty(i.ImageUrl)))
+        // For each new item: fetch the article page once to get:
+        //   a) og:image (if not already in RSS)
+        //   b) Full article body text (RSS only has a ~200-char excerpt)
+        // SomosKudasai publishes ~7 articles/day so this is 7 extra HTTP requests/day — acceptable.
+        foreach (var item in toInsert)
         {
             if (ct.IsCancellationRequested) break;
             try
             {
-                item.ImageUrl = await TryResolveOgImageAsync(http, item.ArticleUrl, ct);
+                var (ogImage, fullBody) = await TryResolveArticleAsync(http, item.ArticleUrl, ct);
+                if (string.IsNullOrWhiteSpace(item.ImageUrl) && !string.IsNullOrWhiteSpace(ogImage))
+                    item.ImageUrl = ogImage;
+                if (!string.IsNullOrWhiteSpace(fullBody))
+                    item.Summary = fullBody; // replace RSS excerpt with full article text
             }
             catch (Exception ex) when (ex is not TaskCanceledException { CancellationToken.IsCancellationRequested: true })
             {
-                logger.LogDebug(ex, "AnimeNews: could not resolve og:image for {Url}", item.ArticleUrl);
+                logger.LogDebug(ex, "AnimeNews: could not fetch article page for {Url}", item.ArticleUrl);
             }
         }
 
@@ -140,6 +147,8 @@ public partial class AnimeNewsFeedService(
         resp.EnsureSuccessStatusCode();
         var xml = await resp.Content.ReadAsStringAsync(ct);
 
+        // Some feeds have a BOM or whitespace before the XML declaration — trim it.
+        xml = xml.TrimStart('﻿', '​', '\r', '\n', ' ');
         XDocument doc;
         try { doc = XDocument.Parse(xml); }
         catch (Exception ex)
@@ -247,16 +256,41 @@ public partial class AnimeNewsFeedService(
         return null;
     }
 
-    /// <summary>Fetches article URL and extracts og:image meta tag value.</summary>
-    private static async Task<string?> TryResolveOgImageAsync(
+    /// <summary>
+    /// Fetches the article page and extracts:
+    ///   - og:image URL (for items that had no image in RSS)
+    ///   - Full article body text from &lt;p&gt; tags (up to 2000 chars)
+    /// Returns (null, null) on failure.
+    /// </summary>
+    private static async Task<(string? imageUrl, string? body)> TryResolveArticleAsync(
         HttpClient http, string articleUrl, CancellationToken ct)
     {
         using var resp = await http.GetAsync(articleUrl, ct);
-        if (!resp.IsSuccessStatusCode) return null;
+        if (!resp.IsSuccessStatusCode) return (null, null);
 
         var html = await resp.Content.ReadAsStringAsync(ct);
-        var m = OgImageRegex().Match(html);
-        return m.Success ? m.Groups[1].Value : null;
+
+        // og:image
+        var imageMatch = OgImageRegex().Match(html);
+        var imageUrl   = imageMatch.Success ? imageMatch.Groups[1].Value : null;
+
+        // Article body: collect all <p> paragraph contents, filter ads/code/short items
+        var paragraphs = ParagraphRegex()
+            .Matches(html)
+            .Select(m => StripHtml(m.Groups[1].Value, 600))
+            .Where(p => p is { Length: > 60 }
+                     && !p.Contains("var ")          // inline JS
+                     && !p.Contains("function(")
+                     && !p.Contains("Math.")
+                     && !p.TrimStart().StartsWith("/*"))  // JS block comment
+            .Take(6)
+            .ToList();
+
+        var body = paragraphs.Count > 0
+            ? string.Join("\n\n", paragraphs)
+            : null;
+
+        return (imageUrl, body);
     }
 
     // ── Text helpers ─────────────────────────────────────────────────────────
@@ -296,6 +330,10 @@ public partial class AnimeNewsFeedService(
     [GeneratedRegex(@"<meta[^>]+property=[""']og:image[""'][^>]+content=[""']([^""']+)[""']|<meta[^>]+content=[""']([^""']+)[""'][^>]+property=[""']og:image[""']", RegexOptions.IgnoreCase)]
     private static partial Regex OgImageRegex();
 
+    // Captures content inside <p>...</p> blocks (for article body extraction)
+    [GeneratedRegex(@"<p[^>]*>(.*?)</p>", RegexOptions.IgnoreCase | RegexOptions.Singleline)]
+    private static partial Regex ParagraphRegex();
+
     [GeneratedRegex(@"<[^>]+>")]
     private static partial Regex HtmlTagRegex();
 
@@ -311,7 +349,7 @@ public partial class AnimeNewsFeedService(
         public string SourceKey   { get; } = sourceKey;
         public string RssGuid     { get; } = rssGuid;
         public string Title       { get; } = title;
-        public string? Summary    { get; } = summary;
+        public string? Summary    { get; set; } = summary;  // settable: overwritten by full article body
         public string? ImageUrl   { get; set; } = imageUrl;  // settable for og:image fallback
         public string ArticleUrl  { get; } = articleUrl;
         public DateTime PublishedAt { get; } = publishedAt;
