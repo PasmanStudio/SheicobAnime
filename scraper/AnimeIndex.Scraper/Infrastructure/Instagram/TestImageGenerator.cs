@@ -47,7 +47,8 @@ public static class TestImageGenerator
         (
             "kudasai-cloverworks",
             "CloverWorks prepara grandes anuncios para el Anime Expo 2026 el próximo 4 de julio",
-            "Se esperan nuevos tráilers y visuales oficiales para The Fragrant Flower Blooms With Dignity T2, My Dress-Up Darling T3, Bocchi the Rock! T2 y Rascal Does Not Dream of a Dear Friend.",
+            // Multi-párrafo para simular content:encoded real de SomosKudasai
+            "CloverWorks confirmó que presentará grandes novedades en el Anime Expo 2026 el próximo 4 de julio.\n\nSe esperan nuevos tráilers y visuales oficiales para The Fragrant Flower Blooms With Dignity T2, My Dress-Up Darling T3, Bocchi the Rock! T2 y Rascal Does Not Dream of a Dear Friend.\n\nAún no hay confirmación oficial sobre qué animes estarán presentes en el panel del estudio de animación.",
             // Imagen real de SomosKudasai CDN
             "https://cdn.somoskudasai.com/width=1280,height=720,quality=75,format=auto,fit=cover/2026/05/yakineko.jpg"
         ),
@@ -125,6 +126,16 @@ public static class TestImageGenerator
             var storyPath = Path.Combine(outDir, $"news-{slug}-story.jpg");
             await File.WriteAllBytesAsync(storyPath, storyBytes);
             Console.WriteLine($"  [story] {title[..Math.Min(title.Length, 60)]}  →  {storyBytes.Length / 1024} KB  ({sw.ElapsedMilliseconds} ms)");
+
+            // Show the caption that would be posted (first sample only)
+            if (slug == "kudasai-cloverworks" && !string.IsNullOrWhiteSpace(summary))
+            {
+                Console.WriteLine("\n  ── Caption preview ──────────────────────────");
+                var caption = BuildSampleCaption(newsItem);
+                foreach (var line in caption.Split('\n'))
+                    Console.WriteLine($"  {line}");
+                Console.WriteLine("  ─────────────────────────────────────────────\n");
+            }
         }
 
         total.Stop();
@@ -159,6 +170,26 @@ public static class TestImageGenerator
         IsPublished   = true,
         CreatedAt     = DateTime.UtcNow
     };
+
+    private static string BuildSampleCaption(AnimeIndex.Api.Data.Entities.AnimeNewsItem item)
+    {
+        var lines = new List<string>();
+        if (!string.IsNullOrWhiteSpace(item.Summary))
+        {
+            var paragraphs = item.Summary
+                .Split(["\n\n", "\n"], StringSplitOptions.RemoveEmptyEntries)
+                .Select(p => p.Trim()).Where(p => p.Length > 0).ToList();
+            if (paragraphs.Count > 0)
+            {
+                lines.Add($"@sheicobanime 👉 {paragraphs[0]}");
+                lines.Add(string.Empty);
+                for (var i = 1; i < paragraphs.Count; i++) { lines.Add($"📌 {paragraphs[i]}"); lines.Add(string.Empty); }
+            }
+        }
+        else { lines.Add($"@sheicobanime 👉 {item.Title}"); lines.Add(string.Empty); }
+        lines.Add("#animelatam #animenoticias #otaku #anime #animeespañol #manga #sheicobanime");
+        return string.Join("\n", lines);
+    }
 
     private static AnimeIndex.Api.Data.Entities.AnimeNewsItem MakeNewsItem(
         string title, string? summary, string? imageUrl) => new()
