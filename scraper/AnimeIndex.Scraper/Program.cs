@@ -33,9 +33,13 @@ if (args.Contains("--news"))
             .WriteTo.Console(new JsonFormatter()));
 
         // DB
-        var newsConnStr = newsBuilder.Configuration.GetConnectionString("DefaultConnection")
-                       ?? newsBuilder.Configuration["DATABASE_URL"]
-                       ?? throw new InvalidOperationException("Missing DATABASE_URL");
+        // appsettings.json has DefaultConnection="" (empty string, not null) — must use IsNullOrEmpty.
+        // The ?? operator doesn't help here: "" ?? fallback returns "", skipping the fallback.
+        var newsConnStr = newsBuilder.Configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(newsConnStr))
+            newsConnStr = newsBuilder.Configuration["DATABASE_URL"];
+        if (string.IsNullOrEmpty(newsConnStr))
+            throw new InvalidOperationException("Missing DATABASE_URL / ConnectionStrings:DefaultConnection");
         newsConnStr = NormalizePostgresConnectionString(newsConnStr);
         newsBuilder.Services.AddDbContext<AppDbContext>(opts =>
             opts.UseNpgsql(newsConnStr, o => o.EnableRetryOnFailure(3)));
