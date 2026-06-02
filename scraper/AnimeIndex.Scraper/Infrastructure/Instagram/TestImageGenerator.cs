@@ -104,8 +104,8 @@ public static class TestImageGenerator
             Console.WriteLine($"  [story] {title} ep{ep}  →  {storyBytes.Length / 1024} KB  ({sw.ElapsedMilliseconds} ms)");
         }
 
-        // ── News images ───────────────────────────────────────────────────────
-        Console.WriteLine($"\n═══ NEWS IMAGES ({NewsSamples.Length * 2} files) ═══");
+        // ── News carousels ──────────────────────────────────────────────────────
+        Console.WriteLine($"\n═══ NEWS CAROUSELS ({NewsSamples.Length} items) ═══");
         var newsLogger  = loggerFactory.CreateLogger<AnimeNewsImageService>();
         var newsService = new AnimeNewsImageService(httpFactory, newsLogger);
 
@@ -114,25 +114,26 @@ public static class TestImageGenerator
             var newsItem = MakeNewsItem(title, summary, imageUrl);
 
             var sw = Stopwatch.StartNew();
-            var feedBytes = await newsService.GenerateFeedAsync(newsItem);
+            var slides = await newsService.GenerateCarouselSlidesAsync(newsItem);
             sw.Stop();
-            var feedPath = Path.Combine(outDir, $"news-{slug}-feed.jpg");
-            await File.WriteAllBytesAsync(feedPath, feedBytes);
-            Console.WriteLine($"  [feed ] {title[..Math.Min(title.Length, 60)]}  →  {feedBytes.Length / 1024} KB  ({sw.ElapsedMilliseconds} ms)");
+            for (var i = 0; i < slides.Count; i++)
+                await File.WriteAllBytesAsync(
+                    Path.Combine(outDir, $"news-{slug}-slide{i + 1}.jpg"), slides[i]);
+            Console.WriteLine(
+                $"  [carousel {slides.Count} slides] {title[..Math.Min(title.Length, 55)]}  →  " +
+                $"{slides.Sum(s => s.Length) / 1024} KB  ({sw.ElapsedMilliseconds} ms)");
 
             sw.Restart();
             var storyBytes = await newsService.GenerateStoryAsync(newsItem);
             sw.Stop();
-            var storyPath = Path.Combine(outDir, $"news-{slug}-story.jpg");
-            await File.WriteAllBytesAsync(storyPath, storyBytes);
-            Console.WriteLine($"  [story] {title[..Math.Min(title.Length, 60)]}  →  {storyBytes.Length / 1024} KB  ({sw.ElapsedMilliseconds} ms)");
+            await File.WriteAllBytesAsync(Path.Combine(outDir, $"news-{slug}-story.jpg"), storyBytes);
+            Console.WriteLine($"  [story] {storyBytes.Length / 1024} KB  ({sw.ElapsedMilliseconds} ms)");
 
             // Show the caption that would be posted (first sample only)
             if (slug == "kudasai-cloverworks" && !string.IsNullOrWhiteSpace(summary))
             {
                 Console.WriteLine("\n  ── Caption preview ──────────────────────────");
-                var caption = BuildSampleCaption(newsItem);
-                foreach (var line in caption.Split('\n'))
+                foreach (var line in BuildSampleCaption(newsItem).Split('\n'))
                     Console.WriteLine($"  {line}");
                 Console.WriteLine("  ─────────────────────────────────────────────\n");
             }
@@ -149,19 +150,18 @@ public static class TestImageGenerator
             if (liveItem is not null)
             {
                 var sw = Stopwatch.StartNew();
-                var feedBytes = await newsService.GenerateFeedAsync(liveItem);
+                var slides = await newsService.GenerateCarouselSlidesAsync(liveItem);
                 sw.Stop();
-                var feedPath = Path.Combine(outDir, "real-feed.jpg");
-                await File.WriteAllBytesAsync(feedPath, feedBytes);
-                Console.WriteLine($"  [feed ] {liveItem.Title[..Math.Min(liveItem.Title.Length, 70)]}");
+                for (var i = 0; i < slides.Count; i++)
+                    await File.WriteAllBytesAsync(Path.Combine(outDir, $"real-slide{i + 1}.jpg"), slides[i]);
+                Console.WriteLine($"  [carousel {slides.Count} slides] {liveItem.Title[..Math.Min(liveItem.Title.Length, 70)]}");
                 Console.WriteLine($"  Image: {liveItem.ImageUrl?[..Math.Min(liveItem.ImageUrl?.Length ?? 0, 60)]}");
-                Console.WriteLine($"  Size: {feedBytes.Length / 1024} KB  ({sw.ElapsedMilliseconds} ms)");
+                Console.WriteLine($"  Size: {slides.Sum(s => s.Length) / 1024} KB  ({sw.ElapsedMilliseconds} ms)");
 
                 sw.Restart();
                 var storyBytes = await newsService.GenerateStoryAsync(liveItem);
                 sw.Stop();
-                var storyPath = Path.Combine(outDir, "real-story.jpg");
-                await File.WriteAllBytesAsync(storyPath, storyBytes);
+                await File.WriteAllBytesAsync(Path.Combine(outDir, "real-story.jpg"), storyBytes);
                 Console.WriteLine($"  [story] {storyBytes.Length / 1024} KB  ({sw.ElapsedMilliseconds} ms)");
 
                 Console.WriteLine("\n  ── Caption ─────────────────────────────────────");
@@ -288,18 +288,29 @@ public static class TestImageGenerator
         CreatedAt     = DateTime.UtcNow
     };
 
+    // Mirrors AnimeNewsPublisherService.BuildCaption — body in the caption with alternating emojis.
+    private static readonly string[] SampleBodyEmojis = ["📌", "🎬", "✨", "🔥", "💬", "🎌"];
+
     private static string BuildSampleCaption(AnimeIndex.Api.Data.Entities.AnimeNewsItem item)
     {
-        var lines = new List<string> { item.Title, string.Empty };
+        var sb = new System.Text.StringBuilder();
+        sb.Append("📰 ").Append(item.Title).Append("\n\n");
+
         if (!string.IsNullOrWhiteSpace(item.Summary))
         {
+            var idx = 0;
             foreach (var p in item.Summary
                 .Split(["\n\n", "\n"], StringSplitOptions.RemoveEmptyEntries)
                 .Select(p => p.Trim()).Where(p => p.Length > 0))
-            { lines.Add(p); lines.Add(string.Empty); }
+            {
+                sb.Append(SampleBodyEmojis[idx % SampleBodyEmojis.Length]).Append(' ').Append(p).Append("\n\n");
+                idx++;
+            }
         }
-        lines.Add("#animelatam #animenoticias #otaku #anime #animeespañol #manga #sheicobanime");
-        return string.Join("\n", lines);
+
+        sb.Append("👉 Seguí leyendo · Link en bio\n\n");
+        sb.Append("#animelatam #animenoticias #otaku #anime #animeespañol #manga #sheicobanime");
+        return sb.ToString();
     }
 
     private static AnimeIndex.Api.Data.Entities.AnimeNewsItem MakeNewsItem(

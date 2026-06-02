@@ -12,15 +12,27 @@ public class AnimeNewsSettings
     public int MaxAgeHours { get; set; } = 48;
 
     /// <summary>
+    /// Maximum key-point (headline) slides AFTER the cover in a news carousel.
+    /// Total slides = 1 (cover) + up to MaxContentSlides. Poster style favours few, punchy
+    /// slides — 2 means a 3-slide carousel. Instagram allows 10 max.
+    /// </summary>
+    public int MaxContentSlides { get; set; } = 2;
+
+    /// <summary>
     /// RSS feeds to poll. All feeds must publish in Spanish — no English sources.
     /// Add new feeds via env vars (AnimeNews__Feeds__N__Key etc.) without redeploying.
-    /// Every feed must include images in its RSS items; items without images are skipped.
+    /// Feeds without images in their RSS still work: AnimeNewsFeedService resolves
+    /// og:image + body from the article page. Items with no resolvable image are skipped.
     /// </summary>
     public List<NewsFeedConfig> Feeds { get; set; } =
     [
         // SomosKudasai — principal sitio de noticias anime en español (LATAM)
         // WordPress → RSS con media:content images 1280×720
         new() { Key = "kudasai", Url = "https://somoskudasai.com/feed/" },
+
+        // Anmosugoi — sitio mexicano de anime/manga (LATAM), español.
+        // RSS sin imágenes → la portada se resuelve vía og:image de la página del artículo.
+        new() { Key = "anmosugoi", Url = "https://anmosugoi.com/feed/" },
     ];
 
     public bool IsEnabled => Feeds.Count > 0;

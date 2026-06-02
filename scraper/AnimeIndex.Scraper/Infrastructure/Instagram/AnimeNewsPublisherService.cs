@@ -15,6 +15,7 @@ namespace AnimeIndex.Scraper.Infrastructure.Instagram;
 public class AnimeNewsPublisherService(
     AppDbContext db,
     InstagramSettings igSettings,
+    AnimeNewsSettings newsSettings,
     MetaGraphApiClient api,
     AnimeNewsImageService imageService,
     ILogger<AnimeNewsPublisherService> logger)
@@ -42,29 +43,47 @@ public class AnimeNewsPublisherService(
     {
         try
         {
-            // ── Feed post ─────────────────────────────────────────────────
+            // ── Feed (carousel: cover + content slides; single image if no body) ──
             string? feedMediaId = null;
             try
             {
-                var feedBytes   = await imageService.GenerateFeedAsync(item, ct);
-                var feedFile    = $"news-{item.SourceKey}-{item.Id.ToString("N")[..8]}-feed.jpg";
-                var feedUrl     = await api.UploadImageToImgBbAsync(feedBytes, feedFile, ct);
-                var caption     = BuildCaption(item);
-                var containerId = await api.CreateSingleImageContainerAsync(feedUrl, caption, ct);
-                await api.WaitForContainerReadyAsync(containerId, ct);
-                feedMediaId = await api.PublishContainerAsync(containerId, ct);
+                var slides  = await imageService.GenerateCarouselSlidesAsync(
+                    item, newsSettings.MaxContentSlides, ct);
+                var caption = BuildCaption(item);
+
+                if (slides.Count == 1)
+                {
+                    // No body text → single-image post (carousels require ≥ 2 items)
+                    var url         = await api.UploadImageToImgBbAsync(slides[0], SlideFileName(item, 0), ct);
+                    var containerId = await api.CreateSingleImageContainerAsync(url, caption, ct);
+                    await api.WaitForContainerReadyAsync(containerId, ct);
+                    feedMediaId = await api.PublishContainerAsync(containerId, ct);
+                }
+                else
+                {
+                    // Upload each slide, create a child container, wait for FINISHED, then carousel
+                    var childIds = new List<string>(slides.Count);
+                    for (var i = 0; i < slides.Count; i++)
+                    {
+                        var url    = await api.UploadImageToImgBbAsync(slides[i], SlideFileName(item, i), ct);
+                        var itemId = await api.CreateCarouselItemContainerAsync(url, ct);
+                        await api.WaitForContainerReadyAsync(itemId, ct);
+                        childIds.Add(itemId);
+                    }
+                    var carouselId = await api.CreateCarouselContainerAsync(childIds, caption, ct);
+                    await api.WaitForContainerReadyAsync(carouselId, ct);
+                    feedMediaId = await api.PublishContainerAsync(carouselId, ct);
+                }
 
                 logger.LogInformation(
-                    "AnimeNews: published feed post for [{Source}] {Title} → {MediaId}",
+                    "AnimeNews: published {Kind} for [{Source}] {Title} → {MediaId}",
+                    slides.Count == 1 ? "post" : $"carousel ({slides.Count} slides)",
                     item.SourceKey, Truncate(item.Title, 60), feedMediaId);
-
-                // First comment with article link
-                await TryPostCommentAsync(feedMediaId, $"🔗 Leer más: {item.ArticleUrl}", ct);
             }
             catch (Exception ex) when (ex is not TaskCanceledException { CancellationToken.IsCancellationRequested: true })
             {
                 logger.LogWarning(ex,
-                    "AnimeNews: failed to publish feed post for {Title}", Truncate(item.Title, 60));
+                    "AnimeNews: failed to publish feed for {Title}", Truncate(item.Title, 60));
             }
 
             // ── Story ─────────────────────────────────────────────────────
@@ -113,67 +132,80 @@ public class AnimeNewsPublisherService(
     private const int IgCaptionMaxChars = 2200;
     private const string Hashtags = "#animelatam #animenoticias #otaku #anime #animeespañol #manga #sheicobanime";
 
+    // Alternating leading emojis for body paragraphs — easy-to-scan, editorial style.
+    private static readonly string[] BodyEmojis = ["📌", "🎬", "✨", "🔥", "💬", "🎌"];
+
     /// <summary>
-    /// Builds the Instagram caption: title first, then article body paragraphs,
-    /// then hashtags. Truncates body paragraphs so the total stays under 2200 chars.
+    /// Builds the Instagram caption. The slides are punchy posters, so the caption carries
+    /// the actual story: title + body paragraphs (with alternating emojis) + CTA + hashtags
+    /// + handle. The body is fitted to the 2200-char limit at a sentence boundary, so it is
+    /// never cut mid-word (Instagram itself adds the "… más" expander when displaying).
     /// </summary>
-    private static string BuildCaption(AnimeNewsItem item)
+    private string BuildCaption(AnimeNewsItem item)
     {
-        // Fixed parts (title + blank + hashtags) — these are always included.
-        var header = item.Title + "\n\n";
-        var footer = "\n" + Hashtags;
-        var budget = IgCaptionMaxChars - header.Length - footer.Length;
+        var header = "📰 " + item.Title + "\n\n";
 
-        var bodyBuilder = new System.Text.StringBuilder();
+        var footer = new System.Text.StringBuilder();
+        footer.Append("\n👉 Seguí leyendo · Link en bio\n\n").Append(Hashtags);
+        if (!string.IsNullOrWhiteSpace(igSettings.Handle))
+            footer.Append("\n\n@").Append(igSettings.Handle);
+        var footerStr = footer.ToString();
 
-        if (!string.IsNullOrWhiteSpace(item.Summary) && budget > 0)
+        var budget = IgCaptionMaxChars - header.Length - footerStr.Length;
+        return header + BuildBody(item.Summary, budget) + footerStr;
+    }
+
+    /// <summary>
+    /// Renders body paragraphs with alternating leading emojis, fitting within
+    /// <paramref name="budget"/> characters. If the body overflows, the last paragraph is
+    /// cut at a sentence boundary (then a word boundary) — never mid-word.
+    /// </summary>
+    private static string BuildBody(string? summary, int budget)
+    {
+        if (string.IsNullOrWhiteSpace(summary) || budget <= 0) return string.Empty;
+
+        var paragraphs = summary
+            .Split(["\n\n", "\n"], StringSplitOptions.RemoveEmptyEntries)
+            .Select(p => p.Trim())
+            .Where(p => p.Length > 0)
+            .ToList();
+
+        var sb  = new System.Text.StringBuilder();
+        var idx = 0;
+        foreach (var p in paragraphs)
         {
-            var paragraphs = item.Summary
-                .Split(["\n\n", "\n"], StringSplitOptions.RemoveEmptyEntries)
-                .Select(p => p.Trim())
-                .Where(p => p.Length > 0);
+            var prefix = BodyEmojis[idx % BodyEmojis.Length] + " ";
+            var chunk  = prefix + p + "\n\n";
 
-            foreach (var p in paragraphs)
+            if (sb.Length + chunk.Length > budget)
             {
-                var chunk = p + "\n\n";
-                if (bodyBuilder.Length + chunk.Length > budget)
+                var remaining = budget - sb.Length - prefix.Length - 1;
+                if (remaining > 40)
                 {
-                    // Fit as many chars as possible — prefer sentence boundary, then word boundary
-                    var remaining = budget - bodyBuilder.Length - 1;
-                    if (remaining > 20)
+                    var slice = p[..Math.Min(remaining, p.Length)].TrimEnd();
+                    var sentenceEnd = slice.LastIndexOfAny(['.', '!', '?']);
+                    if (sentenceEnd > 30)
+                        sb.Append(prefix).Append(slice[..(sentenceEnd + 1)]);
+                    else
                     {
-                        var slice = p[..Math.Min(remaining, p.Length)].TrimEnd();
-                        var sentenceEnd = slice.LastIndexOfAny(['.', '!', '?']);
-                        if (sentenceEnd > 10)
-                            bodyBuilder.Append(slice[..(sentenceEnd + 1)]);
-                        else
-                        {
-                            var lastSpace = slice.LastIndexOf(' ');
-                            bodyBuilder.Append((lastSpace > 0 ? slice[..lastSpace] : slice) + "…");
-                        }
+                        var lastSpace = slice.LastIndexOf(' ');
+                        sb.Append(prefix).Append(lastSpace > 0 ? slice[..lastSpace] : slice).Append('…');
                     }
-                    break;
                 }
-                bodyBuilder.Append(chunk);
+                break;
             }
+
+            sb.Append(chunk);
+            idx++;
         }
 
-        return header + bodyBuilder.ToString().TrimEnd() + footer;
+        return sb.ToString().TrimEnd();
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    private async Task TryPostCommentAsync(string mediaId, string comment, CancellationToken ct)
-    {
-        try
-        {
-            await api.PostCommentAsync(mediaId, comment, ct);
-        }
-        catch (Exception ex)
-        {
-            logger.LogDebug(ex, "AnimeNews: could not post comment on {MediaId}", mediaId);
-        }
-    }
+    private static string SlideFileName(AnimeNewsItem item, int index) =>
+        $"news-{item.SourceKey}-{item.Id.ToString("N")[..8]}-{index}.jpg";
 
     private static string Truncate(string s, int max) =>
         s.Length <= max ? s : s[..max] + "…";

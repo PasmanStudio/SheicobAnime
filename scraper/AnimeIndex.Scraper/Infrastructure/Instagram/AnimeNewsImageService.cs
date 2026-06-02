@@ -5,85 +5,179 @@ using SkiaSharp;
 namespace AnimeIndex.Scraper.Infrastructure.Instagram;
 
 /// <summary>
-/// Generates news-format Story (1080×1920) and Feed (1080×1080) images using SkiaSharp.
+/// Generates "poster"-style news images with SkiaSharp, inspired by editorial anime-news
+/// accounts (koryugi, animeshowcast): each slide is a striking image + a big condensed
+/// headline + minimal supporting text. The full article body goes in the caption, NOT on
+/// the slides.
 ///
-/// Layout (story):
-///   • Article photo fills top 60% (cover-fill crop, dark gradient over it)
-///   • "📰 NOTICIAS" badge at ~62%
-///   • Article title (bold white, 2-3 lines, word-wrap)
-///   • Summary snippet (small, light gray, 2 lines max)
-///   • Source attribution + SheicobAnime logo
+///   • Cover (slide 1)   : article photo full-bleed + dark scrim + "NOTICIAS" kicker
+///                         + big Anton title (uppercase) + one-line lede + "Desliza →".
+///   • Key-point slides  : brand background + one big Anton headline (the first sentence
+///                         of a body paragraph) — a single punchy idea per slide.
+///   • Story (9:16)      : the cover layout in portrait (with a link sticker added later).
 ///
-/// For feed (square): same layout but image fills top 45%, text region taller.
+/// Headlines use the bundled Anton font (Resources/Anton-Regular.ttf), falling back to a
+/// bold system sans if the font resource is missing.
 /// </summary>
 public class AnimeNewsImageService(
     IHttpClientFactory httpFactory,
     ILogger<AnimeNewsImageService> logger)
 {
-    // Brand palette — matches existing episode image style
-    private static readonly SKColor BgTop      = new(0x18, 0x00, 0x38);   // deep purple
-    private static readonly SKColor BgBottom   = new(0x08, 0x08, 0x08);   // near-black
-    private static readonly SKColor Accent     = new(0xFF, 0x6B, 0x35);   // orange
-    private static readonly SKColor AccentDark = new(0xCC, 0x44, 0x00);   // darker orange for badge border
-    private static readonly SKColor TextWhite  = new(0xFF, 0xFF, 0xFF);
-    private static readonly SKColor TextGray   = new(0xBB, 0xBB, 0xBB);
-    private static readonly SKColor BadgeBg    = new(0xFF, 0x6B, 0x35, 0xEE);
+    // ── Brand palette ──────────────────────────────────────────────────────────
+    private static readonly SKColor BgTop     = new(0x18, 0x00, 0x38);   // deep purple
+    private static readonly SKColor BgBottom  = new(0x08, 0x08, 0x08);   // near-black
+    private static readonly SKColor Accent    = new(0xFF, 0x6B, 0x35);   // orange
+    private static readonly SKColor TextWhite = new(0xFF, 0xFF, 0xFF);
+    private static readonly SKColor TextGray  = new(0xCC, 0xCC, 0xCC);
+    private static readonly SKColor Scrim     = new(0x05, 0x02, 0x10);   // scrim base
 
-    // Shared logo (same as episode image service)
-    private static readonly Lazy<SKBitmap?> Logo = new(() =>
-    {
-        var asm    = typeof(AnimeNewsImageService).Assembly;
-        var stream = asm.GetManifestResourceStream("AnimeIndex.Scraper.Resources.sheicob-logo.png");
-        return stream is null ? null : SKBitmap.Decode(stream);
-    });
+    private static readonly Lazy<SKBitmap?> Logo =
+        new(() => LoadBitmap("AnimeIndex.Scraper.Resources.sheicob-logo.png"));
+    private static readonly Lazy<SKTypeface?> Anton =
+        new(() => LoadTypeface("AnimeIndex.Scraper.Resources.Anton-Regular.ttf"));
+
+    // ── Public API ─────────────────────────────────────────────────────────────
 
     public async Task<byte[]> GenerateStoryAsync(AnimeNewsItem item, CancellationToken ct = default)
-        => await GenerateAsync(item, 1080, 1920, isStory: true, ct);
+    {
+        var photo = await TryDownloadPhotoAsync(item.ImageUrl, ct);
+        try { return RenderCover(item, photo, 1080, 1920, swipeHint: false); }
+        finally { photo?.Dispose(); }
+    }
 
     public async Task<byte[]> GenerateFeedAsync(AnimeNewsItem item, CancellationToken ct = default)
-        => await GenerateAsync(item, 1080, 1080, isStory: false, ct);
-
-    private async Task<byte[]> GenerateAsync(
-        AnimeNewsItem item,
-        int width, int height, bool isStory, CancellationToken ct)
     {
-        SKBitmap? photoBitmap = null;
+        var photo = await TryDownloadPhotoAsync(item.ImageUrl, ct);
+        try { return RenderCover(item, photo, 1080, 1080, swipeHint: false); }
+        finally { photo?.Dispose(); }
+    }
 
-        if (!string.IsNullOrWhiteSpace(item.ImageUrl))
+    /// <summary>
+    /// Builds the carousel: a cover poster followed by up to <paramref name="maxKeyPoints"/>
+    /// headline slides (one short idea each). Falls back to just the cover when the item has
+    /// no usable body text.
+    /// </summary>
+    public async Task<List<byte[]>> GenerateCarouselSlidesAsync(
+        AnimeNewsItem item, int maxKeyPoints = 2, CancellationToken ct = default)
+    {
+        var photo = await TryDownloadPhotoAsync(item.ImageUrl, ct);
+        try
         {
-            try
-            {
-                var http  = httpFactory.CreateClient("probe");
-                var bytes = await http.GetByteArrayAsync(item.ImageUrl, ct);
-                photoBitmap = SKBitmap.Decode(bytes);
-            }
-            catch (Exception ex)
-            {
-                logger.LogDebug(ex, "AnimeNews: could not download image from {Url}", item.ImageUrl);
-            }
-        }
+            var headlines = ExtractKeyPoints(item.Summary, maxKeyPoints);
+            int total = headlines.Count + 1;
 
+            var slides = new List<byte[]>(total)
+            {
+                RenderCover(item, photo, 1080, 1080, swipeHint: headlines.Count > 0),
+            };
+            for (int i = 0; i < headlines.Count; i++)
+                slides.Add(RenderKeyPoint(headlines[i], pageNumber: i + 2, totalPages: total));
+
+            return slides;
+        }
+        finally { photo?.Dispose(); }
+    }
+
+    // ── Cover poster ───────────────────────────────────────────────────────────
+
+    private static byte[] RenderCover(AnimeNewsItem item, SKBitmap? photo, int width, int height, bool swipeHint)
+    {
         using var surface = SKSurface.Create(new SKImageInfo(width, height));
         var canvas = surface.Canvas;
         canvas.Clear(SKColors.Black);
 
         DrawBackground(canvas, width, height);
+        if (photo is not null) DrawPhotoCover(canvas, photo, width, height);
+        DrawBottomScrim(canvas, width, height);
 
-        if (photoBitmap is not null)
+        float scale  = width / 1080f;
+        float x      = width * 0.07f;
+        float bottom = height - height * 0.07f;
+
+        DrawBrandingMark(canvas, width, bottom, scale);
+
+        float y = bottom;
+
+        // Swipe CTA (lowest element) — only on the carousel cover.
+        if (swipeHint)
         {
-            using (photoBitmap)
-                DrawPhoto(canvas, photoBitmap, width, height, isStory);
+            DrawText(canvas, "DESLIZA PARA LEER  →", x, y, 26 * scale, Accent, display: false, bold: true);
+            y -= 58 * scale;
         }
 
-        DrawGradientOverlay(canvas, width, height, isStory);
-        DrawTextContent(canvas, item, width, height, isStory);
+        // One-line lede (subtitle).
+        var lede = FirstSentence(item.Summary, 105);
+        if (!string.IsNullOrWhiteSpace(lede))
+        {
+            float subSize = 29 * scale, subLineH = 38 * scale;
+            var subLines = Wrap(lede!, subSize, width * 0.86f, bold: false, display: false, maxLines: 2);
+            y = DrawBlockBottomUp(canvas, subLines, x, y, subSize, TextGray, subLineH, display: false, bold: false)
+                - 18 * scale;
+        }
 
-        using var image = surface.Snapshot();
-        using var data  = image.Encode(SKEncodedImageFormat.Jpeg, 92);
-        return data.ToArray();
+        // Big condensed title (Anton, uppercase) — grows upward from the lede.
+        float titleSize  = (height > width ? 104 : 86) * scale;
+        float titleLineH = titleSize * 1.06f;
+        var titleLines = Wrap(item.Title.ToUpperInvariant(), titleSize, width * 0.86f, bold: true, display: true, maxLines: 4);
+        y = DrawBlockBottomUp(canvas, titleLines, x, y, titleSize, TextWhite, titleLineH, display: true, bold: true)
+            - 22 * scale;
+
+        // Kicker: accent bar + "NOTICIAS".
+        DrawKicker(canvas, x, y, scale);
+
+        return Encode(surface);
     }
 
-    // ── Drawing helpers ──────────────────────────────────────────────────────
+    // ── Key-point slide (one big headline, brand background) ─────────────────────
+
+    private static byte[] RenderKeyPoint(string headline, int pageNumber, int totalPages)
+    {
+        const int width = 1080, height = 1080;
+        using var surface = SKSurface.Create(new SKImageInfo(width, height));
+        var canvas = surface.Canvas;
+        canvas.Clear(SKColors.Black);
+
+        DrawBackground(canvas, width, height);
+        DrawCenterGlow(canvas, width, height);
+
+        float scale = width / 1080f;
+        float x     = width * 0.08f;
+
+        // Kicker (top-left) + page number (top-right).
+        float topY = height * 0.16f;
+        DrawKicker(canvas, x, topY, scale);
+        DrawTextRight(canvas, $"{pageNumber}/{totalPages}", width - x, topY, 26 * scale, TextGray, bold: true);
+
+        // Big headline (Anton, uppercase), vertically centered.
+        float hlSize  = 84 * scale;
+        float hlLineH = hlSize * 1.06f;
+        var lines  = Wrap(headline.ToUpperInvariant(), hlSize, width * 0.84f, bold: true, display: true, maxLines: 6);
+        float blockH = lines.Count * hlLineH;
+        float firstBaseline = (height - blockH) / 2f + hlSize * 0.82f;
+        DrawLines(canvas, lines, x, firstBaseline, hlSize, TextWhite, hlLineH, display: true, bold: true);
+
+        // Accent bar under the headline block.
+        float barY = firstBaseline + (lines.Count - 1) * hlLineH + 34 * scale;
+        using (var bar = new SKPaint { Color = Accent, IsAntialias = true })
+            canvas.DrawRect(x, barY, 90 * scale, 8 * scale, bar);
+
+        // Continuation arrow (non-final) + branding.
+        float brandY = height - height * 0.07f;
+        if (pageNumber < totalPages)
+            DrawText(canvas, "→", x, brandY, 54 * scale, Accent, display: false, bold: true);
+        DrawBrandingMark(canvas, width, brandY, scale);
+
+        return Encode(surface);
+    }
+
+    // ── Shared chrome ────────────────────────────────────────────────────────────
+
+    private static void DrawKicker(SKCanvas canvas, float x, float baselineY, float scale)
+    {
+        using (var bar = new SKPaint { Color = Accent, IsAntialias = true })
+            canvas.DrawRect(x, baselineY - 22 * scale, 64 * scale, 7 * scale, bar);
+        DrawText(canvas, "NOTICIAS", x + 80 * scale, baselineY, 27 * scale, TextWhite, display: false, bold: true);
+    }
 
     private static void DrawBackground(SKCanvas canvas, int width, int height)
     {
@@ -95,139 +189,52 @@ public class AnimeNewsImageService(
         canvas.DrawRect(0, 0, width, height, paint);
     }
 
-    private static void DrawPhoto(
-        SKCanvas canvas, SKBitmap photo, int width, int height, bool isStory)
+    private static void DrawPhotoCover(SKCanvas canvas, SKBitmap photo, int width, int height)
     {
-        float destH = height * (isStory ? 0.60f : 0.45f);
-        var destRect = new SKRect(0, 0, width, destH);
-
-        // Cover-fill crop
+        var dest = new SKRect(0, 0, width, height);
         float srcAspect = (float)photo.Width / photo.Height;
-        float dstAspect = (float)width / destH;
-        SKRect srcRect;
+        float dstAspect = (float)width / height;
+        SKRect src;
         if (srcAspect > dstAspect)
         {
-            float cropW  = photo.Height * dstAspect;
-            float offsetX = (photo.Width - cropW) / 2f;
-            srcRect = new SKRect(offsetX, 0, offsetX + cropW, photo.Height);
+            float cropW = photo.Height * dstAspect;
+            float offX  = (photo.Width - cropW) / 2f;
+            src = new SKRect(offX, 0, offX + cropW, photo.Height);
         }
         else
         {
-            float cropH  = photo.Width / dstAspect;
-            float offsetY = (photo.Height - cropH) / 2f;
-            srcRect = new SKRect(0, offsetY, photo.Width, offsetY + cropH);
+            float cropH = photo.Width / dstAspect;
+            float offY  = (photo.Height - cropH) / 2f;
+            src = new SKRect(0, offY, photo.Width, offY + cropH);
         }
-
         using var img   = SKImage.FromBitmap(photo);
         using var paint = new SKPaint();
-        canvas.DrawImage(img, srcRect, destRect,
+        canvas.DrawImage(img, src, dest,
             new SKSamplingOptions(SKFilterMode.Linear, SKMipmapMode.Linear), paint);
     }
 
-    private static void DrawGradientOverlay(SKCanvas canvas, int width, int height, bool isStory)
+    /// <summary>Cinematic dark gradient so bottom-anchored text always reads over the photo.</summary>
+    private static void DrawBottomScrim(SKCanvas canvas, int width, int height)
     {
-        // Main gradient: transparent top → opaque bottom
-        float gradStart = isStory ? 0.40f : 0.28f;
         using var paint  = new SKPaint();
         using var shader = SKShader.CreateLinearGradient(
-            new SKPoint(0, height * gradStart), new SKPoint(0, height),
-            [SKColors.Transparent, new SKColor(0x08, 0x08, 0x08, 0xF8)],
+            new SKPoint(0, height * 0.28f), new SKPoint(0, height),
+            [SKColors.Transparent, Scrim.WithAlpha(0xC8), Scrim.WithAlpha(0xFB)],
+            [0f, 0.62f, 1f], SKShaderTileMode.Clamp);
+        paint.Shader = shader;
+        canvas.DrawRect(0, 0, width, height, paint);
+    }
+
+    /// <summary>Soft radial highlight behind a key-point headline.</summary>
+    private static void DrawCenterGlow(SKCanvas canvas, int width, int height)
+    {
+        using var paint  = new SKPaint();
+        using var shader = SKShader.CreateRadialGradient(
+            new SKPoint(width / 2f, height / 2f), width * 0.7f,
+            [new SKColor(0x2A, 0x10, 0x55, 0x80), SKColors.Transparent],
             null, SKShaderTileMode.Clamp);
         paint.Shader = shader;
         canvas.DrawRect(0, 0, width, height, paint);
-
-        // Vignette
-        using var vPaint  = new SKPaint();
-        using var vShader = SKShader.CreateRadialGradient(
-            new SKPoint(width / 2f, height / 2f),
-            Math.Max(width, height) * 0.72f,
-            [SKColors.Transparent, new SKColor(0, 0, 0, 70)],
-            null, SKShaderTileMode.Clamp);
-        vPaint.Shader = vShader;
-        canvas.DrawRect(0, 0, width, height, vPaint);
-    }
-
-    private const float BadgePadV  = 10f;  // vertical padding inside badge (unscaled)
-    private const float BadgeFontSize = 22f;
-
-    private static void DrawTextContent(
-        SKCanvas canvas, AnimeNewsItem item,
-        int width, int height, bool isStory)
-    {
-        float scale = width / 1080f;
-        float x     = width * 0.07f;
-
-        // ── "NOTICIAS" badge ─────────────────────────────────────────────
-        float badgeY      = isStory ? height * 0.60f : height * 0.50f;
-        DrawBadge(canvas, "» NOTICIAS", x, badgeY, scale);
-
-        // ── Headline ─────────────────────────────────────────────────────
-        // Title baseline = badge bottom edge + titleFontSize + gap
-        float badgeBottom = badgeY + BadgePadV * scale;
-        float titleSize   = isStory ? 62 * scale : 54 * scale;
-        float titleY      = badgeBottom + titleSize + 12 * scale;
-        float afterTitle  = DrawWrappedText(
-            canvas, item.Title, x, titleY, titleSize,
-            TextWhite, maxWidth: width * 0.86f, bold: true, maxLines: 3);
-
-        // ── Summary (3 lines max, slightly smaller font for more content) ──
-        if (!string.IsNullOrWhiteSpace(item.Summary))
-        {
-            float summarySize = 27 * scale;
-            float summaryY    = afterTitle + 14 * scale;
-            DrawWrappedText(
-                canvas, item.Summary, x, summaryY, summarySize,
-                TextGray, maxWidth: width * 0.86f, bold: false, maxLines: 3);
-        }
-
-        // ── Branding mark (bottom-right) ──────────────────────────────────
-        float brandY = height - 36 * scale;
-        DrawBrandingMark(canvas, width, brandY, scale);
-    }
-
-    private static void DrawBadge(SKCanvas canvas, string text, float x, float y, float scale)
-    {
-        using var font      = CreateFont(BadgeFontSize * scale, bold: true);
-        using var textPaint = new SKPaint { Color = TextWhite, IsAntialias = true };
-        float textWidth = font.MeasureText(text);
-        float padH = 16 * scale, padV = BadgePadV * scale, radius = 5 * scale;
-
-        using var bgPaint = new SKPaint { Color = BadgeBg, IsAntialias = true };
-        var bgRect = new SKRoundRect(
-            new SKRect(x - padH, y - font.Size - padV, x + textWidth + padH, y + padV),
-            radius);
-        canvas.DrawRoundRect(bgRect, bgPaint);
-        canvas.DrawText(text, x, y, font, textPaint);
-    }
-
-    private static void DrawText(SKCanvas canvas, string text, float x, float y,
-        float fontSize, SKColor color, bool bold = false)
-    {
-        using var font        = CreateFont(fontSize, bold);
-        using var paint       = new SKPaint { Color = color, IsAntialias = true };
-        using var shadowPaint = new SKPaint { Color = new SKColor(0, 0, 0, 150), IsAntialias = true };
-        canvas.DrawText(text, x + 2, y + 2, font, shadowPaint);
-        canvas.DrawText(text, x, y, font, paint);
-    }
-
-    private static float DrawWrappedText(
-        SKCanvas canvas, string text, float x, float y,
-        float fontSize, SKColor color, float maxWidth, bool bold, int maxLines)
-    {
-        using var font        = CreateFont(fontSize, bold);
-        using var paint       = new SKPaint { Color = color, IsAntialias = true };
-        using var shadowPaint = new SKPaint { Color = new SKColor(0, 0, 0, 150), IsAntialias = true };
-
-        var lines      = WrapText(text, font, maxWidth, maxLines);
-        float lineH    = fontSize * 1.28f;
-
-        foreach (var line in lines)
-        {
-            canvas.DrawText(line, x + 2, y + 2, font, shadowPaint);
-            canvas.DrawText(line, x, y, font, paint);
-            y += lineH;
-        }
-        return y;
     }
 
     private static void DrawBrandingMark(SKCanvas canvas, int width, float y, float scale)
@@ -235,7 +242,7 @@ public class AnimeNewsImageService(
         var logo = Logo.Value;
         if (logo is not null)
         {
-            float logoW = 170 * scale;
+            float logoW = 175 * scale;
             float logoH = logo.Height * (logoW / logo.Width);
             float lx    = width - logoW - 20 * scale;
             var dest    = new SKRect(lx, y - logoH, lx + logoW, y);
@@ -244,19 +251,95 @@ public class AnimeNewsImageService(
         }
         else
         {
-            string brand     = "SheicobAnime";
-            float fontSize   = 24 * scale;
-            using var font   = CreateFont(fontSize, bold: true);
-            using var paint  = new SKPaint { Color = new SKColor(0xFF, 0xFF, 0xFF, 0xAA), IsAntialias = true };
-            float tw = font.MeasureText(brand);
-            canvas.DrawText(brand, width - tw - 34 * scale, y, font, paint);
+            DrawTextRight(canvas, "SheicobAnime", width - 34 * scale, y, 26 * scale,
+                new SKColor(0xFF, 0xFF, 0xFF, 0xAA), bold: true);
         }
     }
 
-    // ── Text utilities ───────────────────────────────────────────────────────
+    // ── Text helpers ─────────────────────────────────────────────────────────────
 
-    private static SKFont CreateFont(float size, bool bold)
+    private static void DrawText(SKCanvas canvas, string text, float x, float y,
+        float size, SKColor color, bool display, bool bold)
     {
+        using var font   = CreateFont(size, bold, display);
+        using var paint  = new SKPaint { Color = color, IsAntialias = true };
+        using var shadow = new SKPaint { Color = new SKColor(0, 0, 0, 170), IsAntialias = true };
+        canvas.DrawText(text, x + 2, y + 2, font, shadow);
+        canvas.DrawText(text, x, y, font, paint);
+    }
+
+    private static void DrawTextRight(SKCanvas canvas, string text, float rightX, float y,
+        float size, SKColor color, bool bold)
+    {
+        using var font = CreateFont(size, bold, display: false);
+        float w = font.MeasureText(text);
+        DrawText(canvas, text, rightX - w, y, size, color, display: false, bold: bold);
+    }
+
+    private static void DrawLines(SKCanvas canvas, List<string> lines, float x, float firstBaseline,
+        float size, SKColor color, float lineH, bool display, bool bold)
+    {
+        using var font   = CreateFont(size, bold, display);
+        using var paint  = new SKPaint { Color = color, IsAntialias = true };
+        using var shadow = new SKPaint { Color = new SKColor(0, 0, 0, 170), IsAntialias = true };
+        float y = firstBaseline;
+        foreach (var line in lines)
+        {
+            canvas.DrawText(line, x + 2, y + 3, font, shadow);
+            canvas.DrawText(line, x, y, font, paint);
+            y += lineH;
+        }
+    }
+
+    /// <summary>Draws a block so its LAST baseline sits at <paramref name="lastBaseline"/>;
+    /// returns the baseline for content placed directly above it.</summary>
+    private static float DrawBlockBottomUp(SKCanvas canvas, List<string> lines, float x, float lastBaseline,
+        float size, SKColor color, float lineH, bool display, bool bold)
+    {
+        float firstBaseline = lastBaseline - (lines.Count - 1) * lineH;
+        DrawLines(canvas, lines, x, firstBaseline, size, color, lineH, display, bold);
+        return firstBaseline - lineH;
+    }
+
+    private static List<string> Wrap(string text, float size, float maxWidth, bool bold, bool display, int maxLines)
+    {
+        using var font = CreateFont(size, bold, display);
+        var words = text.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        var lines = new List<string>();
+        var cur   = "";
+        var truncated = false;
+
+        foreach (var w in words)
+        {
+            var test = cur.Length == 0 ? w : cur + " " + w;
+            if (cur.Length == 0 || font.MeasureText(test) <= maxWidth)
+            {
+                cur = test;
+            }
+            else
+            {
+                lines.Add(cur);
+                cur = w;
+                if (lines.Count == maxLines) { truncated = true; break; }
+            }
+        }
+        if (!truncated && cur.Length > 0) lines.Add(cur);
+
+        if (truncated && lines.Count > 0)
+        {
+            var last = lines[^1];
+            while (last.Length > 0 && font.MeasureText(last + "…") > maxWidth)
+                last = last[..^1].TrimEnd();
+            lines[^1] = last + "…";
+        }
+        return lines;
+    }
+
+    private static SKFont CreateFont(float size, bool bold, bool display)
+    {
+        if (display && Anton.Value is { } anton)
+            return new SKFont(anton, size);
+
         var weight   = bold ? SKFontStyleWeight.Bold : SKFontStyleWeight.Normal;
         var typeface = SKTypeface.FromFamilyName(
             "sans-serif",
@@ -265,58 +348,103 @@ public class AnimeNewsImageService(
         return new SKFont(typeface, size);
     }
 
-    private static List<string> WrapText(string text, SKFont font, float maxWidth, int maxLines)
+    // ── Headline extraction (heuristic) ──────────────────────────────────────────
+
+    /// <summary>
+    /// Picks up to <paramref name="max"/> short headlines from the body — the first sentence
+    /// of each paragraph. Paragraph 0 (the lede) is reserved for the cover subtitle, so we
+    /// start at paragraph 1 (unless there is only one paragraph).
+    /// </summary>
+    private static List<string> ExtractKeyPoints(string? summary, int max)
     {
-        // Use only the first line of the text (news summaries may have \n\n paragraph breaks;
-        // the image shows a short excerpt, the full body goes in the Instagram caption).
-        var firstParagraph = text.Split('\n', StringSplitOptions.RemoveEmptyEntries)
-                                 .FirstOrDefault() ?? text;
+        if (string.IsNullOrWhiteSpace(summary) || max <= 0) return [];
 
-        var words   = firstParagraph.Split(' ');
-        var lines   = new List<string>();
-        var current = "";
-        var moreContent = false;
+        var paras = summary
+            .Split(["\n\n", "\n"], StringSplitOptions.RemoveEmptyEntries)
+            .Select(p => p.Trim())
+            .Where(p => p.Length > 0)
+            .ToList();
+        if (paras.Count == 0) return [];
 
-        for (var i = 0; i < words.Length; i++)
+        int start = paras.Count > 1 ? 1 : 0;
+        var result = new List<string>();
+        for (int i = start; i < paras.Count && result.Count < max; i++)
         {
-            var word = words[i];
-            var test = current.Length == 0 ? word : current + " " + word;
-
-            if (font.MeasureText(test) > maxWidth && current.Length > 0)
-            {
-                if (lines.Count < maxLines - 1)
-                {
-                    lines.Add(current);
-                    current = word;
-                }
-                else
-                {
-                    // Last allowed line — fit as much as possible + "…"
-                    moreContent = true;
-                    break;
-                }
-            }
-            else
-            {
-                current = test;
-            }
+            var s = FirstSentence(paras[i], 140);
+            if (!string.IsNullOrWhiteSpace(s) && s!.Length >= 20)
+                result.Add(s!);
         }
+        return result;
+    }
 
-        if (current.Length > 0)
+    /// <summary>First sentence of the text, trimmed to <paramref name="maxLen"/> at a clause/word boundary.</summary>
+    private static string? FirstSentence(string? text, int maxLen)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return null;
+
+        var firstPara = text.Split('\n', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault()?.Trim();
+        if (string.IsNullOrWhiteSpace(firstPara)) return null;
+
+        int end = firstPara.IndexOfAny(['.', '!', '?']);
+        var s = end > 0 ? firstPara[..(end + 1)] : firstPara;
+
+        if (s.Length > maxLen)
         {
-            if (!moreContent && lines.Count < maxLines)
-            {
-                lines.Add(current);
-            }
-            else
-            {
-                // Truncate last line to fit + "…"
-                while (current.Length > 0 && font.MeasureText(current + "…") > maxWidth)
-                    current = current[..^1].TrimEnd();
-                lines.Add(current + "…");
-            }
+            var slice = s[..maxLen];
+            int comma = slice.LastIndexOf(',');
+            int space = slice.LastIndexOf(' ');
+            s = (comma > maxLen / 2 ? slice[..comma]
+                : space > 0 ? slice[..space]
+                : slice).TrimEnd() + "…";
         }
+        return s;
+    }
 
-        return lines;
+    // ── Photo download (forces a SkiaSharp-decodable format) ─────────────────────
+
+    private async Task<SKBitmap?> TryDownloadPhotoAsync(string? imageUrl, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(imageUrl)) return null;
+
+        // Some CDNs (e.g. SomosKudasai) serve AVIF via "format=auto", which SkiaSharp cannot
+        // decode — leaving a photo-less cover. Force a decodable format. No-op for URLs that
+        // don't contain "format=auto" (og:image links, etc.).
+        var url = imageUrl.Replace("format=auto", "format=jpeg", StringComparison.OrdinalIgnoreCase);
+
+        try
+        {
+            var http  = httpFactory.CreateClient("probe");
+            var bytes = await http.GetByteArrayAsync(url, ct);
+            var bmp   = SKBitmap.Decode(bytes);
+            if (bmp is null)
+                logger.LogDebug("AnimeNews: could not decode image (unsupported format?) from {Url}", url);
+            return bmp;
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "AnimeNews: could not download image from {Url}", url);
+            return null;
+        }
+    }
+
+    // ── Resource loading ─────────────────────────────────────────────────────────
+
+    private static byte[] Encode(SKSurface surface)
+    {
+        using var image = surface.Snapshot();
+        using var data  = image.Encode(SKEncodedImageFormat.Jpeg, 92);
+        return data.ToArray();
+    }
+
+    private static SKBitmap? LoadBitmap(string resourceName)
+    {
+        using var stream = typeof(AnimeNewsImageService).Assembly.GetManifestResourceStream(resourceName);
+        return stream is null ? null : SKBitmap.Decode(stream);
+    }
+
+    private static SKTypeface? LoadTypeface(string resourceName)
+    {
+        using var stream = typeof(AnimeNewsImageService).Assembly.GetManifestResourceStream(resourceName);
+        return stream is null ? null : SKTypeface.FromStream(stream);
     }
 }
