@@ -133,8 +133,15 @@ try
             ?? builder.Configuration["REDIS_URL"]
             ?? "localhost:6379";
 
+        // AbortOnConnectFail=false so the API still boots when Redis is unreachable
+        // or over-quota — the cache layer degrades to Postgres instead of crashing
+        // startup. (Hardened after the June 2026 Upstash quota incident.)
+        var redisOptions = ConfigurationOptions.Parse(redisConnection);
+        redisOptions.AbortOnConnectFail = false;
+        redisOptions.ConnectRetry = 3;
+
         builder.Services.AddSingleton<IConnectionMultiplexer>(_ =>
-            ConnectionMultiplexer.Connect(redisConnection));
+            ConnectionMultiplexer.Connect(redisOptions));
         builder.Services.AddSingleton<ICacheService, RedisCacheService>();
     }
 
