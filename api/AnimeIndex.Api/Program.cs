@@ -158,7 +158,7 @@ try
     {
         options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context =>
             RateLimitPartition.GetSlidingWindowLimiter(
-                context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+                GetClientIp(context),
                 _ => new SlidingWindowRateLimiterOptions
                 {
                     PermitLimit = 60,
@@ -171,7 +171,7 @@ try
         // Stricter limit for admin endpoints
         options.AddPolicy("admin", context =>
             RateLimitPartition.GetSlidingWindowLimiter(
-                context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+                GetClientIp(context),
                 _ => new SlidingWindowRateLimiterOptions
                 {
                     PermitLimit = 10,
@@ -292,7 +292,7 @@ try
     {
         opts.EnrichDiagnosticContext = (diagnosticContext, httpContext) =>
         {
-            diagnosticContext.Set("ClientIp", httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown");
+            diagnosticContext.Set("ClientIp", GetClientIp(httpContext));
             diagnosticContext.Set("CorrelationId", httpContext.Items["CorrelationId"]?.ToString() ?? "");
         };
     });
@@ -388,6 +388,28 @@ finally
 // Required for WebApplicationFactory<Program> in integration tests
 public partial class Program
 {
+    /// <summary>
+    /// Resolves the real client IP for rate-limiting and logging.
+    ///
+    /// On Render, HttpContext.Connection.RemoteIpAddress is an internal load-balancer
+    /// address (10.x), not the visitor — so partitioning the rate limiter by it lumped
+    /// everyone (including scrapers) into a handful of useless buckets. The original
+    /// client is the LEFTMOST entry of X-Forwarded-For; Render appends downstream hops
+    /// to the right, and ASP.NET's ForwardedHeaders only strips from the right, so the
+    /// leftmost survives. Falls back to RemoteIpAddress when the header is absent.
+    /// </summary>
+    internal static string GetClientIp(HttpContext context)
+    {
+        var forwardedFor = context.Request.Headers["X-Forwarded-For"].ToString();
+        if (!string.IsNullOrWhiteSpace(forwardedFor))
+        {
+            var first = forwardedFor.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            if (first.Length > 0 && !string.IsNullOrWhiteSpace(first[0]))
+                return first[0];
+        }
+        return context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+    }
+
     /// <summary>
     /// Converts a postgresql:// URI to ADO.NET connection string format.
     /// Hangfire.PostgreSql does not support URI format natively.
