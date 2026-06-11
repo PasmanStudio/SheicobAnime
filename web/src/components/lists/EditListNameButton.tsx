@@ -54,7 +54,7 @@ export default function EditListNameButton({ listId, initialName, initialDescrip
     return (
       <button
         onClick={handleOpen}
-        className="text-neutral-500 hover:text-neutral-300 transition-colors text-xs px-2 py-1 rounded-md hover:bg-neutral-800 border border-transparent hover:border-neutral-700 shrink-0"
+        className="text-ink-3 hover:text-ink-1 transition-colors text-xs px-2 py-1 rounded-md hover:bg-abyss-3 border border-transparent hover:border-line-2 shrink-0"
         title="Renombrar lista"
       >
         ✏️ Editar
@@ -72,13 +72,13 @@ export default function EditListNameButton({ listId, initialName, initialDescrip
           onChange={(e) => setName(e.target.value)}
           placeholder="Nombre de la lista…"
           maxLength={80}
-          className="bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-1.5 text-sm text-white placeholder-neutral-500 outline-none flex-1 focus:border-indigo-600 transition-colors"
+          className="bg-abyss-3 border border-line-2 rounded-lg px-3 py-1.5 text-sm text-white placeholder-[var(--text-3)] outline-none flex-1 focus:border-brand transition-colors"
           disabled={loading}
         />
         <button
           type="submit"
           disabled={loading || !name.trim()}
-          className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-medium transition-colors shrink-0"
+          className="px-3 py-1.5 rounded-lg bg-brand text-[var(--text-on-accent)] hover:brightness-110 disabled:opacity-50 text-white text-xs font-medium transition-colors shrink-0"
         >
           {loading ? (
             <span className="w-3.5 h-3.5 inline-block rounded-full border-2 border-white border-t-transparent animate-spin" />
@@ -89,7 +89,7 @@ export default function EditListNameButton({ listId, initialName, initialDescrip
         <button
           type="button"
           onClick={() => { setEditing(false); setName(initialName); setDescription(initialDescription ?? ""); }}
-          className="text-neutral-500 hover:text-neutral-300 transition-colors text-sm shrink-0"
+          className="text-ink-3 hover:text-ink-1 transition-colors text-sm shrink-0"
         >
           ✕
         </button>
@@ -100,7 +100,7 @@ export default function EditListNameButton({ listId, initialName, initialDescrip
         onChange={(e) => setDescription(e.target.value)}
         placeholder="Descripción (opcional)…"
         maxLength={200}
-        className="bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-1.5 text-xs text-neutral-300 placeholder-neutral-500 outline-none focus:border-indigo-600 transition-colors"
+        className="bg-abyss-3 border border-line-2 rounded-lg px-3 py-1.5 text-xs text-ink-2 placeholder-[var(--text-3)] outline-none focus:border-brand transition-colors"
         disabled={loading}
       />
       {error && <p className="text-xs text-red-400">{error}</p>}

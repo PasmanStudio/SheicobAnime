@@ -49,7 +49,7 @@ export default function DisqusEmbed({ pageId, pageUrl }: DisqusEmbedProps) {
 
   if (!shortname) {
     return (
-      <p className="text-neutral-500 text-sm">
+      <p className="text-ink-3 text-sm">
         Comments unavailable — DISQUS_SHORTNAME not configured.
       </p>
     );
@@ -59,7 +59,7 @@ export default function DisqusEmbed({ pageId, pageUrl }: DisqusEmbedProps) {
     <div ref={containerRef}>
       <div id="disqus_thread" />
       <noscript>
-        <p className="text-neutral-500 text-sm">
+        <p className="text-ink-3 text-sm">
           Habilita JavaScript para ver los comentarios de Disqus.
         </p>
       </noscript>

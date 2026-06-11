@@ -88,12 +88,12 @@ export default async function TierListDetailPage({ params }: Props) {
         <div className="container mx-auto px-4 py-20 max-w-xl text-center">
           <p className="text-5xl mb-4">⚠️</p>
           <h1 className="text-xl font-bold text-white mb-2">Error temporal</h1>
-          <p className="text-neutral-400 mb-6 text-sm">
+          <p className="text-ink-2 mb-6 text-sm">
             No se pudo conectar a la base de datos. Esto es momentáneo, intentá de nuevo en unos segundos.
           </p>
           <Link
             href={`/tierlist/${id}`}
-            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium transition-colors text-sm"
+            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-brand text-[var(--text-on-accent)] hover:brightness-110 font-medium transition-colors text-sm"
           >
             Reintentar
           </Link>
@@ -137,7 +137,7 @@ export default async function TierListDetailPage({ params }: Props) {
           {isOwner ? (
             <Link
               href="/tierlist"
-              className="inline-flex items-center gap-1.5 text-xs text-neutral-500 hover:text-neutral-300 transition-colors"
+              className="inline-flex items-center gap-1.5 text-xs text-ink-3 hover:text-ink-1 transition-colors"
             >
               ← Mis Tier Lists
             </Link>
@@ -161,10 +161,10 @@ export default async function TierListDetailPage({ params }: Props) {
           )}
         </div>
         <div className="flex flex-wrap items-center gap-3">
-          <p className="text-sm text-neutral-500">
+          <p className="text-sm text-ink-3">
             {totalEntries === 0 ? "Sin animes" : `${totalEntries} anime${totalEntries !== 1 ? "s" : ""}`}
             {isOwner && (
-              <span className="ml-2 text-neutral-600">
+              <span className="ml-2 text-ink-3">
                 · Hacé click en un anime para cambiar su tier
               </span>
             )}
@@ -203,17 +203,17 @@ export default async function TierListDetailPage({ params }: Props) {
       {totalEntries === 0 ? (
         <div className="text-center py-20">
           <p className="text-5xl mb-4">🏆</p>
-          <p className="text-neutral-400 mb-2">Esta tier list está vacía.</p>
+          <p className="text-ink-2 mb-2">Esta tier list está vacía.</p>
           {isOwner && (
-            <p className="text-sm text-neutral-500">
-              Usá el botón <span className="text-neutral-300">Agregar anime</span> de arriba,
+            <p className="text-sm text-ink-3">
+              Usá el botón <span className="text-ink-2">Agregar anime</span> de arriba,
               o andá a cualquier serie y usá el botón{" "}
-              <span className="text-neutral-300">🏆 Tier List</span>.
+              <span className="text-ink-2">🏆 Tier List</span>.
             </p>
           )}
         </div>
       ) : (
-        <div className="rounded-xl border border-neutral-800">{/* overflow-visible: no overflow-hidden so TierPickerOnEntry dropdowns aren't clipped */}
+        <div className="rounded-xl border border-line-1">{/* overflow-visible: no overflow-hidden so TierPickerOnEntry dropdowns aren't clipped */}
           {TIERS.map((tier, idx) => {
             const entries = byTier[tier];
             const colors = TIER_COLORS[tier];
@@ -223,7 +223,7 @@ export default async function TierListDetailPage({ params }: Props) {
             return (
               <div
                 key={tier}
-                className={`flex min-h-[72px] ${idx < TIERS.length - 1 ? "border-b border-neutral-800" : ""}`}
+                className={`flex min-h-[72px] ${idx < TIERS.length - 1 ? "border-b border-line-1" : ""}`}
               >
                 {/* Tier label — explicit corner rounding since parent has no overflow-hidden */}
                 <div
@@ -234,10 +234,10 @@ export default async function TierListDetailPage({ params }: Props) {
                 </div>
 
                 {/* Entries */}
-                <div className={`flex-1 bg-neutral-900 px-3 py-2 flex items-center gap-2 flex-wrap min-h-[72px]
+                <div className={`flex-1 bg-abyss-2 px-3 py-2 flex items-center gap-2 flex-wrap min-h-[72px]
                   ${isFirst ? "rounded-tr-xl" : ""} ${isLast ? "rounded-br-xl" : ""}`}>
                   {entries.length === 0 ? (
-                    <span className="text-xs text-neutral-700 italic">Vacío</span>
+                    <span className="text-xs text-ink-3 italic">Vacío</span>
                   ) : (
                     entries.map((entry) => (
                       <div key={entry.series_slug} className="relative group">
@@ -269,7 +269,7 @@ export default async function TierListDetailPage({ params }: Props) {
                                 className="w-full aspect-[2/3] object-cover hover:opacity-80 transition-opacity"
                               />
                             ) : (
-                              <div className="w-full aspect-[2/3] bg-neutral-800 flex items-center justify-center text-neutral-600 text-lg">
+                              <div className="w-full aspect-[2/3] bg-abyss-3 flex items-center justify-center text-ink-3 text-lg">
                                 🎬
                               </div>
                             )}

@@ -76,7 +76,7 @@ export default function DirectoryFilters({ currentFilters }: DirectoryFiltersPro
         <select
           value={currentFilters.sort ?? "updated"}
           onChange={(e) => updateFilter("sort", e.target.value)}
-          className="bg-neutral-800 border border-neutral-700 text-white text-sm rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+          className="bg-abyss-1 border border-line-1 text-ink-1 text-sm rounded-btn px-3 py-2 outline-none focus:border-brand focus:shadow-focus transition-all duration-fast"
         >
           <option value="">Ordenar por</option>
           {SORT_OPTIONS.map((o) => (
@@ -88,7 +88,7 @@ export default function DirectoryFilters({ currentFilters }: DirectoryFiltersPro
         <select
           value={currentFilters.genre ?? ""}
           onChange={(e) => updateFilter("genre", e.target.value)}
-          className="bg-neutral-800 border border-neutral-700 text-white text-sm rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+          className="bg-abyss-1 border border-line-1 text-ink-1 text-sm rounded-btn px-3 py-2 outline-none focus:border-brand focus:shadow-focus transition-all duration-fast"
         >
           <option value="">Género</option>
           {GENRES.map((g) => (
@@ -100,7 +100,7 @@ export default function DirectoryFilters({ currentFilters }: DirectoryFiltersPro
         <select
           value={currentFilters.type ?? ""}
           onChange={(e) => updateFilter("type", e.target.value)}
-          className="bg-neutral-800 border border-neutral-700 text-white text-sm rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+          className="bg-abyss-1 border border-line-1 text-ink-1 text-sm rounded-btn px-3 py-2 outline-none focus:border-brand focus:shadow-focus transition-all duration-fast"
         >
           <option value="">Tipo</option>
           {TYPES.map((t) => (
@@ -112,7 +112,7 @@ export default function DirectoryFilters({ currentFilters }: DirectoryFiltersPro
         <select
           value={currentFilters.status ?? ""}
           onChange={(e) => updateFilter("status", e.target.value)}
-          className="bg-neutral-800 border border-neutral-700 text-white text-sm rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+          className="bg-abyss-1 border border-line-1 text-ink-1 text-sm rounded-btn px-3 py-2 outline-none focus:border-brand focus:shadow-focus transition-all duration-fast"
         >
           <option value="">Estado</option>
           {STATUSES.map((s) => (
@@ -124,7 +124,7 @@ export default function DirectoryFilters({ currentFilters }: DirectoryFiltersPro
         <select
           value={currentFilters.year ?? ""}
           onChange={(e) => updateFilter("year", e.target.value)}
-          className="bg-neutral-800 border border-neutral-700 text-white text-sm rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+          className="bg-abyss-1 border border-line-1 text-ink-1 text-sm rounded-btn px-3 py-2 outline-none focus:border-brand focus:shadow-focus transition-all duration-fast"
         >
           <option value="">Año</option>
           {YEARS.map((y) => (
@@ -136,7 +136,7 @@ export default function DirectoryFilters({ currentFilters }: DirectoryFiltersPro
         <button
           type="button"
           onClick={() => router.push("/directory")}
-          className="bg-neutral-700 hover:bg-neutral-600 text-white text-sm rounded-lg px-3 py-2 transition-colors"
+          className="bg-abyss-3 border border-line-2 hover:brightness-110 text-ink-1 text-sm font-semibold rounded-btn px-3 py-2 transition-all duration-fast"
         >
           Limpiar filtros
         </button>
@@ -147,10 +147,10 @@ export default function DirectoryFilters({ currentFilters }: DirectoryFiltersPro
         <button
           type="button"
           onClick={() => updateFilter("letter", "")}
-          className={`shrink-0 px-3 py-1.5 text-xs rounded font-medium transition-colors ${
+          className={`shrink-0 px-3 py-1.5 text-xs rounded-badge font-mono font-semibold transition-colors duration-fast ${
             !currentFilters.letter
-              ? "bg-indigo-600 text-white"
-              : "bg-neutral-800 text-neutral-400 hover:bg-neutral-700 hover:text-white"
+              ? "bg-[var(--accent-muted)] text-brand-bright border border-[var(--accent-border)]"
+              : "bg-abyss-2 text-ink-3 border border-line-1 hover:text-ink-1 hover:border-line-2"
           }`}
         >
           Todos
@@ -160,10 +160,10 @@ export default function DirectoryFilters({ currentFilters }: DirectoryFiltersPro
             key={l}
             type="button"
             onClick={() => updateFilter("letter", l)}
-            className={`shrink-0 px-2.5 py-1.5 text-xs rounded font-medium transition-colors ${
+            className={`shrink-0 px-2.5 py-1.5 text-xs rounded-badge font-mono font-semibold transition-colors duration-fast ${
               currentFilters.letter === l
-                ? "bg-indigo-600 text-white"
-                : "bg-neutral-800 text-neutral-400 hover:bg-neutral-700 hover:text-white"
+                ? "bg-[var(--accent-muted)] text-brand-bright border border-[var(--accent-border)]"
+                : "bg-abyss-2 text-ink-3 border border-line-1 hover:text-ink-1 hover:border-line-2"
             }`}
           >
             {l}

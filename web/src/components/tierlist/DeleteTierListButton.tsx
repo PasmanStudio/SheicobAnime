@@ -39,7 +39,7 @@ export default function DeleteTierListButton({ tierListId, tierListName }: Props
           setOpen(true);
         }}
         title="Borrar tier list"
-        className="absolute top-2 right-2 z-10 p-1.5 rounded-md bg-neutral-900/80 text-neutral-500 hover:text-red-400 hover:bg-neutral-800 transition-colors opacity-0 group-hover:opacity-100 focus:opacity-100"
+        className="absolute top-2 right-2 z-10 p-1.5 rounded-md bg-abyss-2 text-ink-3 hover:text-red-400 hover:bg-abyss-3 transition-colors opacity-0 group-hover:opacity-100 focus:opacity-100"
         aria-label="Borrar tier list"
       >
         <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
@@ -57,14 +57,14 @@ export default function DeleteTierListButton({ tierListId, tierListName }: Props
           onClick={() => !loading && setOpen(false)}
         >
           <div
-            className="bg-neutral-900 border border-neutral-700 rounded-2xl p-6 max-w-sm w-full shadow-xl"
+            className="bg-abyss-2 border border-line-2 rounded-2xl p-6 max-w-sm w-full shadow-xl"
             onClick={(e) => e.stopPropagation()}
           >
             <h2 className="text-lg font-bold text-white mb-1">¿Borrar tier list?</h2>
-            <p className="text-sm text-neutral-400 mb-1 break-words">
-              Se va a borrar <span className="text-neutral-200 font-medium">{tierListName}</span> y todos sus animes.
+            <p className="text-sm text-ink-2 mb-1 break-words">
+              Se va a borrar <span className="text-ink-1 font-medium">{tierListName}</span> y todos sus animes.
             </p>
-            <p className="text-xs text-neutral-600 mb-5">Esta acción no se puede deshacer.</p>
+            <p className="text-xs text-ink-3 mb-5">Esta acción no se puede deshacer.</p>
 
             {error && <p className="text-sm text-red-400 mb-4">{error}</p>}
 
@@ -72,7 +72,7 @@ export default function DeleteTierListButton({ tierListId, tierListName }: Props
               <button
                 onClick={() => setOpen(false)}
                 disabled={loading}
-                className="flex-1 px-4 py-2 rounded-xl border border-neutral-700 text-neutral-300 hover:bg-neutral-800 transition-colors text-sm disabled:opacity-50"
+                className="flex-1 px-4 py-2 rounded-xl border border-line-2 text-ink-2 hover:bg-abyss-3 transition-colors text-sm disabled:opacity-50"
               >
                 Cancelar
               </button>

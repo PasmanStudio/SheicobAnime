@@ -4,6 +4,7 @@ import { encodeId } from "@/lib/short-id";
 import type { ListSummary } from "@/lib/lists";
 import CreateListButton from "@/components/lists/CreateListButton";
 import AdSlot from "@/components/ads/AdSlot";
+import SectionHeader from "@/components/ui/SectionHeader";
 import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
@@ -42,15 +43,14 @@ export default async function ListasPage() {
 
   if (!session?.user?.id) {
     return (
-      <div className="container mx-auto px-4 py-16 max-w-2xl text-center">
-        <p className="text-5xl mb-4">🔒</p>
-        <h1 className="text-2xl font-bold text-white mb-2">Iniciá sesión</h1>
-        <p className="text-neutral-400 mb-6">
-          Necesitás una cuenta para crear y ver tus listas personales.
-        </p>
+      <div className="mx-auto max-w-2xl px-4 py-16 text-center">
+        <h1 className="sh-display mb-2 text-2xl">Iniciá sesión</h1>
+        <p className="mb-1 text-ink-2">Necesitás una cuenta para crear y ver tus listas personales.</p>
+        <p className="mb-6 text-sm text-ink-3">Entrá con tu cuenta y armá tu primera lista en un minuto.</p>
         <Link
           href="/"
-          className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium transition-colors"
+          className="inline-flex items-center gap-2 rounded-btn px-5 py-2.5 font-bold text-[var(--text-on-accent)] shadow-glow transition-all duration-fast hover:brightness-110 active:scale-[0.97]"
+          style={{ background: "var(--grad-action)" }}
         >
           Volver al inicio
         </Link>
@@ -61,26 +61,18 @@ export default async function ListasPage() {
   const lists = await getUserLists(session.user.id);
 
   return (
-    <div className="container mx-auto px-4 py-8 max-w-5xl">
+    <div className="mx-auto max-w-5xl px-4 py-8">
       {/* Header */}
-      <div className="flex items-center justify-between mb-6 gap-4 flex-wrap">
-        <h1 className="text-2xl font-bold text-white">Mis listas</h1>
+      <div className="flex items-end justify-between mb-6 gap-4 flex-wrap">
+        <SectionHeader size="lg" title="Mis listas" />
         <CreateListButton />
-      </div>
-
-      {/* Ad — top */}
-      <div className="mb-6 flex justify-center">
-        <AdSlot placement="profile_top" />
       </div>
 
       {/* Grid */}
       {lists.length === 0 ? (
-        <div className="text-center py-20">
-          <p className="text-5xl mb-4">📋</p>
-          <p className="text-neutral-400 mb-2">No tenés listas creadas todavía.</p>
-          <p className="text-sm text-neutral-500">
-            Creá una lista para organizar tus animes favoritos.
-          </p>
+        <div className="py-20 text-center text-sm">
+          <p className="text-ink-2">No tenés listas creadas todavía.</p>
+          <p className="mt-1 text-ink-3">Creá una para organizar tus animes favoritos.</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
@@ -88,13 +80,13 @@ export default async function ListasPage() {
             <Link
               key={list.id}
               href={`/listas/${encodeId(list.id)}`}
-              className="group flex flex-col bg-neutral-900 border border-neutral-800 rounded-xl overflow-hidden hover:border-neutral-600 transition-all"
+              className="group flex flex-col overflow-hidden rounded-card border border-line-1 bg-abyss-2 transition-all duration-fast hover:-translate-y-0.5 hover:border-line-2 hover:shadow-card"
             >
               {/* Cover previews */}
-              <div className="flex h-28 bg-neutral-800 overflow-hidden">
+              <div className="flex h-28 bg-abyss-3 overflow-hidden">
                 {list.preview_covers.length === 0 ? (
-                  <div className="w-full flex items-center justify-center text-neutral-600 text-4xl">
-                    📋
+                  <div className="w-full flex items-center justify-center font-display text-3xl italic font-black text-[rgba(255,255,255,0.14)]">
+                    {list.name.trim()[0]?.toUpperCase() ?? "?"}
                   </div>
                 ) : list.preview_covers.length === 1 ? (
                   <div className="relative w-full">
@@ -127,17 +119,17 @@ export default async function ListasPage() {
 
               {/* Info */}
               <div className="p-3 flex-1 flex flex-col gap-1">
-                <p className="text-sm font-semibold text-white line-clamp-1">{list.name}</p>
+                <p className="sh-title line-clamp-1 text-sm">{list.name}</p>
                 {list.description && (
-                  <p className="text-xs text-neutral-400 line-clamp-2">{list.description}</p>
+                  <p className="text-xs text-ink-2 line-clamp-2">{list.description}</p>
                 )}
                 <div className="flex items-center justify-between mt-auto pt-1">
-                  <span className="text-xs text-neutral-500">
+                  <span className="sh-stat text-[11px] text-ink-3">
                     {list.item_count === 0
                       ? "Sin animes"
                       : `${list.item_count} anime${list.item_count !== 1 ? "s" : ""}`}
                   </span>
-                  <span className="text-xs text-indigo-400 group-hover:text-indigo-300 transition-colors">
+                  <span className="text-xs font-semibold text-brand-bright transition-colors duration-fast group-hover:text-[var(--cyan-200)]">
                     Ver lista →
                   </span>
                 </div>

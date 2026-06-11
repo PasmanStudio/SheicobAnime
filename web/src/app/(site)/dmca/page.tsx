@@ -10,7 +10,7 @@ export default function DmcaPage() {
     <div className="container mx-auto max-w-3xl px-4 py-12">
       <h1 className="text-3xl font-bold mb-8">DMCA / Solicitud de Eliminación</h1>
 
-      <div className="space-y-8 text-neutral-300 leading-relaxed">
+      <div className="space-y-8 text-ink-2 leading-relaxed">
         <section>
           <h2 className="text-xl font-semibold text-white mb-3">Sobre SheicobAnime</h2>
           <p>
@@ -26,7 +26,7 @@ export default function DmcaPage() {
             Si sos titular de derechos de autor y creés que tu contenido está siendo indexado
             sin autorización, podés solicitar la eliminación contactándonos:
           </p>
-          <ul className="list-disc list-inside mt-4 space-y-2 text-neutral-400">
+          <ul className="list-disc list-inside mt-4 space-y-2 text-ink-2">
             <li>Identificación de la obra protegida</li>
             <li>URL(s) específica(s) en nuestro sitio que deseas que se eliminen</li>
             <li>Tu información de contacto (nombre, email)</li>
@@ -42,7 +42,7 @@ export default function DmcaPage() {
               dmca@sheicobanime.com
             </a>
           </p>
-          <p className="mt-2 text-neutral-500 text-sm">
+          <p className="mt-2 text-ink-3 text-sm">
             Las solicitudes se procesan dentro de las 48 horas hábiles. El contenido será
             bloqueado de nuestro índice mientras se resuelve la solicitud.
           </p>

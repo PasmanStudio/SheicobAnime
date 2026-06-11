@@ -62,13 +62,16 @@ export default async function DirectoryPage({ searchParams }: Props) {
   const basePath = filterString ? `/directory?${filterString}` : "/directory";
 
   return (
-    <div className="container mx-auto px-4 py-8 space-y-6">
+    <div className="mx-auto max-w-container px-4 py-8 space-y-6">
       <InactivityAdTrigger />
-      <div>
-        <h1 className="text-2xl font-bold text-white">Directorio de Anime</h1>
-        <p className="text-sm text-neutral-400 mt-1">
-          {results.total.toLocaleString()} anime encontrados
-        </p>
+      <div className="flex flex-col gap-1">
+        <span className="sh-label">
+          {results.total.toLocaleString("es-AR")} anime en el catálogo
+        </span>
+        <span className="sh-section-header items-center">
+          <span className="sh-cut" />
+          <h1 className="sh-display text-[clamp(22px,3vw,28px)]">Directorio</h1>
+        </span>
       </div>
 
       <DirectoryFilters
@@ -85,9 +88,10 @@ export default async function DirectoryPage({ searchParams }: Props) {
       <AdSlot placement="directory_top" />
 
       {results.data.length === 0 ? (
-        <p className="text-neutral-400 py-12 text-center">
-          No se encontraron resultados con los filtros seleccionados.
-        </p>
+        <div className="py-12 text-center text-sm">
+          <p className="text-ink-2">No se encontraron resultados con esos filtros.</p>
+          <p className="mt-1 text-ink-3">Probá sacando alguno — el catálogo es grande.</p>
+        </div>
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
           {results.data.map((s) => (

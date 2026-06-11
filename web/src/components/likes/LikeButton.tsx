@@ -73,7 +73,7 @@ export default function LikeButton({ seriesSlug, seriesTitle, coverUrl }: Props)
   };
 
   if (status === "loading") {
-    return <div className="h-9 w-20 rounded-lg bg-neutral-800 animate-pulse" />;
+    return <div className="h-9 w-20 rounded-lg bg-abyss-3 animate-pulse" />;
   }
 
   return (
@@ -87,7 +87,7 @@ export default function LikeButton({ seriesSlug, seriesTitle, coverUrl }: Props)
           transition-all duration-150 select-none disabled:opacity-60
           ${liked
             ? "border-rose-700/60 text-rose-400 bg-rose-950/40 hover:bg-rose-950/60"
-            : "border-neutral-700 text-neutral-400 hover:text-white hover:bg-neutral-800/60"
+            : "border-line-2 text-ink-2 hover:text-white hover:bg-abyss-3"
           }`}
       >
         {loading ? (
@@ -115,12 +115,12 @@ export default function LikeButton({ seriesSlug, seriesTitle, coverUrl }: Props)
         <div
           role="tooltip"
           className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-1.5 rounded-lg
-            bg-neutral-800 border border-neutral-700 text-xs text-white whitespace-nowrap shadow-xl
+            bg-abyss-3 border border-line-2 text-xs text-white whitespace-nowrap shadow-xl
             pointer-events-none"
         >
           Iniciá sesión para dar like
           <span
-            className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-neutral-800"
+            className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-[var(--bg-3)]"
             aria-hidden
           />
         </div>

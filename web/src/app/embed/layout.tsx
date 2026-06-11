@@ -13,12 +13,12 @@ import "../globals.css";
  */
 const geistSans = localFont({
   src: "../fonts/GeistVF.woff",
-  variable: "--font-geist-sans",
+  variable: "--font-body",
   weight: "100 900",
 });
 const geistMono = localFont({
   src: "../fonts/GeistMonoVF.woff",
-  variable: "--font-geist-mono",
+  variable: "--font-mono",
   weight: "100 900",
 });
 

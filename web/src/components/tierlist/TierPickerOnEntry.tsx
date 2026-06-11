@@ -58,7 +58,7 @@ export default function TierPickerOnEntry({
         title={`Cambiar tier de ${seriesTitle}`}
         className="relative block w-14 group focus:outline-none"
       >
-        <div className="relative aspect-[2/3] rounded overflow-hidden bg-neutral-800">
+        <div className="relative aspect-[2/3] rounded overflow-hidden bg-abyss-3">
           {coverUrl ? (
             <Image
               src={coverUrl}
@@ -68,7 +68,7 @@ export default function TierPickerOnEntry({
               className="object-cover group-hover:opacity-70 transition-opacity"
             />
           ) : (
-            <div className="w-full h-full flex items-center justify-center text-neutral-600 text-lg">🎬</div>
+            <div className="w-full h-full flex items-center justify-center text-ink-3 text-lg">🎬</div>
           )}
           {pending && (
             <div className="absolute inset-0 flex items-center justify-center bg-black/50">
@@ -85,8 +85,8 @@ export default function TierPickerOnEntry({
       </button>
 
       {open && (
-        <div className="absolute z-50 top-full mt-1 left-1/2 -translate-x-1/2 bg-neutral-900 border border-neutral-700 rounded-xl shadow-2xl overflow-hidden w-36">
-          <p className="px-3 py-2 text-[10px] text-neutral-500 uppercase tracking-wider font-medium border-b border-neutral-800 truncate">
+        <div className="absolute z-50 top-full mt-1 left-1/2 -translate-x-1/2 bg-abyss-2 border border-line-2 rounded-xl shadow-2xl overflow-hidden w-36">
+          <p className="px-3 py-2 text-[10px] text-ink-3 uppercase tracking-wider font-medium border-b border-line-1 truncate">
             {seriesTitle}
           </p>
           {TIERS.map((tier) => {
@@ -96,14 +96,14 @@ export default function TierPickerOnEntry({
               <button
                 key={tier}
                 onClick={() => handleSelect(tier)}
-                className={`w-full flex items-center gap-2 px-3 py-1.5 text-sm transition-colors hover:bg-neutral-800 ${isActive ? "opacity-50 cursor-default" : ""}`}
+                className={`w-full flex items-center gap-2 px-3 py-1.5 text-sm transition-colors hover:bg-abyss-3 ${isActive ? "opacity-50 cursor-default" : ""}`}
               >
                 <span
                   className={`w-6 h-6 rounded flex items-center justify-center text-xs font-extrabold shrink-0 ${c.bg} ${c.text}`}
                 >
                   {tier}
                 </span>
-                <span className="text-neutral-300 text-xs">{c.label}</span>
+                <span className="text-ink-2 text-xs">{c.label}</span>
               </button>
             );
           })}

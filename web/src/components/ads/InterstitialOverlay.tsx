@@ -67,9 +67,8 @@ export default function InterstitialOverlay({
         )}
       </div>
 
-      {/* Ad content */}
+      {/* Ad content — un solo slot (los placements podados renderizan null) */}
       <div className="flex flex-col items-center gap-4">
-        <AdSlot placement="episode_above_player" className="pointer-events-auto" />
         <AdSlot placement="episode_below_player" className="pointer-events-auto" />
       </div>
 

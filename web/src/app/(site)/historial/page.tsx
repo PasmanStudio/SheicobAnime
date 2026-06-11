@@ -2,6 +2,7 @@ import { auth } from "@/lib/auth";
 import { getDb } from "@/lib/db";
 import type { EpisodeHistoryEntry } from "@/lib/watchlist";
 import AdSlot from "@/components/ads/AdSlot";
+import SectionHeader from "@/components/ui/SectionHeader";
 import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
@@ -51,15 +52,14 @@ export default async function HistorialPage() {
 
   if (!session?.user?.id) {
     return (
-      <div className="container mx-auto px-4 py-16 max-w-2xl text-center">
-        <p className="text-5xl mb-4">🔒</p>
-        <h1 className="text-2xl font-bold text-white mb-2">Iniciá sesión</h1>
-        <p className="text-neutral-400 mb-6">
-          Necesitás una cuenta para ver tu historial de episodios.
-        </p>
+      <div className="mx-auto max-w-2xl px-4 py-16 text-center">
+        <h1 className="sh-display mb-2 text-2xl">Iniciá sesión</h1>
+        <p className="mb-1 text-ink-2">Necesitás una cuenta para ver tu historial de episodios.</p>
+        <p className="mb-6 text-sm text-ink-3">Entrá con tu cuenta y retomá donde dejaste.</p>
         <Link
           href="/"
-          className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium transition-colors"
+          className="inline-flex items-center gap-2 rounded-btn px-5 py-2.5 font-bold text-[var(--text-on-accent)] shadow-glow transition-all duration-fast hover:brightness-110 active:scale-[0.97]"
+          style={{ background: "var(--grad-action)" }}
         >
           Volver al inicio
         </Link>
@@ -71,42 +71,33 @@ export default async function HistorialPage() {
   const grouped = groupByDate(history);
 
   return (
-    <div className="container mx-auto px-4 py-8 max-w-3xl">
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold text-white">Historial</h1>
+    <div className="mx-auto max-w-3xl px-4 py-8">
+      <div className="flex items-end justify-between mb-6 gap-4">
+        <SectionHeader size="lg" title="Historial" />
         {history.length > 0 && (
-          <span className="text-sm text-neutral-500">{history.length} episodios</span>
+          <span className="sh-stat text-sm text-ink-3">{history.length} episodios</span>
         )}
       </div>
 
-      {/* Ad — top */}
-      <div className="mb-6 flex justify-center">
-        <AdSlot placement="profile_top" />
-      </div>
-
       {history.length === 0 ? (
-        <div className="text-center py-16">
-          <p className="text-5xl mb-4">🕐</p>
-          <p className="text-neutral-400">
-            Tu historial está vacío. Los episodios que marques como vistos aparecerán acá.
-          </p>
+        <div className="py-16 text-center text-sm">
+          <p className="text-ink-2">Tu historial está vacío.</p>
+          <p className="mt-1 text-ink-3">Los episodios que marques como vistos van a aparecer acá.</p>
         </div>
       ) : (
         <div className="space-y-6">
           {Array.from(grouped.entries()).map(([date, episodes]) => (
             <div key={date}>
-              <h2 className="text-xs font-semibold text-neutral-500 uppercase tracking-wider mb-3 capitalize">
-                {date}
-              </h2>
+              <h2 className="sh-label mb-3 block">{date}</h2>
               <div className="space-y-2">
                 {episodes.map((ep) => (
                   <Link
                     key={ep.episode_id}
                     href={`/series/${ep.series_slug}/${ep.episode_number}`}
-                    className="flex items-center gap-3 p-3 rounded-xl bg-neutral-900 border border-neutral-800 hover:border-neutral-600 transition-colors group"
+                    className="group flex items-center gap-3 rounded-card border border-line-1 bg-abyss-2 p-3 transition-colors duration-fast hover:border-line-2 hover:bg-abyss-3"
                   >
                     {/* Thumbnail / cover */}
-                    <div className="relative w-12 h-16 shrink-0 rounded overflow-hidden bg-neutral-800">
+                    <div className="relative w-12 h-16 shrink-0 rounded-badge overflow-hidden bg-abyss-3">
                       {ep.cover_url ? (
                         <Image
                           src={ep.cover_url}
@@ -116,23 +107,27 @@ export default async function HistorialPage() {
                           className="object-cover"
                         />
                       ) : (
-                        <div className="w-full h-full flex items-center justify-center text-neutral-600 text-lg">🎬</div>
+                        <div className="flex h-full w-full items-center justify-center font-display italic font-black text-ink-3">
+                          {ep.series_title.trim()[0]?.toUpperCase() ?? "?"}
+                        </div>
                       )}
                     </div>
 
                     {/* Info */}
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-white truncate group-hover:text-indigo-300 transition-colors">
+                      <p className="sh-title truncate text-sm transition-colors duration-fast group-hover:text-[var(--cyan-200)]">
                         {ep.series_title}
                       </p>
-                      <p className="text-xs text-neutral-400">
-                        Episodio {ep.episode_number}
+                      <p className="text-xs text-ink-2">
+                        <span className="sh-stat text-[11px] text-brand-bright">
+                          EP {String(ep.episode_number).padStart(2, "0")}
+                        </span>
                         {ep.episode_title && ` — ${ep.episode_title}`}
                       </p>
                     </div>
 
                     {/* Time */}
-                    <span className="text-xs text-neutral-600 shrink-0">
+                    <span className="sh-stat shrink-0 text-[11px] text-ink-3">
                       {timeAgo(ep.watched_at)}
                     </span>
                   </Link>

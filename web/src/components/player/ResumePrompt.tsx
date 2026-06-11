@@ -22,12 +22,12 @@ export default function ResumePrompt({
       aria-labelledby="resume-title"
       className="absolute inset-0 z-30 flex items-center justify-center bg-black/80 backdrop-blur-sm"
     >
-      <div className="bg-neutral-900 border border-neutral-700 rounded-lg shadow-2xl max-w-md w-[90%] p-6 space-y-5">
+      <div className="bg-abyss-2 border border-line-2 rounded-lg shadow-2xl max-w-md w-[90%] p-6 space-y-5">
         <div className="space-y-2">
           <h2 id="resume-title" className="text-2xl font-bold text-white">
             ¡Un momento!
           </h2>
-          <p className="text-sm text-neutral-300">
+          <p className="text-sm text-ink-2">
             Parece que ya estabas viendo este episodio. ¿Quieres continuar
             desde donde lo dejaste?
           </p>
@@ -40,7 +40,7 @@ export default function ResumePrompt({
           <button
             type="button"
             onClick={onCancel}
-            className="min-h-[44px] px-4 py-2 rounded bg-neutral-800 text-neutral-200 hover:bg-neutral-700 transition-colors focus:outline-none focus:ring-2 focus:ring-neutral-500"
+            className="min-h-[44px] px-4 py-2 rounded bg-abyss-3 text-ink-1 hover:bg-abyss-3 transition-colors focus:outline-none focus:ring-2 focus:ring-[var(--focus-ring)]"
           >
             Cancelar
           </button>

@@ -93,12 +93,12 @@ export default async function ListaDetailPage({ params }: Props) {
         <div className="container mx-auto px-4 py-20 max-w-xl text-center">
           <p className="text-5xl mb-4">⚠️</p>
           <h1 className="text-xl font-bold text-white mb-2">Error temporal</h1>
-          <p className="text-neutral-400 mb-6 text-sm">
+          <p className="text-ink-2 mb-6 text-sm">
             No se pudo conectar a la base de datos. Esto es momentáneo, intentá de nuevo en unos segundos.
           </p>
           <Link
             href={`/listas/${id}`}
-            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium transition-colors text-sm"
+            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-brand text-[var(--text-on-accent)] hover:brightness-110 font-medium transition-colors text-sm"
           >
             Reintentar
           </Link>
@@ -138,7 +138,7 @@ export default async function ListaDetailPage({ params }: Props) {
           {isOwner ? (
             <Link
               href="/listas"
-              className="inline-flex items-center gap-1.5 text-xs text-neutral-500 hover:text-neutral-300 transition-colors"
+              className="inline-flex items-center gap-1.5 text-xs text-ink-3 hover:text-ink-1 transition-colors"
             >
               ← Mis listas
             </Link>
@@ -163,19 +163,19 @@ export default async function ListaDetailPage({ params }: Props) {
         </div>
 
         {list.description && (
-          <p className="text-sm text-neutral-400 mb-3">{list.description}</p>
+          <p className="text-sm text-ink-2 mb-3">{list.description}</p>
         )}
 
         {/* Meta + owner actions row */}
         <div className="flex flex-wrap items-center gap-3">
-          <span className="text-xs text-neutral-500">
+          <span className="text-xs text-ink-3">
             {list.items.length === 0
               ? "Sin animes"
               : `${list.items.length} anime${list.items.length !== 1 ? "s" : ""}`}
           </span>
 
           {list.is_public ? (
-            <span className="flex items-center gap-1 text-xs text-neutral-500">
+            <span className="flex items-center gap-1 text-xs text-ink-3">
               <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
                 <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
                 <circle cx="12" cy="12" r="3" />
@@ -183,7 +183,7 @@ export default async function ListaDetailPage({ params }: Props) {
               {list.views.toLocaleString("es-AR")} vistas
             </span>
           ) : isOwner ? (
-            <span className="text-xs text-neutral-600">Solo vos podés verla</span>
+            <span className="text-xs text-ink-3">Solo vos podés verla</span>
           ) : null}
 
           {/* Owner actions */}
@@ -214,12 +214,12 @@ export default async function ListaDetailPage({ params }: Props) {
       {list.items.length === 0 ? (
         <div className="text-center py-20">
           <p className="text-5xl mb-4">📋</p>
-          <p className="text-neutral-400 mb-2">Esta lista está vacía.</p>
+          <p className="text-ink-2 mb-2">Esta lista está vacía.</p>
           {isOwner && (
-            <p className="text-sm text-neutral-500">
-              Usá el botón <span className="text-neutral-300">Agregar anime</span> de arriba,
+            <p className="text-sm text-ink-3">
+              Usá el botón <span className="text-ink-2">Agregar anime</span> de arriba,
               o andá a cualquier serie y usá el botón{" "}
-              <span className="text-neutral-300">📋 Listas</span>.
+              <span className="text-ink-2">📋 Listas</span>.
             </p>
           )}
         </div>
@@ -232,9 +232,9 @@ export default async function ListaDetailPage({ params }: Props) {
               )}
               <Link
                 href={`/series/${item.series_slug}`}
-                className="flex flex-col rounded-xl overflow-hidden bg-neutral-900 border border-neutral-800 hover:border-neutral-600 transition-all"
+                className="flex flex-col rounded-xl overflow-hidden bg-abyss-2 border border-line-1 hover:border-line-2 transition-all"
               >
-                <div className="relative aspect-[2/3] bg-neutral-800">
+                <div className="relative aspect-[2/3] bg-abyss-3">
                   {item.cover_url ? (
                     <Image
                       src={item.cover_url}
@@ -244,13 +244,13 @@ export default async function ListaDetailPage({ params }: Props) {
                       className="object-cover group-hover:scale-105 transition-transform duration-300"
                     />
                   ) : (
-                    <div className="w-full h-full flex items-center justify-center text-neutral-600 text-3xl">
+                    <div className="w-full h-full flex items-center justify-center text-ink-3 text-3xl">
                       🎬
                     </div>
                   )}
                 </div>
                 <div className="p-2">
-                  <p className="text-xs text-neutral-300 leading-tight line-clamp-2">
+                  <p className="text-xs text-ink-2 leading-tight line-clamp-2">
                     {item.series_title}
                   </p>
                 </div>

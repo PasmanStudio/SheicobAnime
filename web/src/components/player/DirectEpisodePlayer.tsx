@@ -8,11 +8,29 @@ interface Props {
   episodeTitle: string;
 }
 
+function FlameIcon() {
+  return (
+    <svg
+      width="13"
+      height="13"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z" />
+    </svg>
+  );
+}
+
 /**
  * Simple iframe-based episode player.
- * - SeekStreaming mirrors are branded "Sheicob" (shown first, highlighted gold)
- * - Other servers are collapsed under "Ver otros servidores ▼"
- * - No custom HTML5 player — relies on the embed provider's own player
+ * - SeekStreaming mirrors are branded "Sheicob" (shown first, flame icon)
+ * - Other servers are collapsed under "Ver otros servidores"
+ * - Mirrors como chips del design system; NUNCA un ad entre el player y estos controles
  */
 export default function DirectEpisodePlayer({ mirrors, episodeTitle }: Readonly<Props>) {
   const activeMirrors = useMemo(
@@ -32,16 +50,26 @@ export default function DirectEpisodePlayer({ mirrors, episodeTitle }: Readonly<
 
   if (!selected) {
     return (
-      <div className="aspect-video w-full bg-neutral-900 flex items-center justify-center rounded-lg border border-neutral-800">
-        <p className="text-neutral-400 text-sm">No hay enlaces disponibles para este episodio.</p>
+      <div className="aspect-video w-full bg-abyss-1 flex items-center justify-center rounded-modal border border-line-1">
+        <div className="text-sm text-ink-3 text-center px-4">
+          <p>Todavía no hay enlaces disponibles para este episodio.</p>
+          <p className="mt-1">Probá de nuevo en un rato — los mirrors se cargan apenas salen.</p>
+        </div>
       </div>
     );
   }
 
+  const chipClass = (active: boolean) =>
+    `inline-flex items-center gap-1.5 px-3 py-[7px] rounded-btn text-[13px] font-semibold transition-all duration-fast focus:outline-none focus-visible:shadow-focus ${
+      active
+        ? "bg-[var(--accent-muted)] text-brand-bright border border-[var(--accent-border)]"
+        : "bg-abyss-2 text-ink-2 border border-line-1 hover:border-line-2 hover:text-ink-1"
+    }`;
+
   return (
     <div>
       {/* ── Player ── */}
-      <div className="aspect-video w-full bg-black rounded-t-lg overflow-hidden shadow-2xl">
+      <div className="aspect-video w-full bg-black rounded-t-modal overflow-hidden border border-b-0 border-line-2">
         <iframe
           key={selected.id}
           src={selected.embedUrl}
@@ -53,18 +81,10 @@ export default function DirectEpisodePlayer({ mirrors, episodeTitle }: Readonly<
         />
       </div>
 
-      {/* ── Title bar ── */}
-      <div className="bg-neutral-900 border-x border-neutral-700/50 px-3 sm:px-4 py-2.5 flex items-center gap-2 min-w-0">
-        <h2 className="text-xs sm:text-sm font-bold text-white uppercase truncate flex-1 min-w-0">
-          <span className="text-orange-400">{episodeTitle}</span>
-        </h2>
-      </div>
-
-      {/* ── Mirror selector ── */}
-      <div className="bg-neutral-900/80 rounded-b-lg border border-t-0 border-neutral-700/50 overflow-hidden">
-        {/* Primary row: Sheicob + "ver otros" toggle */}
+      {/* ── Mirror selector — pegado al player, sin ads en el medio ── */}
+      <div className="bg-abyss-1 rounded-b-modal border border-t-0 border-line-2 overflow-hidden">
         <div className="px-3 sm:px-4 py-3 flex flex-wrap items-center gap-2">
-          <span className="text-xs text-neutral-500 uppercase tracking-wide shrink-0">Servidor:</span>
+          <span className="sh-label shrink-0 mr-1">Mirrors</span>
 
           {/* Sheicob (seekstreaming) buttons */}
           {sheicobMirrors.length > 0 ? (
@@ -73,16 +93,13 @@ export default function DirectEpisodePlayer({ mirrors, episodeTitle }: Readonly<
                 key={m.id}
                 onClick={() => setSelectedId(m.id)}
                 aria-pressed={selectedId === m.id}
-                className={`px-4 py-1.5 rounded text-sm font-bold transition-colors focus:outline-none focus:ring-2 focus:ring-amber-500 ${
-                  selectedId === m.id
-                    ? "bg-gradient-to-br from-amber-500 to-orange-600 text-black shadow-lg"
-                    : "bg-amber-950/40 text-amber-300 hover:bg-amber-900/60"
-                }`}
+                className={chipClass(selectedId === m.id)}
               >
                 Sheicob
                 {m.qualityLabel > 0 && (
-                  <span className="ml-1 text-xs opacity-75">{m.qualityLabel}p</span>
+                  <span className="sh-stat text-[10px] opacity-80">{m.qualityLabel}p</span>
                 )}
+                <FlameIcon />
               </button>
             ))
           ) : (
@@ -92,23 +109,21 @@ export default function DirectEpisodePlayer({ mirrors, episodeTitle }: Readonly<
                 key={m.id}
                 onClick={() => setSelectedId(m.id)}
                 aria-pressed={selectedId === m.id}
-                className={`px-4 py-1.5 rounded text-sm font-medium capitalize transition-colors ${
-                  selectedId === m.id
-                    ? "bg-orange-600 text-white"
-                    : "bg-neutral-800 text-neutral-300 hover:bg-neutral-700"
-                }`}
+                className={`${chipClass(selectedId === m.id)} capitalize`}
               >
                 {m.providerName}
-                {m.qualityLabel > 0 && <span className="ml-1 text-xs opacity-60">{m.qualityLabel}p</span>}
+                {m.qualityLabel > 0 && (
+                  <span className="sh-stat text-[10px] opacity-80">{m.qualityLabel}p</span>
+                )}
               </button>
             ))
           )}
 
-          {/* Toggle other servers — pushed right on wide screens, new row wraps naturally on narrow */}
+          {/* Toggle other servers — pushed right on wide screens */}
           {otherMirrors.length > 0 && (
             <button
               onClick={() => setShowOthers((v) => !v)}
-              className="sm:ml-auto px-3 py-1.5 rounded text-xs text-neutral-400 hover:text-white bg-neutral-800 hover:bg-neutral-700 transition-colors focus:outline-none focus:ring-2 focus:ring-neutral-500 whitespace-nowrap"
+              className="sm:ml-auto px-3 py-[7px] rounded-btn text-xs text-ink-3 hover:text-ink-1 bg-abyss-2 border border-line-1 hover:border-line-2 transition-all duration-fast focus:outline-none focus-visible:shadow-focus whitespace-nowrap"
             >
               Ver otros servidores {showOthers ? "▲" : "▼"}
             </button>
@@ -117,21 +132,17 @@ export default function DirectEpisodePlayer({ mirrors, episodeTitle }: Readonly<
 
         {/* Other servers (collapsed by default) */}
         {showOthers && otherMirrors.length > 0 && (
-          <div className="px-3 sm:px-4 pb-3 pt-2 flex flex-wrap gap-2 border-t border-neutral-700/40">
+          <div className="px-3 sm:px-4 pb-3 pt-2 flex flex-wrap gap-2 border-t border-line-1">
             {otherMirrors.map((m) => (
               <button
                 key={m.id}
                 onClick={() => setSelectedId(m.id)}
                 aria-pressed={selectedId === m.id}
-                className={`px-3 py-1.5 rounded text-sm capitalize transition-colors focus:outline-none focus:ring-2 focus:ring-neutral-500 ${
-                  selectedId === m.id
-                    ? "bg-orange-600 text-white"
-                    : "bg-neutral-800 text-neutral-300 hover:bg-neutral-700 hover:text-white"
-                }`}
+                className={`${chipClass(selectedId === m.id)} capitalize`}
               >
                 {m.providerName}
                 {m.qualityLabel > 0 && (
-                  <span className="ml-1 text-xs opacity-60">{m.qualityLabel}p</span>
+                  <span className="sh-stat text-[10px] opacity-80">{m.qualityLabel}p</span>
                 )}
               </button>
             ))}

@@ -1,14 +1,13 @@
 import { auth } from "@/lib/auth";
 import { getDb } from "@/lib/db";
 import {
-  WATCH_STATUS_COLORS,
-  WATCH_STATUS_ICONS,
   WATCH_STATUS_LABELS,
   WATCH_STATUSES,
   type WatchEntry,
   type WatchStatus,
 } from "@/lib/watchlist";
 import AdSlot from "@/components/ads/AdSlot";
+import SectionHeader from "@/components/ui/SectionHeader";
 import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
@@ -48,15 +47,14 @@ export default async function GuardadoPage({ searchParams }: Props) {
 
   if (!session?.user?.id) {
     return (
-      <div className="container mx-auto px-4 py-16 max-w-2xl text-center">
-        <p className="text-5xl mb-4">🔒</p>
-        <h1 className="text-2xl font-bold text-white mb-2">Iniciá sesión</h1>
-        <p className="text-neutral-400 mb-6">
-          Necesitás una cuenta para guardar tu lista de anime.
-        </p>
+      <div className="mx-auto max-w-2xl px-4 py-16 text-center">
+        <h1 className="sh-display mb-2 text-2xl">Iniciá sesión</h1>
+        <p className="mb-1 text-ink-2">Necesitás una cuenta para guardar tu lista de anime.</p>
+        <p className="mb-6 text-sm text-ink-3">Entrá con tu cuenta y empezá a armarla hoy.</p>
         <Link
           href="/"
-          className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium transition-colors"
+          className="inline-flex items-center gap-2 rounded-btn px-5 py-2.5 font-bold text-[var(--text-on-accent)] shadow-glow transition-all duration-fast hover:brightness-110 active:scale-[0.97]"
+          style={{ background: "var(--grad-action)" }}
         >
           Volver al inicio
         </Link>
@@ -81,55 +79,45 @@ export default async function GuardadoPage({ searchParams }: Props) {
     // Non-fatal — tabs render without counts
   }
 
+  const tabClass = (active: boolean) =>
+    `flex items-center gap-1.5 px-3 py-1.5 rounded-btn text-sm font-semibold transition-colors duration-fast border ${
+      active
+        ? "bg-[var(--accent-muted)] border-[var(--accent-border)] text-brand-bright"
+        : "border-line-1 bg-abyss-2 text-ink-3 hover:text-ink-1 hover:border-line-2"
+    }`;
+
   return (
-    <div className="container mx-auto px-4 py-8 max-w-5xl">
-      <h1 className="text-2xl font-bold text-white mb-6">Mi lista guardada</h1>
+    <div className="mx-auto max-w-5xl px-4 py-8">
+      <SectionHeader size="lg" title="Mi lista guardada" className="mb-6" />
 
       {/* Status tabs */}
       <div className="flex flex-wrap gap-2 mb-6">
-        <Link
-          href="/guardado"
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors border
-            ${!activeStatus
-              ? "bg-indigo-600/20 border-indigo-600/50 text-indigo-300"
-              : "border-neutral-700 text-neutral-400 hover:text-white hover:border-neutral-500"}`}
-        >
+        <Link href="/guardado" className={tabClass(!activeStatus)}>
           Todo
           {totalCount > 0 && (
-            <span className="text-xs bg-neutral-700 px-1.5 py-0.5 rounded-full">{totalCount}</span>
+            <span className="sh-stat text-[11px] opacity-80">{totalCount}</span>
           )}
         </Link>
         {WATCH_STATUSES.map((s) => (
-          <Link
-            key={s}
-            href={`/guardado?status=${s}`}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors border
-              ${activeStatus === s
-                ? "bg-indigo-600/20 border-indigo-600/50 text-indigo-300"
-                : "border-neutral-700 text-neutral-400 hover:text-white hover:border-neutral-500"}`}
-          >
-            <span>{WATCH_STATUS_ICONS[s]}</span>
+          <Link key={s} href={`/guardado?status=${s}`} className={tabClass(activeStatus === s)}>
             {WATCH_STATUS_LABELS[s]}
             {countMap[s] > 0 && (
-              <span className="text-xs bg-neutral-700 px-1.5 py-0.5 rounded-full">{countMap[s]}</span>
+              <span className="sh-stat text-[11px] opacity-80">{countMap[s]}</span>
             )}
           </Link>
         ))}
       </div>
 
-      {/* Ad — top */}
-      <div className="mb-6 flex justify-center">
-        <AdSlot placement="profile_top" />
-      </div>
-
       {/* Grid */}
       {entries.length === 0 ? (
-        <div className="text-center py-16">
-          <p className="text-5xl mb-4">📋</p>
-          <p className="text-neutral-400">
+        <div className="py-16 text-center text-sm">
+          <p className="text-ink-2">
             {activeStatus
               ? `No tenés animes marcados como "${WATCH_STATUS_LABELS[activeStatus]}".`
-              : "Tu lista está vacía. Andá a cualquier anime y guardalo."}
+              : "Tu lista está vacía."}
+          </p>
+          <p className="mt-1 text-ink-3">
+            Andá a cualquier anime y guardalo — aparece acá al instante.
           </p>
         </div>
       ) : (
@@ -138,31 +126,32 @@ export default async function GuardadoPage({ searchParams }: Props) {
             <Link
               key={entry.series_slug}
               href={`/series/${entry.series_slug}`}
-              className="group relative rounded-xl overflow-hidden bg-neutral-900 border border-neutral-800 hover:border-neutral-600 transition-all"
+              className="group relative overflow-hidden rounded-card border border-line-1 bg-abyss-2 transition-all duration-fast hover:-translate-y-0.5 hover:border-line-2 hover:shadow-card"
             >
-              <div className="relative aspect-[2/3] bg-neutral-800">
+              <div className="relative aspect-[2/3] bg-abyss-3">
                 {entry.cover_url ? (
                   <Image
                     src={entry.cover_url}
                     alt={entry.series_title}
                     fill
                     sizes="(max-width: 640px) 45vw, (max-width: 1024px) 30vw, 200px"
-                    className="object-cover group-hover:scale-105 transition-transform duration-300"
+                    className="object-cover transition-transform duration-300 group-hover:scale-[1.04]"
                   />
                 ) : (
-                  <div className="w-full h-full flex items-center justify-center text-neutral-600 text-3xl">
-                    🎬
+                  <div className="flex h-full w-full items-center justify-center font-display text-3xl italic font-black text-[rgba(255,255,255,0.14)]">
+                    {entry.series_title.trim()[0]?.toUpperCase() ?? "?"}
                   </div>
                 )}
                 {/* Status badge */}
-                <div className={`absolute top-2 left-2 flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border backdrop-blur-sm bg-neutral-900/80 ${WATCH_STATUS_COLORS[entry.status]}`}>
-                  {WATCH_STATUS_ICONS[entry.status]} {WATCH_STATUS_LABELS[entry.status]}
+                <div className="absolute left-2 top-2 rounded-badge bg-[rgba(5,7,11,0.78)] px-2 py-[3px] font-mono text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--cyan-300)] backdrop-blur-[4px]">
+                  {WATCH_STATUS_LABELS[entry.status]}
                 </div>
-              </div>
-              <div className="p-2">
-                <p className="text-xs text-neutral-300 leading-tight line-clamp-2">
-                  {entry.series_title}
-                </p>
+                {/* Protección + título sobre la imagen */}
+                <div className="sh-protect absolute inset-x-0 bottom-0 px-2.5 pb-2.5 pt-7">
+                  <p className="sh-title line-clamp-2 text-[13px] transition-colors duration-fast group-hover:text-[var(--cyan-200)]">
+                    {entry.series_title}
+                  </p>
+                </div>
               </div>
             </Link>
           ))}
