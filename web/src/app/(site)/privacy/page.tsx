@@ -9,17 +9,17 @@ export default function PrivacyPolicyPage() {
   return (
     <div className="container mx-auto max-w-3xl px-4 py-12">
       <h1 className="text-3xl font-bold mb-8">Política de Privacidad</h1>
-      <p className="text-neutral-400 text-sm mb-8">
+      <p className="text-ink-2 text-sm mb-8">
         Última actualización: {new Date().toLocaleDateString("es-AR", { year: "numeric", month: "long", day: "numeric" })}
       </p>
 
-      <div className="space-y-8 text-neutral-300 leading-relaxed">
+      <div className="space-y-8 text-ink-2 leading-relaxed">
         <section>
           <h2 className="text-xl font-semibold text-white mb-3">1. Información que recopilamos</h2>
           <p>
             SheicobAnime no requiere registro de usuario. Recopilamos la siguiente información de forma automática:
           </p>
-          <ul className="list-disc list-inside mt-2 space-y-1 text-neutral-400">
+          <ul className="list-disc list-inside mt-2 space-y-1 text-ink-2">
             <li>Dirección IP (para rate limiting y seguridad)</li>
             <li>Datos de navegación (páginas visitadas, tiempo de permanencia)</li>
             <li>Información del dispositivo (navegador, sistema operativo)</li>
@@ -30,7 +30,7 @@ export default function PrivacyPolicyPage() {
         <section>
           <h2 className="text-xl font-semibold text-white mb-3">2. Uso de cookies y almacenamiento local</h2>
           <p>Utilizamos:</p>
-          <ul className="list-disc list-inside mt-2 space-y-1 text-neutral-400">
+          <ul className="list-disc list-inside mt-2 space-y-1 text-ink-2">
             <li><strong>localStorage:</strong> Para guardar tu consentimiento de publicidad y búsquedas recientes. Estos datos nunca salen de tu navegador.</li>
             <li>
               <strong>Cookie <code>sheicob_did</code>:</strong> Un identificador anónimo aleatorio (UUID) generado por nuestro servidor
@@ -53,7 +53,7 @@ export default function PrivacyPolicyPage() {
           <p className="mt-2">
             Proveedores publicitarios actuales:
           </p>
-          <ul className="list-disc list-inside mt-2 space-y-1 text-neutral-400">
+          <ul className="list-disc list-inside mt-2 space-y-1 text-ink-2">
             <li>Adsterra — <a href="https://adsterra.com/privacy-policy/" className="text-blue-400 hover:underline" target="_blank" rel="noopener noreferrer">Política de privacidad</a></li>
           </ul>
         </section>
@@ -96,7 +96,7 @@ export default function PrivacyPolicyPage() {
         <section>
           <h2 className="text-xl font-semibold text-white mb-3">8. Tus derechos</h2>
           <p>Podés:</p>
-          <ul className="list-disc list-inside mt-2 space-y-1 text-neutral-400">
+          <ul className="list-disc list-inside mt-2 space-y-1 text-ink-2">
             <li>Borrar tu almacenamiento local desde la configuración del navegador</li>
             <li>Bloquear cookies de terceros desde tu navegador</li>
             <li>Usar extensiones de bloqueo de anuncios</li>

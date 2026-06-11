@@ -1,4 +1,6 @@
-import type { Series, SeriesStatus, SeriesType } from "@/lib/types";
+import ScoreBadge from "@/components/ui/ScoreBadge";
+import StatusBadge from "@/components/ui/StatusBadge";
+import type { Series, SeriesType } from "@/lib/types";
 import Image from "next/image";
 import Link from "next/link";
 
@@ -10,79 +12,61 @@ const TYPE_LABELS: Record<SeriesType, string> = {
   special: "Especial",
 };
 
-const STATUS_LABELS: Record<SeriesStatus, string> = {
-  ongoing: "En emisión",
-  completed: "Concluido",
-  upcoming: "Por estrenar",
-  hiatus: "En pausa",
-};
-
-const STATUS_COLORS: Record<SeriesStatus, string> = {
-  ongoing: "bg-green-600",
-  completed: "bg-blue-600",
-  upcoming: "bg-amber-600",
-  hiatus: "bg-neutral-600",
-};
-
 interface SeriesCardProps {
   series: Series;
+  className?: string;
 }
 
-export default function SeriesCard({ series }: SeriesCardProps) {
+/**
+ * Card de poster 2:3 del design system — la info va SOBRE la imagen
+ * con protección .sh-protect (gradiente hacia --bg-0), no debajo.
+ * Hover: borde claro + lift + zoom sutil de imagen.
+ */
+export default function SeriesCard({ series, className = "" }: SeriesCardProps) {
   return (
     <Link
       href={`/series/${series.slug}`}
-      className="group block rounded-lg overflow-hidden bg-neutral-800 hover:ring-2 hover:ring-indigo-500 transition-all"
+      className={`group block overflow-hidden rounded-card border border-line-1 bg-abyss-2 transition-all duration-fast hover:border-line-2 hover:-translate-y-0.5 hover:shadow-card ${className}`}
     >
-      {/* Cover image — 2:3 aspect ratio */}
-      <div className="relative aspect-[2/3] bg-neutral-700 overflow-hidden">
+      <div className="relative aspect-[2/3] overflow-hidden bg-abyss-3">
         {series.coverUrl ? (
           <Image
             src={series.coverUrl}
             alt={series.title}
             fill
             sizes="(max-width: 640px) 50vw, (max-width: 1024px) 25vw, 16vw"
-            className="object-cover group-hover:scale-105 transition-transform duration-300"
+            className="object-cover transition-transform duration-300 group-hover:scale-[1.04]"
           />
         ) : (
-          <div className="w-full h-full flex items-center justify-center text-neutral-500 text-xs text-center px-2">
-            No cover
+          <div className="flex h-full w-full items-center justify-center px-2 text-center font-display text-4xl italic font-black text-[rgba(255,255,255,0.14)]">
+            {series.title.trim()[0]?.toUpperCase() ?? "?"}
           </div>
         )}
 
-        {/* Type + Status badges (top) */}
-        <div className="absolute top-1.5 left-1.5 flex flex-wrap gap-1">
-          {series.type && (
-            <span className="bg-indigo-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded">
+        {/* Badges superiores: tipo + score */}
+        <div className="absolute inset-x-2 top-2 flex items-start justify-between gap-1.5">
+          {series.type ? (
+            <span className="rounded-badge bg-[rgba(5,7,11,0.78)] px-[7px] py-[3px] text-[10px] font-bold text-[var(--cyan-300)] backdrop-blur-[4px]">
               {TYPE_LABELS[series.type] ?? series.type}
             </span>
+          ) : (
+            <span />
           )}
-          {series.status && (
-            <span className={`${STATUS_COLORS[series.status] ?? "bg-neutral-600"} text-white text-[10px] font-bold px-1.5 py-0.5 rounded`}>
-              {STATUS_LABELS[series.status] ?? series.status}
-            </span>
-          )}
+          <ScoreBadge score={series.score} overlay />
         </div>
 
-        {series.score !== null && (
-          <span className={`absolute top-1.5 right-1.5 bg-black/75 text-xs font-bold px-1.5 py-0.5 rounded ${
-            series.score >= 8 ? "text-green-400" :
-            series.score >= 6 ? "text-amber-400" :
-                                "text-neutral-400"
-          }`}>
-            ★ {series.score.toFixed(1)}
+        {/* Protección + info sobre la imagen */}
+        <div className="sh-protect absolute inset-x-0 bottom-0 flex flex-col gap-[5px] px-2.5 pb-2.5 pt-7">
+          <h3 className="sh-title line-clamp-2 text-[13px] transition-colors duration-fast group-hover:text-[var(--cyan-200)]">
+            {series.title}
+          </h3>
+          <span className="flex items-center gap-2">
+            {series.year && (
+              <span className="font-mono text-[10px] tabular-nums text-ink-3">{series.year}</span>
+            )}
+            {series.status === "ongoing" && <StatusBadge status="ongoing" compact />}
           </span>
-        )}
-      </div>
-
-      {/* Title */}
-      <div className="p-2">
-        <h3 className="text-sm font-medium text-white line-clamp-2 leading-snug">
-          {series.title}
-        </h3>
-        {series.year && (
-          <p className="text-xs text-neutral-500 mt-0.5">{series.year}</p>
-        )}
+        </div>
       </div>
     </Link>
   );

@@ -17,10 +17,10 @@ export interface CommentSectionProps {
 function LoadingSkeleton() {
   return (
     <div className="space-y-3 animate-pulse">
-      <div className="h-4 bg-neutral-800 rounded w-1/3" />
-      <div className="h-20 bg-neutral-800 rounded" />
-      <div className="h-4 bg-neutral-800 rounded w-2/3" />
-      <div className="h-4 bg-neutral-800 rounded w-1/2" />
+      <div className="h-4 bg-abyss-3 rounded w-1/3" />
+      <div className="h-20 bg-abyss-3 rounded" />
+      <div className="h-4 bg-abyss-3 rounded w-2/3" />
+      <div className="h-4 bg-abyss-3 rounded w-1/2" />
     </div>
   );
 }
@@ -58,7 +58,7 @@ export default function CommentSection({ pageId, pageUrl }: CommentSectionProps)
 
   if (provider === "native") {
     return (
-      <p className="text-neutral-500 text-sm">
+      <p className="text-ink-3 text-sm">
         Native comments coming soon.
       </p>
     );

@@ -1,4 +1,6 @@
 import AdSlot from "@/components/ads/AdSlot";
+import RankNumber from "@/components/ui/RankNumber";
+import SectionHeader from "@/components/ui/SectionHeader";
 import type { RankingEntry } from "@/app/api/ranking/route";
 import type { Metadata } from "next";
 import Image from "next/image";
@@ -54,75 +56,72 @@ export default async function RankingPage() {
   const entries = await getRanking();
 
   return (
-    <div className="container mx-auto px-4 py-8 max-w-3xl">
+    <div className="mx-auto max-w-3xl px-4 py-8">
       {/* Header */}
-      <div className="mb-8">
-        <h1 className="text-2xl md:text-3xl font-bold text-white flex items-center gap-3">
-          <span className="text-rose-400" aria-hidden>♥</span>
-          Ranking de Anime
-        </h1>
-        <p className="mt-1 text-sm text-neutral-500">
-          Los más populares de nuestra comunidad, ordenados por likes.
-        </p>
-      </div>
-
-      <AdSlot placement="profile_top" />
+      <SectionHeader
+        size="lg"
+        eyebrow="Votado por la comunidad"
+        title="Ranking de anime"
+        className="mb-8"
+      />
 
       {entries.length === 0 ? (
-        <div className="text-center py-24">
-          <p className="text-5xl mb-4">🏆</p>
-          <p className="text-neutral-400 mb-1">Todavía no hay likes registrados.</p>
-          <p className="text-sm text-neutral-600">
+        <div className="py-24 text-center text-sm">
+          <p className="text-ink-2">Todavía no hay likes registrados.</p>
+          <p className="mt-1 text-ink-3">
             Visitá cualquier anime y presioná el botón ♥ para aparecer acá.
           </p>
         </div>
       ) : (
         <ol className="space-y-2">
-          {entries.map((entry, idx) => (
-            <li key={entry.series_slug}>
-              <Link
-                href={`/series/${entry.series_slug}`}
-                className="flex items-center gap-4 px-4 py-3 rounded-xl bg-neutral-900 border border-neutral-800
-                  hover:border-neutral-700 hover:bg-neutral-800/70 transition-colors group"
-              >
-                {/* Position */}
-                <span
-                  className={`w-8 shrink-0 text-center text-sm font-bold tabular-nums
-                    ${idx === 0 ? "text-yellow-400" : idx === 1 ? "text-neutral-300" : idx === 2 ? "text-amber-600" : "text-neutral-600"}`}
+          {entries.map((entry, idx) => {
+            const podium = idx < 3;
+            return (
+              <li key={entry.series_slug}>
+                <Link
+                  href={`/series/${entry.series_slug}`}
+                  className={`group flex items-center gap-4 rounded-card px-3 py-2.5 transition-all duration-fast border ${
+                    podium
+                      ? "bg-abyss-2 border-line-1 hover:border-line-2"
+                      : "border-transparent hover:bg-abyss-2 hover:border-line-1"
+                  }`}
                 >
-                  {idx + 1}
-                </span>
+                  {/* Position — #1 dorado, #2 plata, #3 bronce */}
+                  <RankNumber rank={idx + 1} size={podium ? "lg" : "md"} />
 
-                {/* Cover */}
-                <div className="shrink-0 w-10 h-14 rounded overflow-hidden bg-neutral-800">
-                  {entry.cover_url ? (
-                    <Image
-                      src={entry.cover_url}
-                      alt={entry.series_title}
-                      width={40}
-                      height={56}
-                      className="w-full h-full object-cover"
-                    />
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center text-neutral-600 text-lg">🎬</div>
-                  )}
-                </div>
+                  {/* Cover */}
+                  <div className="shrink-0 w-[42px] aspect-[2/3] rounded-badge overflow-hidden bg-abyss-3">
+                    {entry.cover_url ? (
+                      <Image
+                        src={entry.cover_url}
+                        alt={entry.series_title}
+                        width={42}
+                        height={63}
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <div className="flex h-full w-full items-center justify-center font-display italic font-black text-ink-3">
+                        {entry.series_title.trim()[0]?.toUpperCase() ?? "?"}
+                      </div>
+                    )}
+                  </div>
 
-                {/* Title */}
-                <span className="flex-1 min-w-0 text-sm font-medium text-neutral-200 group-hover:text-white transition-colors truncate">
-                  {entry.series_title}
-                </span>
+                  {/* Title */}
+                  <span className="sh-title flex-1 min-w-0 truncate text-sm group-hover:text-[var(--cyan-200)] transition-colors duration-fast">
+                    {entry.series_title}
+                  </span>
 
-                {/* Like count */}
-                <span className="shrink-0 flex items-center gap-1.5 text-sm text-rose-400 font-semibold tabular-nums">
-                  <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-                    <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
-                  </svg>
-                  {entry.like_count.toLocaleString("es-AR")}
-                </span>
-              </Link>
-            </li>
-          ))}
+                  {/* Like count — mono, dorado para el #1 */}
+                  <span
+                    className="sh-stat shrink-0 text-[13px] min-w-[70px] text-right"
+                    style={{ color: idx === 0 ? "var(--gold)" : "var(--text-2)" }}
+                  >
+                    ♥ {entry.like_count.toLocaleString("es-AR")}
+                  </span>
+                </Link>
+              </li>
+            );
+          })}
         </ol>
       )}
 

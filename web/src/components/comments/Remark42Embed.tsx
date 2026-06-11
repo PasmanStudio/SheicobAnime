@@ -63,7 +63,7 @@ export default function Remark42Embed({ pageId, pageUrl }: Remark42EmbedProps) {
 
   if (!remark42Url) {
     return (
-      <p className="text-neutral-500 text-sm">
+      <p className="text-ink-3 text-sm">
         Comments unavailable — REMARK42_URL not configured.
       </p>
     );

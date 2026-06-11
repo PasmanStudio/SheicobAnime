@@ -49,7 +49,7 @@ export default function CreateTierListButton() {
     return (
       <button
         onClick={handleOpen}
-        className="flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium transition-colors"
+        className="flex items-center gap-2 px-4 py-2 rounded-lg bg-brand text-[var(--text-on-accent)] hover:brightness-110 text-sm font-medium transition-colors"
       >
         <span className="text-base leading-none">＋</span>
         Nueva tier list
@@ -60,7 +60,7 @@ export default function CreateTierListButton() {
   return (
     <form
       onSubmit={handleSubmit}
-      className="flex items-center gap-2 bg-neutral-800 border border-neutral-700 rounded-xl px-3 py-2"
+      className="flex items-center gap-2 bg-abyss-3 border border-line-2 rounded-xl px-3 py-2"
     >
       <input
         ref={inputRef}
@@ -69,14 +69,14 @@ export default function CreateTierListButton() {
         onChange={(e) => setName(e.target.value)}
         placeholder="Nombre de la tier list…"
         maxLength={80}
-        className="bg-transparent text-sm text-white placeholder-neutral-500 outline-none flex-1 min-w-0"
+        className="bg-transparent text-sm text-white placeholder-[var(--text-3)] outline-none flex-1 min-w-0"
         disabled={loading}
       />
       {error && <span className="text-xs text-red-400 shrink-0">{error}</span>}
       <button
         type="submit"
         disabled={loading || !name.trim()}
-        className="px-3 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-medium transition-colors shrink-0"
+        className="px-3 py-1 rounded-lg bg-brand text-[var(--text-on-accent)] hover:brightness-110 disabled:opacity-50 text-white text-xs font-medium transition-colors shrink-0"
       >
         {loading ? (
           <span className="w-3.5 h-3.5 inline-block rounded-full border-2 border-white border-t-transparent animate-spin" />
@@ -87,7 +87,7 @@ export default function CreateTierListButton() {
       <button
         type="button"
         onClick={() => setOpen(false)}
-        className="text-neutral-500 hover:text-neutral-300 transition-colors text-lg leading-none shrink-0"
+        className="text-ink-3 hover:text-ink-1 transition-colors text-lg leading-none shrink-0"
         aria-label="Cancelar"
       >
         ✕

@@ -36,7 +36,7 @@ export default function ProfileEditModal({ currentName, currentUsername, current
       {/* Trigger button */}
       <button
         onClick={() => setOpen(true)}
-        className="shrink-0 px-4 py-1.5 rounded-lg border border-neutral-700 text-sm text-neutral-300 hover:text-white hover:border-neutral-500 transition-colors"
+        className="shrink-0 px-4 py-1.5 rounded-lg border border-line-2 text-sm text-ink-2 hover:text-white hover:border-line-2 transition-colors"
       >
         Editar perfil
       </button>
@@ -47,12 +47,12 @@ export default function ProfileEditModal({ currentName, currentUsername, current
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4"
           onClick={(e) => { if (e.target === e.currentTarget) setOpen(false); }}
         >
-          <div className="w-full max-w-md rounded-2xl bg-neutral-900 border border-neutral-700 shadow-2xl p-6">
+          <div className="w-full max-w-md rounded-2xl bg-abyss-2 border border-line-2 shadow-2xl p-6">
             <div className="flex items-center justify-between mb-5">
               <h2 className="text-lg font-semibold text-white">Editar perfil</h2>
               <button
                 onClick={() => setOpen(false)}
-                className="text-neutral-500 hover:text-white transition-colors text-xl leading-none"
+                className="text-ink-3 hover:text-white transition-colors text-xl leading-none"
               >
                 ✕
               </button>
@@ -61,7 +61,7 @@ export default function ProfileEditModal({ currentName, currentUsername, current
             <form ref={formRef} onSubmit={handleSubmit} className="space-y-4">
               {/* Display name */}
               <div>
-                <label className="block text-xs text-neutral-400 mb-1.5 font-medium">
+                <label className="block text-xs text-ink-2 mb-1.5 font-medium">
                   Nombre visible
                 </label>
                 <input
@@ -70,17 +70,17 @@ export default function ProfileEditModal({ currentName, currentUsername, current
                   defaultValue={currentName ?? ""}
                   maxLength={60}
                   placeholder="Tu nombre"
-                  className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-white placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors"
+                  className="w-full bg-abyss-3 border border-line-2 rounded-lg px-3 py-2 text-sm text-white placeholder-[var(--text-3)] focus:outline-none focus:border-brand transition-colors"
                 />
               </div>
 
               {/* Username */}
               <div>
-                <label className="block text-xs text-neutral-400 mb-1.5 font-medium">
-                  Nombre de usuario <span className="text-neutral-600">(solo letras, números, _ y .)</span>
+                <label className="block text-xs text-ink-2 mb-1.5 font-medium">
+                  Nombre de usuario <span className="text-ink-3">(solo letras, números, _ y .)</span>
                 </label>
-                <div className="flex items-center bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 focus-within:border-indigo-500 transition-colors">
-                  <span className="text-neutral-500 text-sm mr-1">@</span>
+                <div className="flex items-center bg-abyss-3 border border-line-2 rounded-lg px-3 py-2 focus-within:border-brand transition-colors">
+                  <span className="text-ink-3 text-sm mr-1">@</span>
                   <input
                     name="username"
                     type="text"
@@ -88,15 +88,15 @@ export default function ProfileEditModal({ currentName, currentUsername, current
                     maxLength={30}
                     placeholder="tu_usuario"
                     pattern="[a-zA-Z0-9_.\-]*"
-                    className="flex-1 bg-transparent text-sm text-white placeholder-neutral-500 focus:outline-none"
+                    className="flex-1 bg-transparent text-sm text-white placeholder-[var(--text-3)] focus:outline-none"
                   />
                 </div>
               </div>
 
               {/* Bio */}
               <div>
-                <label className="block text-xs text-neutral-400 mb-1.5 font-medium">
-                  Bio <span className="text-neutral-600">(máx. 300 caracteres)</span>
+                <label className="block text-xs text-ink-2 mb-1.5 font-medium">
+                  Bio <span className="text-ink-3">(máx. 300 caracteres)</span>
                 </label>
                 <textarea
                   name="bio"
@@ -104,7 +104,7 @@ export default function ProfileEditModal({ currentName, currentUsername, current
                   maxLength={300}
                   rows={3}
                   placeholder="Contá algo sobre vos..."
-                  className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-white placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors resize-none"
+                  className="w-full bg-abyss-3 border border-line-2 rounded-lg px-3 py-2 text-sm text-white placeholder-[var(--text-3)] focus:outline-none focus:border-brand transition-colors resize-none"
                 />
               </div>
 
@@ -120,14 +120,14 @@ export default function ProfileEditModal({ currentName, currentUsername, current
                 <button
                   type="button"
                   onClick={() => setOpen(false)}
-                  className="flex-1 py-2 rounded-lg border border-neutral-700 text-sm text-neutral-400 hover:text-white hover:border-neutral-500 transition-colors"
+                  className="flex-1 py-2 rounded-lg border border-line-2 text-sm text-ink-2 hover:text-white hover:border-line-2 transition-colors"
                 >
                   Cancelar
                 </button>
                 <button
                   type="submit"
                   disabled={isPending}
-                  className="flex-1 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-sm text-white font-medium transition-colors"
+                  className="flex-1 py-2 rounded-lg bg-brand text-[var(--text-on-accent)] hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed text-sm text-white font-medium transition-colors"
                 >
                   {isPending ? "Guardando…" : "Guardar cambios"}
                 </button>

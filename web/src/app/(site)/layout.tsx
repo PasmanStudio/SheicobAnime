@@ -1,20 +1,31 @@
 import AdsterraGlobalAds from "@/components/ads/AdsterraGlobalAds";
 import ConsentBanner from "@/components/ads/ConsentBanner";
+import PageViewTracker from "@/components/ads/PageViewTracker";
 import AuthProvider from "@/components/auth/AuthProvider";
+import MobileBottomNav from "@/components/layout/MobileBottomNav";
+import SiteFooter from "@/components/layout/SiteFooter";
 import SiteHeader from "@/components/layout/SiteHeader";
 import { siteUrl } from "@/lib/site-url";
 import type { Metadata, Viewport } from "next";
+import { Archivo } from "next/font/google";
 import localFont from "next/font/local";
 import "../globals.css";
 
+// Display: Archivo expandido (eje wdth habilita el 118% del design system)
+const archivo = Archivo({
+  subsets: ["latin"],
+  style: ["normal", "italic"],
+  axes: ["wdth"],
+  variable: "--font-display",
+});
 const geistSans = localFont({
   src: "../fonts/GeistVF.woff",
-  variable: "--font-geist-sans",
+  variable: "--font-body",
   weight: "100 900",
 });
 const geistMono = localFont({
   src: "../fonts/GeistMonoVF.woff",
-  variable: "--font-geist-mono",
+  variable: "--font-mono",
   weight: "100 900",
 });
 
@@ -52,7 +63,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className="dark">
+    <html lang="es" className="dark">
       <head>
         {/*
           ExoClick Client Hints delegation — improves VAST ad targeting for the
@@ -65,21 +76,17 @@ export default function RootLayout({
         />
       </head>
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased bg-neutral-950 text-white min-h-screen flex flex-col`}
+        className={`${archivo.variable} ${geistSans.variable} ${geistMono.variable} antialiased bg-abyss-0 text-ink-1 min-h-screen flex flex-col`}
       >
         <AuthProvider>
           <SiteHeader />
-          <main className="flex-1">{children}</main>
-          <footer className="border-t border-neutral-800 py-6 pb-[calc(1.5rem+env(safe-area-inset-bottom))] text-center text-xs text-neutral-600">
-            <p>© {new Date().getFullYear()} SheicobAnime — indexes publicly embeddable mirrors only.</p>
-            <p className="mt-2">
-              <a href="/privacy" className="hover:text-neutral-400 underline">Política de Privacidad</a>
-              {" · "}
-              <a href="/dmca" className="hover:text-neutral-400 underline">DMCA</a>
-            </p>
-          </footer>
+          {/* pb extra en móvil para que la bottom nav no tape contenido */}
+          <main className="flex-1 pb-14 md:pb-0">{children}</main>
+          <SiteFooter />
+          <MobileBottomNav />
           <ConsentBanner />
           <AdsterraGlobalAds />
+          <PageViewTracker />
         </AuthProvider>
       </body>
     </html>

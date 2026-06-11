@@ -48,11 +48,11 @@ export default function LoginModal({ onClose }: LoginModalProps) {
       aria-modal="true"
       aria-label="Iniciar sesión"
     >
-      <div className="relative w-full max-w-sm rounded-2xl bg-neutral-900 border border-neutral-700 p-8 shadow-2xl">
+      <div className="relative w-full max-w-sm rounded-2xl bg-abyss-2 border border-line-2 p-8 shadow-2xl">
         {/* Close button */}
         <button
           onClick={onClose}
-          className="absolute top-4 right-4 p-1.5 rounded-md text-neutral-500 hover:text-white hover:bg-neutral-800 transition-colors"
+          className="absolute top-4 right-4 p-1.5 rounded-md text-ink-3 hover:text-white hover:bg-abyss-3 transition-colors"
           aria-label="Cerrar"
         >
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -63,7 +63,7 @@ export default function LoginModal({ onClose }: LoginModalProps) {
         {/* Header */}
         <div className="text-center mb-6">
           <h2 className="text-xl font-bold text-white">Iniciar sesión</h2>
-          <p className="text-sm text-neutral-400 mt-1.5">
+          <p className="text-sm text-ink-2 mt-1.5">
             Guardá tu progreso, listas y rankings.
           </p>
         </div>
@@ -108,9 +108,9 @@ export default function LoginModal({ onClose }: LoginModalProps) {
           </button>
         </div>
 
-        <p className="text-[11px] text-neutral-600 text-center mt-5 leading-relaxed">
+        <p className="text-[11px] text-ink-3 text-center mt-5 leading-relaxed">
           Al iniciar sesión aceptás nuestra{" "}
-          <a href="/privacy" className="underline hover:text-neutral-400">
+          <a href="/privacy" className="underline hover:text-ink-2">
             Política de Privacidad
           </a>
           .

@@ -2,7 +2,11 @@ import AdSlot from "@/components/ads/AdSlot";
 import LikeButton from "@/components/likes/LikeButton";
 import AddToListButton from "@/components/lists/AddToListButton";
 import AddToTierButton from "@/components/tierlist/AddToTierButton";
+import GenreChip from "@/components/ui/GenreChip";
 import Pagination from "@/components/ui/Pagination";
+import ScoreBadge from "@/components/ui/ScoreBadge";
+import SectionHeader from "@/components/ui/SectionHeader";
+import StatusBadge from "@/components/ui/StatusBadge";
 import WatchlistButton from "@/components/watchlist/WatchlistButton";
 import { ApiError, getSeriesBySlug, getSeriesEpisodes } from "@/lib/api";
 import { siteUrl } from "@/lib/site-url";
@@ -17,6 +21,14 @@ interface Props {
   params: Promise<{ slug: string }>;
   searchParams: Promise<{ page?: string }>;
 }
+
+const TYPE_LABELS: Record<string, string> = {
+  tv: "Serie",
+  movie: "Película",
+  ova: "OVA",
+  ona: "ONA",
+  special: "Especial",
+};
 
 export async function generateMetadata({ params }: Pick<Props, "params">): Promise<Metadata> {
   try {
@@ -87,6 +99,20 @@ export default async function SeriesPage({ params, searchParams }: Props) {
     ...(series.studio ? { productionCompany: { "@type": "Organization", name: series.studio } } : {}),
   };
 
+  const heroImage = series.bannerUrl ?? series.coverUrl;
+
+  const details: Array<[string, string]> = [];
+  if (series.type) details.push(["Tipo", TYPE_LABELS[series.type] ?? series.type.toUpperCase()]);
+  if (series.year) details.push(["Año", String(series.year)]);
+  if (series.studio) details.push(["Estudio", series.studio]);
+  if (series.season) details.push(["Temporada", series.season]);
+  if (series.demographics) details.push(["Demografía", series.demographics]);
+  if (series.episodeCount) details.push(["Episodios", String(series.episodeCount)]);
+  if (series.durationMinutes !== null) details.push(["Duración", `${series.durationMinutes} min`]);
+  if (series.airedDate) details.push(["Emitido", series.airedDate]);
+  if (series.language) details.push(["Idioma", series.language]);
+  if (series.quality) details.push(["Calidad", series.quality]);
+
   return (
     <>
       <script
@@ -95,230 +121,196 @@ export default async function SeriesPage({ params, searchParams }: Props) {
           __html: JSON.stringify(jsonLd).replace(/<\/script>/gi, "<\\/script>"),
         }}
       />
-      <div className="container mx-auto px-4 py-8">
-      {/* Hero */}
-      <div className="flex flex-col md:flex-row gap-6 mb-8 items-center md:items-start">
-        {/* Cover */}
-        <div className="shrink-0 w-36 sm:w-44 md:w-52 self-center md:self-start mx-auto md:mx-0">
-          <div className="relative aspect-[2/3] rounded-lg overflow-hidden bg-neutral-800 shadow-xl">
-            {series.coverUrl ? (
-              <Image
-                src={series.coverUrl}
-                alt={series.title}
-                fill
-                sizes="(max-width: 768px) 44vw, 208px"
-                className="object-cover"
-                priority
-              />
-            ) : (
-              <div className="w-full h-full flex items-center justify-center text-neutral-500 text-sm">
-                No cover
-              </div>
+
+      {/* ── Hero: poster blureado de fondo + protección hacia el abismo ── */}
+      <div className="relative border-b border-line-1">
+        {heroImage && (
+          <div className="absolute inset-0 overflow-hidden">
+            <Image
+              src={heroImage}
+              alt=""
+              fill
+              sizes="100vw"
+              className="object-cover opacity-50 blur-[28px] saturate-[1.2] scale-[1.2]"
+              priority
+            />
+            <div
+              className="absolute inset-0"
+              style={{
+                background:
+                  "linear-gradient(to top, var(--bg-0) 4%, rgba(7,9,14,0.78) 60%, rgba(7,9,14,0.6) 100%)",
+              }}
+            />
+          </div>
+        )}
+
+        <div className="relative mx-auto max-w-container px-4 pt-10 pb-8 flex flex-col md:flex-row gap-6 md:gap-8 items-center md:items-end">
+          {/* Poster */}
+          <div className="shrink-0 w-36 sm:w-44 md:w-[190px]">
+            <div className="relative aspect-[2/3] rounded-card overflow-hidden bg-abyss-3 border border-line-2 shadow-overlay">
+              {series.coverUrl ? (
+                <Image
+                  src={series.coverUrl}
+                  alt={series.title}
+                  fill
+                  sizes="(max-width: 768px) 44vw, 190px"
+                  className="object-cover"
+                  priority
+                />
+              ) : (
+                <div className="flex h-full w-full items-center justify-center font-display text-5xl italic font-black text-[rgba(255,255,255,0.14)]">
+                  {series.title.trim()[0]?.toUpperCase() ?? "?"}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Info */}
+          <div className="flex-1 flex flex-col gap-3 pb-1 text-center md:text-left items-center md:items-start">
+            <div className="flex items-center gap-2.5 flex-wrap justify-center md:justify-start">
+              {series.type && (
+                <span className="rounded-badge px-2 py-[3px] text-[11px] font-bold bg-[var(--accent-muted)] text-brand-bright border border-[var(--accent-border)]">
+                  {TYPE_LABELS[series.type] ?? series.type}
+                </span>
+              )}
+              <StatusBadge status={series.status} />
+              <span className="sh-stat text-xs text-ink-3">
+                {[
+                  series.year,
+                  series.episodeCount ? `${series.episodeCount} episodios` : null,
+                  series.durationMinutes ? `${series.durationMinutes} min` : null,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </span>
+            </div>
+
+            <h1 className="sh-display m-0 !text-[clamp(24px,3.4vw,38px)]">{series.title}</h1>
+
+            {series.titleRomaji && series.titleRomaji !== series.title && (
+              <p className="m-0 text-sm text-ink-3">{series.titleRomaji}</p>
             )}
+
+            <div className="flex items-center gap-3 flex-wrap justify-center md:justify-start">
+              <ScoreBadge score={series.score} size="lg" />
+              {series.studio && <span className="text-[13px] text-ink-2">{series.studio}</span>}
+              {series.genres.length > 0 && (
+                <div className="flex gap-1.5 flex-wrap justify-center md:justify-start">
+                  {series.genres.map((g) => (
+                    <GenreChip key={g.id} name={g.name} />
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {series.synopsis && (
+              <p className="sh-body m-0 max-w-2xl text-sm">{series.synopsis}</p>
+            )}
+
+            {/* Action buttons */}
+            <div className="flex flex-wrap gap-2 mt-1 justify-center md:justify-start">
+              <LikeButton
+                seriesSlug={slug}
+                seriesTitle={series.title}
+                coverUrl={series.coverUrl}
+              />
+              <WatchlistButton
+                seriesSlug={slug}
+                seriesTitle={series.title}
+                coverUrl={series.coverUrl}
+              />
+              <AddToListButton
+                seriesSlug={slug}
+                seriesTitle={series.title}
+                coverUrl={series.coverUrl}
+              />
+              <AddToTierButton
+                seriesSlug={slug}
+                seriesTitle={series.title}
+                coverUrl={series.coverUrl}
+              />
+            </div>
           </div>
         </div>
+      </div>
 
-        {/* Info */}
-        <div className="flex-1 space-y-4 text-center md:text-left">
-          <h1 className="text-2xl md:text-3xl font-bold text-white">
-            {series.title}
-          </h1>
-          {/* Alternative titles */}
-          {series.titleRomaji && series.titleRomaji !== series.title && (
-            <p className="text-neutral-400 text-sm">{series.titleRomaji}</p>
-          )}
-          {series.titleNative && (
-            <p className="text-neutral-500 text-sm">{series.titleNative}</p>
-          )}
+      <div className="mx-auto max-w-container px-4 py-8">
+        {/* Episodes */}
+        <section>
+          <SectionHeader
+            title="Episodios"
+            eyebrow={
+              series.episodeCount ? `${series.episodeCount} en total` : undefined
+            }
+            className="mb-5"
+          />
 
-          {/* Synopsis */}
-          {series.synopsis && (
-            <p className="text-sm text-neutral-300 leading-relaxed max-w-2xl">
-              {series.synopsis}
-            </p>
-          )}
-
-          {/* Genres */}
-          {series.genres.length > 0 && (
-            <div className="flex flex-wrap gap-1.5 justify-center md:justify-start">
-              {series.genres.map((g) => (
+          {episodesPage.data.length === 0 ? (
+            <div className="text-sm text-ink-3">
+              <p>Todavía no hay episodios disponibles.</p>
+              <p className="mt-1">Sumala a tu lista y te va a aparecer apenas salga.</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+              {episodesPage.data.map((ep) => (
                 <Link
-                  key={g.id}
-                  href={`/genres/${encodeURIComponent(g.name)}`}
-                  className="px-2.5 py-1 text-xs rounded-full border border-indigo-700/50 text-indigo-400 hover:bg-indigo-700/20 transition-colors"
+                  key={ep.id}
+                  href={`/series/${slug}/${ep.episodeNumber}`}
+                  className="flex items-center gap-3.5 rounded-card border border-line-1 bg-abyss-2 px-3 py-2.5 transition-all duration-fast hover:border-line-2 hover:bg-abyss-3"
                 >
-                  {g.name}
+                  <span className="sh-stat min-w-[52px] text-[13px] text-brand-bright">
+                    EP {String(ep.episodeNumber).padStart(2, "0")}
+                  </span>
+                  <span className="flex-1 truncate text-[13px] font-medium text-ink-1">
+                    {ep.title || `Episodio ${ep.episodeNumber}`}
+                  </span>
+                  {ep.airedAt && (
+                    <span className="sh-stat text-[10px] text-ink-3">
+                      {formatShortDate(ep.airedAt)}
+                    </span>
+                  )}
                 </Link>
               ))}
             </div>
           )}
 
-          {/* Action buttons */}
-          <div className="flex flex-wrap gap-2 justify-center md:justify-start">
-            <LikeButton
-              seriesSlug={slug}
-              seriesTitle={series.title}
-              coverUrl={series.coverUrl}
-            />
-            <WatchlistButton
-              seriesSlug={slug}
-              seriesTitle={series.title}
-              coverUrl={series.coverUrl}
-            />
-            <AddToListButton
-              seriesSlug={slug}
-              seriesTitle={series.title}
-              coverUrl={series.coverUrl}
-            />
-            <AddToTierButton
-              seriesSlug={slug}
-              seriesTitle={series.title}
-              coverUrl={series.coverUrl}
-            />
-          </div>
+          <Pagination
+            page={page}
+            total={episodesPage.total}
+            pageSize={24}
+            basePath={`/series/${slug}`}
+          />
+        </section>
 
-          {/* Metadata grid */}
-          <dl className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-2 text-sm mt-2">
-            {series.type && (
-              <div>
-                <dt className="text-neutral-500 text-xs font-medium">Tipo</dt>
-                <dd className="text-neutral-200 capitalize">{
-                  series.type === "tv" ? "Serie" :
-                  series.type === "movie" ? "Película" :
-                  series.type.toUpperCase()
-                }</dd>
-              </div>
-            )}
-            {series.status && (
-              <div>
-                <dt className="text-neutral-500 text-xs font-medium">Estado</dt>
-                <dd>
-                  <span className={`inline-block px-2 py-0.5 text-xs rounded font-medium ${
-                    series.status === "ongoing"
-                      ? "bg-green-900/50 text-green-400"
-                      : series.status === "completed"
-                      ? "bg-blue-900/50 text-blue-400"
-                      : series.status === "upcoming"
-                      ? "bg-yellow-900/50 text-yellow-400"
-                      : "bg-neutral-800 text-neutral-300"
-                  }`}>
-                    {series.status === "ongoing" ? "En emisión" :
-                     series.status === "completed" ? "Concluido" :
-                     series.status === "upcoming" ? "Próximamente" :
-                     series.status === "hiatus" ? "En pausa" :
-                     series.status}
-                  </span>
-                </dd>
-              </div>
-            )}
-            {series.year && (
-              <div>
-                <dt className="text-neutral-500 text-xs font-medium">Año</dt>
-                <dd className="text-neutral-200">{series.year}</dd>
-              </div>
-            )}
-            {series.studio && (
-              <div>
-                <dt className="text-neutral-500 text-xs font-medium">Estudio</dt>
-                <dd className="text-neutral-200">{series.studio}</dd>
-              </div>
-            )}
-            {series.season && (
-              <div>
-                <dt className="text-neutral-500 text-xs font-medium">Temporada</dt>
-                <dd className="text-neutral-200">{series.season}</dd>
-              </div>
-            )}
-            {series.demographics && (
-              <div>
-                <dt className="text-neutral-500 text-xs font-medium">Demografía</dt>
-                <dd className="text-neutral-200">{series.demographics}</dd>
-              </div>
-            )}
-            {series.episodeCount !== null && series.episodeCount > 0 && (
-              <div>
-                <dt className="text-neutral-500 text-xs font-medium">Episodios</dt>
-                <dd className="text-neutral-200">{series.episodeCount}</dd>
-              </div>
-            )}
-            {series.durationMinutes !== null && (
-              <div>
-                <dt className="text-neutral-500 text-xs font-medium">Duración</dt>
-                <dd className="text-neutral-200">{series.durationMinutes} min</dd>
-              </div>
-            )}
-            {series.airedDate && (
-              <div>
-                <dt className="text-neutral-500 text-xs font-medium">Emitido</dt>
-                <dd className="text-neutral-200">{series.airedDate}</dd>
-              </div>
-            )}
-            {series.language && (
-              <div>
-                <dt className="text-neutral-500 text-xs font-medium">Idioma</dt>
-                <dd className="text-neutral-200">{series.language}</dd>
-              </div>
-            )}
-            {series.quality && (
-              <div>
-                <dt className="text-neutral-500 text-xs font-medium">Calidad</dt>
-                <dd className="text-neutral-200">{series.quality}</dd>
-              </div>
-            )}
-            {series.score !== null && (
-              <div>
-                <dt className="text-neutral-500 text-xs font-medium">Puntuación</dt>
-                <dd className="text-indigo-300">★ {series.score.toFixed(1)}</dd>
-              </div>
-            )}
-          </dl>
+        {/* Ad — después del bloque de contenido, antes de detalles */}
+        <div className="mt-9">
+          <AdSlot placement="series_below_info" />
         </div>
-      </div>
 
-      <AdSlot placement="series_top" />
-
-      {/* Episodes */}
-      <section className="mt-8">
-        <h2 className="text-lg font-semibold text-white mb-4">
-          Episodios
-          {series.episodeCount !== null && (
-            <span className="ml-2 text-sm text-neutral-500 font-normal">
-              ({series.episodeCount} total)
-            </span>
-          )}
-        </h2>
-
-        {episodesPage.data.length === 0 ? (
-          <p className="text-neutral-500 text-sm">Aún no hay episodios disponibles.</p>
-        ) : (
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2">
-            {episodesPage.data.map((ep) => (
-              <Link
-                key={ep.id}
-                href={`/series/${slug}/${ep.episodeNumber}`}
-                className="flex items-center justify-center px-3 py-2.5 rounded-md bg-neutral-800 hover:bg-indigo-700 hover:text-white text-neutral-300 text-sm font-medium transition-colors"
-              >
-                Ep {ep.episodeNumber}
-                {ep.title && (
-                  <span className="ml-1.5 text-xs text-neutral-500 truncate hidden sm:inline">
-                    {ep.title}
-                  </span>
-                )}
-              </Link>
-            ))}
-          </div>
+        {/* Detalles */}
+        {details.length > 0 && (
+          <section className="mt-9">
+            <SectionHeader title="Detalles" className="mb-5" />
+            <dl className="m-0 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-6 gap-y-4 max-w-3xl">
+              {details.map(([k, v]) => (
+                <div key={k}>
+                  <dt className="font-mono text-[10px] uppercase tracking-[0.1em] text-ink-3">
+                    {k}
+                  </dt>
+                  <dd className="m-0 mt-1 text-sm text-ink-1">{v}</dd>
+                </div>
+              ))}
+            </dl>
+          </section>
         )}
-
-        <Pagination
-          page={page}
-          total={episodesPage.total}
-          pageSize={24}
-          basePath={`/series/${slug}`}
-        />
-      </section>
-
-      <AdSlot placement="series_bottom" />
-    </div>
+      </div>
     </>
   );
+}
+
+const MONTHS_SHORT = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
+
+function formatShortDate(iso: string): string {
+  const d = new Date(iso);
+  return `${d.getDate()} ${MONTHS_SHORT[d.getMonth()]}`;
 }

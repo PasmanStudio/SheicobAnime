@@ -28,7 +28,7 @@ export default function ShareButtons({ listId, listName }: Props) {
 
   return (
     <div className="flex items-center gap-2 flex-wrap">
-      <span className="text-xs text-neutral-500 shrink-0">Compartir:</span>
+      <span className="text-xs text-ink-3 shrink-0">Compartir:</span>
 
       {/* WhatsApp */}
       <a
@@ -50,7 +50,7 @@ export default function ShareButtons({ listId, listName }: Props) {
         href={`https://x.com/intent/tweet?text=${encodeURIComponent(`${text}\n${url}`)}`}
         target="_blank"
         rel="noopener noreferrer"
-        className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-neutral-700/40 hover:bg-neutral-700/70 text-neutral-300 text-xs font-medium transition-colors"
+        className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-abyss-3/40 hover:bg-abyss-3/70 text-ink-2 text-xs font-medium transition-colors"
         title="Compartir en X"
       >
         <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor">
@@ -62,7 +62,7 @@ export default function ShareButtons({ listId, listName }: Props) {
       {/* Copy link */}
       <button
         onClick={handleCopy}
-        className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-neutral-700/40 hover:bg-neutral-700/70 text-neutral-300 text-xs font-medium transition-colors"
+        className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-abyss-3/40 hover:bg-abyss-3/70 text-ink-2 text-xs font-medium transition-colors"
         title="Copiar link"
       >
         {copied ? (

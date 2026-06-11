@@ -113,7 +113,7 @@ export default function AddSeriesModal({ listId, existingSlugs, onAdded }: Props
       {/* Trigger button */}
       <button
         onClick={() => setOpen(true)}
-        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium transition-colors"
+        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-brand text-[var(--text-on-accent)] hover:brightness-110 text-sm font-medium transition-colors"
       >
         <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
           <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
@@ -126,11 +126,11 @@ export default function AddSeriesModal({ listId, existingSlugs, onAdded }: Props
         <div className="fixed inset-0 z-50 flex items-start justify-center pt-16 px-4 bg-black/70 backdrop-blur-sm">
           <div
             ref={dialogRef}
-            className="w-full max-w-lg bg-neutral-900 border border-neutral-700 rounded-2xl shadow-2xl overflow-hidden"
+            className="w-full max-w-lg bg-abyss-2 border border-line-2 rounded-2xl shadow-2xl overflow-hidden"
           >
             {/* Header */}
-            <div className="flex items-center gap-3 px-4 pt-4 pb-3 border-b border-neutral-800">
-              <svg className="w-4 h-4 text-neutral-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <div className="flex items-center gap-3 px-4 pt-4 pb-3 border-b border-line-1">
+              <svg className="w-4 h-4 text-ink-2 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-4.35-4.35M17 11A6 6 0 1 1 5 11a6 6 0 0 1 12 0z" />
               </svg>
               <input
@@ -140,14 +140,14 @@ export default function AddSeriesModal({ listId, existingSlugs, onAdded }: Props
                 onChange={(e) => handleInput(e.target.value)}
                 placeholder="Buscar anime para agregar…"
                 autoComplete="off"
-                className="flex-1 bg-transparent text-white placeholder-neutral-500 outline-none text-sm"
+                className="flex-1 bg-transparent text-white placeholder-[var(--text-3)] outline-none text-sm"
               />
               {loading && (
-                <span className="w-4 h-4 rounded-full border-2 border-neutral-500 border-t-transparent animate-spin shrink-0" />
+                <span className="w-4 h-4 rounded-full border-2 border-line-2 border-t-transparent animate-spin shrink-0" />
               )}
               <button
                 onClick={() => setOpen(false)}
-                className="text-neutral-500 hover:text-neutral-300 transition-colors shrink-0 text-lg leading-none"
+                className="text-ink-3 hover:text-ink-1 transition-colors shrink-0 text-lg leading-none"
               >
                 ✕
               </button>
@@ -156,11 +156,11 @@ export default function AddSeriesModal({ listId, existingSlugs, onAdded }: Props
             {/* Results */}
             <div className="max-h-96 overflow-y-auto">
               {q.trim().length < 2 ? (
-                <p className="text-center text-sm text-neutral-600 py-10">
+                <p className="text-center text-sm text-ink-3 py-10">
                   Escribí al menos 2 letras para buscar
                 </p>
               ) : results.length === 0 && !loading ? (
-                <p className="text-center text-sm text-neutral-500 py-10">
+                <p className="text-center text-sm text-ink-3 py-10">
                   Sin resultados para &quot;{q}&quot;
                 </p>
               ) : (
@@ -172,10 +172,10 @@ export default function AddSeriesModal({ listId, existingSlugs, onAdded }: Props
                       key={s.slug}
                       onClick={() => handleAdd(s)}
                       disabled={isAdded || isPending}
-                      className="w-full flex items-center gap-3 px-4 py-3 hover:bg-neutral-800 transition-colors disabled:cursor-default"
+                      className="w-full flex items-center gap-3 px-4 py-3 hover:bg-abyss-3 transition-colors disabled:cursor-default"
                     >
                       {/* Cover */}
-                      <div className="w-10 h-14 relative shrink-0 rounded overflow-hidden bg-neutral-700">
+                      <div className="w-10 h-14 relative shrink-0 rounded overflow-hidden bg-abyss-3">
                         {s.coverUrl && (
                           <Image
                             src={s.coverUrl}
@@ -192,7 +192,7 @@ export default function AddSeriesModal({ listId, existingSlugs, onAdded }: Props
                         <p className="text-sm text-white truncate">{s.title}</p>
                         <div className="flex gap-1 mt-0.5 flex-wrap">
                           {s.type && (
-                            <span className="text-[10px] bg-indigo-600/70 text-white px-1.5 py-0.5 rounded">
+                            <span className="text-[10px] bg-brand text-[var(--text-on-accent)]/70 text-white px-1.5 py-0.5 rounded">
                               {s.type === "tv" ? "Serie" : s.type === "movie" ? "Película" : s.type.toUpperCase()}
                             </span>
                           )}
@@ -200,7 +200,7 @@ export default function AddSeriesModal({ listId, existingSlugs, onAdded }: Props
                             <span className={`text-[10px] px-1.5 py-0.5 rounded text-white ${
                               s.status === "ongoing" ? "bg-green-700/70" :
                               s.status === "completed" ? "bg-blue-700/70" :
-                              s.status === "upcoming" ? "bg-amber-700/70" : "bg-neutral-700/70"
+                              s.status === "upcoming" ? "bg-amber-700/70" : "bg-abyss-3/70"
                             }`}>
                               {s.status === "ongoing" ? "En emisión" :
                                s.status === "completed" ? "Concluido" :
@@ -213,7 +213,7 @@ export default function AddSeriesModal({ listId, existingSlugs, onAdded }: Props
                       {/* State indicator */}
                       <div className="shrink-0 w-8 flex items-center justify-center">
                         {isPending ? (
-                          <span className="w-4 h-4 rounded-full border-2 border-indigo-400 border-t-transparent animate-spin" />
+                          <span className="w-4 h-4 rounded-full border-2 border-brand border-t-transparent animate-spin" />
                         ) : isAdded ? (
                           <span className="w-6 h-6 rounded-full bg-green-600 flex items-center justify-center">
                             <svg className="w-3.5 h-3.5 text-white" fill="currentColor" viewBox="0 0 20 20">
@@ -221,7 +221,7 @@ export default function AddSeriesModal({ listId, existingSlugs, onAdded }: Props
                             </svg>
                           </span>
                         ) : (
-                          <span className="w-6 h-6 rounded-full border-2 border-neutral-600 flex items-center justify-center text-neutral-400 hover:border-indigo-500 hover:text-indigo-400 transition-colors">
+                          <span className="w-6 h-6 rounded-full border-2 border-line-2 flex items-center justify-center text-ink-2 hover:border-brand hover:text-brand-bright transition-colors">
                             <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                               <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
                             </svg>
@@ -235,8 +235,8 @@ export default function AddSeriesModal({ listId, existingSlugs, onAdded }: Props
             </div>
 
             {/* Footer hint */}
-            <div className="px-4 py-2.5 border-t border-neutral-800 text-xs text-neutral-600">
-              Presioná <kbd className="px-1 py-0.5 rounded bg-neutral-800 text-neutral-400 font-mono">Esc</kbd> para cerrar
+            <div className="px-4 py-2.5 border-t border-line-1 text-xs text-ink-3">
+              Presioná <kbd className="px-1 py-0.5 rounded bg-abyss-3 text-ink-2 font-mono">Esc</kbd> para cerrar
             </div>
           </div>
         </div>

@@ -25,7 +25,7 @@ export default function UserButton() {
 
   // Loading skeleton
   if (status === "loading") {
-    return <div className="w-8 h-8 rounded-full bg-neutral-700 animate-pulse" />;
+    return <div className="w-8 h-8 rounded-full bg-abyss-3 animate-pulse" />;
   }
 
   // Not logged in → show login button
@@ -34,7 +34,7 @@ export default function UserButton() {
       <>
         <button
           onClick={() => setShowModal(true)}
-          className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium transition-colors"
+          className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-brand text-[var(--text-on-accent)] hover:brightness-110 text-sm font-medium transition-colors"
         >
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
@@ -54,7 +54,7 @@ export default function UserButton() {
     <div className="relative" ref={dropdownRef}>
       <button
         onClick={() => setDropdownOpen((v) => !v)}
-        className="flex items-center gap-2 p-0.5 rounded-full hover:ring-2 hover:ring-indigo-500 transition-all"
+        className="flex items-center gap-2 p-0.5 rounded-full hover:ring-2 hover:ring-[var(--accent)] transition-all"
         aria-expanded={dropdownOpen}
         aria-label="Menú de usuario"
       >
@@ -67,19 +67,19 @@ export default function UserButton() {
             className="rounded-full object-cover"
           />
         ) : (
-          <div className="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center text-white text-sm font-bold">
+          <div className="w-8 h-8 rounded-full bg-brand text-[var(--text-on-accent)] flex items-center justify-center text-white text-sm font-bold">
             {displayName.charAt(0).toUpperCase()}
           </div>
         )}
       </button>
 
       {dropdownOpen && (
-        <div className="absolute right-0 top-full mt-2 w-52 rounded-xl bg-neutral-900 border border-neutral-700 shadow-2xl overflow-hidden z-50">
+        <div className="absolute right-0 top-full mt-2 w-52 rounded-xl bg-abyss-2 border border-line-2 shadow-2xl overflow-hidden z-50">
           {/* User info */}
-          <div className="px-4 py-3 border-b border-neutral-800">
+          <div className="px-4 py-3 border-b border-line-1">
             <p className="text-sm font-semibold text-white truncate">{displayName}</p>
             {user.email && (
-              <p className="text-xs text-neutral-500 truncate mt-0.5">{user.email}</p>
+              <p className="text-xs text-ink-3 truncate mt-0.5">{user.email}</p>
             )}
           </div>
 
@@ -88,7 +88,7 @@ export default function UserButton() {
             <Link
               href={`/usuario/${user.username ?? user.id}`}
               onClick={() => setDropdownOpen(false)}
-              className="flex items-center gap-2.5 px-4 py-2.5 text-sm text-neutral-300 hover:text-white hover:bg-neutral-800 transition-colors"
+              className="flex items-center gap-2.5 px-4 py-2.5 text-sm text-ink-2 hover:text-white hover:bg-abyss-3 transition-colors"
             >
               <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M17.982 18.725A7.488 7.488 0 0012 15.75a7.488 7.488 0 00-5.982 2.975m11.963 0a9 9 0 10-11.963 0m11.963 0A8.966 8.966 0 0112 21a8.966 8.966 0 01-5.982-2.275M15 9.75a3 3 0 11-6 0 3 3 0 016 0z" />
@@ -98,7 +98,7 @@ export default function UserButton() {
             <Link
               href="/listas"
               onClick={() => setDropdownOpen(false)}
-              className="flex items-center gap-2.5 px-4 py-2.5 text-sm text-neutral-300 hover:text-white hover:bg-neutral-800 transition-colors"
+              className="flex items-center gap-2.5 px-4 py-2.5 text-sm text-ink-2 hover:text-white hover:bg-abyss-3 transition-colors"
             >
               <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 6.75h12M8.25 12h12m-12 5.25h12M3.75 6.75h.007v.008H3.75V6.75zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zM3.75 12h.007v.008H3.75V12zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm-.375 5.25h.007v.008H3.75v-.008zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z" />
@@ -108,7 +108,7 @@ export default function UserButton() {
             <Link
               href="/tierlist"
               onClick={() => setDropdownOpen(false)}
-              className="flex items-center gap-2.5 px-4 py-2.5 text-sm text-neutral-300 hover:text-white hover:bg-neutral-800 transition-colors"
+              className="flex items-center gap-2.5 px-4 py-2.5 text-sm text-ink-2 hover:text-white hover:bg-abyss-3 transition-colors"
             >
               <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z" />
@@ -118,7 +118,7 @@ export default function UserButton() {
             <Link
               href="/guardado"
               onClick={() => setDropdownOpen(false)}
-              className="flex items-center gap-2.5 px-4 py-2.5 text-sm text-neutral-300 hover:text-white hover:bg-neutral-800 transition-colors"
+              className="flex items-center gap-2.5 px-4 py-2.5 text-sm text-ink-2 hover:text-white hover:bg-abyss-3 transition-colors"
             >
               <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0111.186 0z" />
@@ -128,7 +128,7 @@ export default function UserButton() {
             <Link
               href="/historial"
               onClick={() => setDropdownOpen(false)}
-              className="flex items-center gap-2.5 px-4 py-2.5 text-sm text-neutral-300 hover:text-white hover:bg-neutral-800 transition-colors"
+              className="flex items-center gap-2.5 px-4 py-2.5 text-sm text-ink-2 hover:text-white hover:bg-abyss-3 transition-colors"
             >
               <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -138,13 +138,13 @@ export default function UserButton() {
           </nav>
 
           {/* Sign out */}
-          <div className="border-t border-neutral-800 py-1">
+          <div className="border-t border-line-1 py-1">
             <button
               onClick={() => {
                 setDropdownOpen(false);
                 signOut({ callbackUrl: "/" });
               }}
-              className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-neutral-400 hover:text-red-400 hover:bg-neutral-800 transition-colors"
+              className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-ink-2 hover:text-red-400 hover:bg-abyss-3 transition-colors"
             >
               <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15m3 0l3-3m0 0l-3-3m3 3H9" />

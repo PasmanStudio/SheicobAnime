@@ -1,6 +1,8 @@
 "use client";
 
-import type { Series, SeriesStatus, SeriesType } from "@/lib/types";
+import ScoreBadge from "@/components/ui/ScoreBadge";
+import StatusBadge from "@/components/ui/StatusBadge";
+import type { Series, SeriesType } from "@/lib/types";
 import Image from "next/image";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
@@ -11,13 +13,6 @@ const TYPE_LABELS: Record<SeriesType, string> = {
   ova: "OVA",
   ona: "ONA",
   special: "Especial",
-};
-
-const STATUS_LABELS: Record<SeriesStatus, string> = {
-  ongoing: "En emisión",
-  completed: "Concluido",
-  upcoming: "Por estrenar",
-  hiatus: "En pausa",
 };
 
 interface HeroCarouselProps {
@@ -48,7 +43,7 @@ export default function HeroCarousel({ series }: HeroCarouselProps) {
   const item = items[current];
 
   return (
-    <div className="relative w-full h-[300px] sm:h-[400px] md:h-[480px] overflow-hidden rounded-xl bg-neutral-900">
+    <div className="relative w-full h-[300px] sm:h-[400px] md:h-[480px] overflow-hidden rounded-modal border border-line-1 bg-abyss-1">
       {/* Background image */}
       <div className="absolute inset-0">
         {(item.bannerUrl ?? item.coverUrl) ? (
@@ -61,70 +56,76 @@ export default function HeroCarousel({ series }: HeroCarouselProps) {
             priority={current === 0}
           />
         ) : (
-          <div className="w-full h-full bg-gradient-to-br from-indigo-900 to-neutral-900" />
+          <div className="w-full h-full bg-abyss-2" />
         )}
-        {/* Gradient overlays */}
-        <div className="absolute inset-0 bg-gradient-to-r from-black/90 via-black/60 to-transparent" />
-        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent" />
+        {/* Protección hacia el abismo — nunca negro puro */}
+        <div
+          className="absolute inset-0"
+          style={{
+            background:
+              "linear-gradient(to right, rgba(7,9,14,0.92) 0%, rgba(7,9,14,0.6) 55%, rgba(7,9,14,0.15) 100%)",
+          }}
+        />
+        <div
+          className="absolute inset-0"
+          style={{
+            background:
+              "linear-gradient(to top, rgba(7,9,14,0.88) 0%, transparent 55%)",
+          }}
+        />
+        {/* Speed-lines — textura de marca, una por pantalla */}
+        <div className="sh-speedlines absolute inset-0" />
       </div>
 
       {/* Content */}
-      <div className="relative h-full flex flex-col justify-end pl-14 pr-14 pb-6 sm:pl-16 sm:pr-6 sm:pb-8 md:pl-10 md:pr-10 md:pb-10 max-w-3xl">
-        <h2 className="text-2xl sm:text-3xl md:text-4xl font-bold text-white leading-tight drop-shadow-lg">
+      <div className="relative h-full flex flex-col justify-end gap-3 pl-14 pr-14 pb-6 sm:pl-16 sm:pr-6 sm:pb-8 md:pl-10 md:pr-10 md:pb-10 max-w-3xl">
+        {/* Eyebrow mono */}
+        <span className="sh-label flex items-center gap-2">
+          {item.status === "ongoing" && <span className="sh-live-dot" />}
+          {item.status === "ongoing" ? "En emisión" : (item.type && TYPE_LABELS[item.type]) || "Destacado"}
+          {item.year ? ` · ${item.year}` : ""}
+        </span>
+
+        <h2 className="sh-display !text-[clamp(24px,4vw,40px)] drop-shadow-lg m-0">
           {item.title}
         </h2>
 
         {/* Badges */}
-        <div className="flex items-center gap-2 mt-3">
-          {item.type && (
-            <span className="inline-flex items-center gap-1 bg-neutral-800/80 text-white text-xs font-medium px-2.5 py-1 rounded">
-              <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
-                <path d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H4z" />
-              </svg>
-              {TYPE_LABELS[item.type] ?? item.type}
+        <div className="flex items-center gap-2.5 flex-wrap">
+          <ScoreBadge score={item.score} size="lg" />
+          {item.status && item.status !== "ongoing" && <StatusBadge status={item.status} />}
+          {item.episodeCount ? (
+            <span className="sh-stat text-[13px] text-ink-2">
+              {item.episodeCount} episodios
             </span>
-          )}
-          {item.status && (
-            <span className="inline-flex items-center gap-1 bg-neutral-800/80 text-white text-xs font-medium px-2.5 py-1 rounded">
-              <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
-                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clipRule="evenodd" />
-              </svg>
-              {STATUS_LABELS[item.status] ?? item.status}
-            </span>
-          )}
-          {item.year && (
-            <span className="bg-neutral-800/80 text-neutral-300 text-xs px-2.5 py-1 rounded">
-              {item.year}
-            </span>
-          )}
+          ) : null}
+          {item.studio && <span className="text-[13px] text-ink-2">{item.studio}</span>}
         </div>
 
         {/* Synopsis (truncated) */}
         {item.synopsis && (
-          <p className="text-sm text-neutral-300 mt-3 line-clamp-2 sm:line-clamp-3 max-w-xl">
+          <p className="sh-body text-sm line-clamp-2 sm:line-clamp-3 max-w-xl m-0">
             {item.synopsis}
           </p>
         )}
 
         {/* Action buttons */}
-        <div className="flex flex-wrap items-center gap-2 sm:gap-3 mt-4">
+        <div className="flex flex-wrap items-center gap-2.5 mt-1">
           <Link
             href={`/series/${item.slug}`}
-            className="inline-flex items-center gap-2 bg-neutral-700/80 hover:bg-neutral-600 text-white text-sm font-medium px-4 py-2 sm:px-5 sm:py-2.5 rounded-lg transition-colors"
+            className="inline-flex items-center gap-2 h-11 px-5 rounded-btn text-[15px] font-bold text-[var(--text-on-accent)] shadow-glow transition-all duration-fast hover:brightness-110 active:scale-[0.97]"
+            style={{ background: "var(--grad-action)" }}
           >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24" aria-hidden>
+              <path d="M6 4.5v15l13-7.5-13-7.5z" />
             </svg>
-            Detalles
+            Ver ahora
           </Link>
           <Link
             href={`/series/${item.slug}`}
-            className="inline-flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-4 py-2 sm:px-5 sm:py-2.5 rounded-lg transition-colors"
+            className="inline-flex items-center gap-2 h-11 px-5 rounded-btn bg-abyss-3 border border-line-2 text-[15px] font-semibold text-ink-1 transition-all duration-fast hover:bg-[var(--bg-3)] hover:border-[var(--border-2)] hover:brightness-110 active:scale-[0.97]"
           >
-            <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd" />
-            </svg>
-            Ver Ahora
+            Detalles
           </Link>
         </div>
       </div>
@@ -135,21 +136,21 @@ export default function HeroCarousel({ series }: HeroCarouselProps) {
           <button
             type="button"
             onClick={prev}
-            className="absolute left-2 top-1/2 -translate-y-1/2 w-9 h-9 flex items-center justify-center bg-black/50 hover:bg-black/70 text-white rounded-full transition-colors"
+            className="absolute left-2 top-1/2 -translate-y-1/2 w-10 h-10 flex items-center justify-center bg-[var(--bg-overlay)] hover:bg-abyss-3 border border-line-1 text-ink-1 rounded-full transition-colors duration-fast"
             aria-label="Anterior"
           >
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+              <path d="m15 18-6-6 6-6" />
             </svg>
           </button>
           <button
             type="button"
             onClick={next}
-            className="absolute right-2 top-1/2 -translate-y-1/2 w-9 h-9 flex items-center justify-center bg-black/50 hover:bg-black/70 text-white rounded-full transition-colors"
+            className="absolute right-2 top-1/2 -translate-y-1/2 w-10 h-10 flex items-center justify-center bg-[var(--bg-overlay)] hover:bg-abyss-3 border border-line-1 text-ink-1 rounded-full transition-colors duration-fast"
             aria-label="Siguiente"
           >
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+              <path d="m9 18 6-6-6-6" />
             </svg>
           </button>
         </>
@@ -163,8 +164,8 @@ export default function HeroCarousel({ series }: HeroCarouselProps) {
               key={i}
               type="button"
               onClick={() => setCurrent(i)}
-              className={`w-2 h-2 rounded-full transition-all ${
-                i === current ? "bg-white w-4" : "bg-white/40 hover:bg-white/60"
+              className={`h-2 rounded-full transition-all duration-fast ${
+                i === current ? "bg-brand-bright w-4" : "bg-[rgba(255,255,255,0.35)] w-2 hover:bg-[rgba(255,255,255,0.6)]"
               }`}
               aria-label={`Ir a slide ${i + 1}`}
             />

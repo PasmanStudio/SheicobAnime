@@ -137,7 +137,24 @@ export default function SearchBar() {
 
   return (
     <div ref={containerRef} className="relative">
-      <form onSubmit={handleSubmit} className="flex items-center gap-1.5">
+      {/* Buscador pill integrado — borde cian + glow al focus */}
+      <form
+        onSubmit={handleSubmit}
+        className="flex items-center gap-2.5 h-[38px] px-3.5 rounded-full bg-abyss-1 border border-line-1 text-ink-3 focus-within:border-brand focus-within:shadow-focus transition-all duration-fast"
+      >
+        <svg
+          className="w-[18px] h-[18px] shrink-0"
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+          strokeWidth={2}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden
+        >
+          <circle cx="11" cy="11" r="8" />
+          <path d="m21 21-4.3-4.3" />
+        </svg>
         <input
           type="search"
           value={q}
@@ -149,33 +166,26 @@ export default function SearchBar() {
           placeholder="Buscar anime…"
           aria-label="Buscar anime"
           autoComplete="off"
-          className="w-32 sm:w-44 md:w-64 rounded-md bg-neutral-800 border border-neutral-700 px-3 py-1.5 text-sm text-white placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors"
+          className="w-24 sm:w-40 md:w-56 bg-transparent border-none outline-none text-sm text-ink-1 placeholder-[var(--text-3)]"
         />
-        <button
-          type="submit"
-          aria-label="Buscar"
-          className="shrink-0 rounded-md bg-indigo-600 hover:bg-indigo-700 px-3 py-1.5 text-sm font-medium text-white transition-colors"
-        >
-          <span className="hidden sm:inline">Buscar</span>
-          <svg className="sm:hidden w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-4.35-4.35M17 11A6 6 0 1 1 5 11a6 6 0 0 1 12 0z" />
-          </svg>
+        <button type="submit" aria-label="Buscar" className="sr-only">
+          Buscar
         </button>
       </form>
 
       {/* Suggestions dropdown */}
       {showSuggestions && (
-        <div className="absolute right-0 top-full mt-1 w-80 max-w-[calc(100vw-1rem)] bg-neutral-900 border border-neutral-700 rounded-lg shadow-xl z-50 overflow-hidden">
+        <div className="absolute right-0 top-full mt-1 w-80 max-w-[calc(100vw-1rem)] bg-abyss-2 border border-line-2 rounded-card shadow-overlay z-50 overflow-hidden">
           {suggestions.map((item, i) => (
             <button
               key={item.slug}
               type="button"
               onClick={() => handleSelectSuggestion(item.slug)}
-              className={`w-full flex items-center gap-3 px-3 py-2 text-left hover:bg-neutral-800 transition-colors ${
-                i === activeIndex ? "bg-neutral-800" : ""
+              className={`w-full flex items-center gap-3 px-3 py-2 text-left hover:bg-abyss-3 transition-colors duration-fast ${
+                i === activeIndex ? "bg-abyss-3" : ""
               }`}
             >
-              <div className="w-8 h-11 relative shrink-0 rounded overflow-hidden bg-neutral-700">
+              <div className="w-8 h-11 relative shrink-0 rounded overflow-hidden bg-abyss-3">
                 {item.coverUrl && (
                   <Image
                     src={item.coverUrl}
@@ -187,18 +197,18 @@ export default function SearchBar() {
                 )}
               </div>
               <div className="min-w-0 flex-1">
-                <p className="text-sm text-white truncate">{item.title}</p>
+                <p className="text-sm text-ink-1 truncate">{item.title}</p>
                 <div className="flex gap-1 mt-0.5">
                   {item.type && (
-                    <span className="text-[10px] bg-indigo-600/80 text-white px-1 rounded">
+                    <span className="text-[10px] font-bold px-1.5 py-px rounded-badge bg-[var(--accent-muted)] text-brand-bright">
                       {item.type === "tv" ? "Serie" : item.type === "movie" ? "Película" : item.type.toUpperCase()}
                     </span>
                   )}
                   {item.status && (
-                    <span className={`text-[10px] px-1 rounded text-white ${
-                      item.status === "ongoing" ? "bg-green-600/80" :
-                      item.status === "completed" ? "bg-blue-600/80" :
-                      item.status === "upcoming" ? "bg-amber-600/80" : "bg-neutral-600/80"
+                    <span className={`text-[10px] font-bold px-1.5 py-px rounded-badge ${
+                      item.status === "ongoing" ? "bg-[rgba(74,222,140,0.12)] text-[var(--success)]" :
+                      item.status === "completed" ? "bg-[var(--accent-muted)] text-brand-bright" :
+                      item.status === "upcoming" ? "bg-[rgba(255,197,61,0.12)] text-[var(--warning)]" : "bg-abyss-3 text-ink-2"
                     }`}>
                       {item.status === "ongoing" ? "En emisión" :
                        item.status === "completed" ? "Concluido" :
@@ -214,13 +224,13 @@ export default function SearchBar() {
 
       {/* Recent searches dropdown */}
       {showRecent && (
-        <div className="absolute right-0 top-full mt-1 w-72 max-w-[calc(100vw-1rem)] bg-neutral-900 border border-neutral-700 rounded-lg shadow-xl z-50 overflow-hidden">
-          <div className="flex items-center justify-between px-3 py-2 border-b border-neutral-800">
-            <span className="text-xs text-neutral-400 font-medium">Búsquedas recientes</span>
+        <div className="absolute right-0 top-full mt-1 w-72 max-w-[calc(100vw-1rem)] bg-abyss-2 border border-line-2 rounded-card shadow-overlay z-50 overflow-hidden">
+          <div className="flex items-center justify-between px-3 py-2 border-b border-line-1">
+            <span className="sh-label !text-[10px] !text-ink-3">Búsquedas recientes</span>
             <button
               type="button"
               onClick={handleClearRecent}
-              className="text-xs text-indigo-400 hover:text-indigo-300"
+              className="text-xs text-brand-bright hover:text-[var(--cyan-200)]"
             >
               Limpiar
             </button>
@@ -230,14 +240,14 @@ export default function SearchBar() {
               key={term}
               type="button"
               onClick={() => handleSelectRecent(term)}
-              className={`w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-neutral-800 transition-colors ${
-                i === activeIndex ? "bg-neutral-800" : ""
+              className={`w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-abyss-3 transition-colors duration-fast ${
+                i === activeIndex ? "bg-abyss-3" : ""
               }`}
             >
-              <svg className="w-3.5 h-3.5 text-neutral-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <svg className="w-3.5 h-3.5 text-ink-3 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
-              <span className="text-sm text-neutral-300 truncate">{term}</span>
+              <span className="text-sm text-ink-2 truncate">{term}</span>
             </button>
           ))}
         </div>

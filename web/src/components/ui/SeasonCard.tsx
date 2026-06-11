@@ -23,9 +23,9 @@ export default function SeasonCard({ media, match }: SeasonCardProps) {
   const isAvailable = match !== null;
 
   const cardContent = (
-    <div className="group relative rounded-lg overflow-hidden bg-neutral-800 hover:ring-2 hover:ring-indigo-500 transition-all h-full flex flex-col">
+    <div className="group relative rounded-lg overflow-hidden bg-abyss-3 hover:ring-2 hover:ring-[var(--accent)] transition-all h-full flex flex-col">
       {/* Cover — 2:3 */}
-      <div className="relative aspect-[2/3] bg-neutral-700 flex-shrink-0 overflow-hidden">
+      <div className="relative aspect-[2/3] bg-abyss-3 flex-shrink-0 overflow-hidden">
         {coverUrl ? (
           <Image
             src={coverUrl}
@@ -39,14 +39,14 @@ export default function SeasonCard({ media, match }: SeasonCardProps) {
             }`}
           />
         ) : (
-          <div className="w-full h-full flex items-center justify-center text-neutral-500 text-xs text-center px-2">
+          <div className="w-full h-full flex items-center justify-center text-ink-3 text-xs text-center px-2">
             Sin portada
           </div>
         )}
 
         {/* Top badges */}
         <div className="absolute top-1.5 left-1.5 flex flex-wrap gap-1">
-          <span className="bg-indigo-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded">
+          <span className="bg-brand text-[var(--text-on-accent)] text-white text-[10px] font-bold px-1.5 py-0.5 rounded">
             {format}
           </span>
         </div>
@@ -56,7 +56,7 @@ export default function SeasonCard({ media, match }: SeasonCardProps) {
           <span className={`absolute top-1.5 right-1.5 bg-black/75 text-xs font-bold px-1.5 py-0.5 rounded ${
             parseFloat(score) >= 8 ? "text-green-400" :
             parseFloat(score) >= 6 ? "text-amber-400" :
-                                     "text-neutral-400"
+                                     "text-ink-2"
           }`}>
             ★ {score}
           </span>
@@ -69,7 +69,7 @@ export default function SeasonCard({ media, match }: SeasonCardProps) {
               ✓ Disponible
             </div>
           ) : (
-            <div className="bg-neutral-900/80 text-neutral-400 text-[10px] font-semibold px-2 py-1 text-center">
+            <div className="bg-abyss-2 text-ink-2 text-[10px] font-semibold px-2 py-1 text-center">
               No indexado
             </div>
           )}
@@ -84,12 +84,12 @@ export default function SeasonCard({ media, match }: SeasonCardProps) {
 
         <div className="flex flex-wrap gap-1 mt-auto">
           {media.episodes && (
-            <span className="text-[10px] text-neutral-500">
+            <span className="text-[10px] text-ink-3">
               {media.episodes} ep
             </span>
           )}
           {media.studios.nodes[0] && (
-            <span className="text-[10px] text-neutral-500 line-clamp-1">
+            <span className="text-[10px] text-ink-3 line-clamp-1">
               · {media.studios.nodes[0].name}
             </span>
           )}

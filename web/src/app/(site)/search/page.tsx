@@ -14,10 +14,10 @@ export async function generateMetadata({ searchParams }: Props): Promise<Metadat
   const { q: rawQ } = await searchParams;
   const q = rawQ?.trim() ?? "";
   return {
-    title: q ? `Search: ${q}` : "Search Anime",
+    title: q ? `Buscar: ${q}` : "Buscar anime",
     description: q
-      ? `Search results for "${q}" on SheicobAnime.`
-      : "Search for anime series on SheicobAnime.",
+      ? `Resultados de búsqueda para "${q}" en SheicobAnime.`
+      : "Buscá series de anime en SheicobAnime.",
   };
 }
 
@@ -28,11 +28,10 @@ export default async function SearchPage({ searchParams }: Props) {
 
   if (!q) {
     return (
-      <div className="container mx-auto px-4 py-16 text-center space-y-4">
-        <h1 className="text-2xl font-bold text-white">Search Anime</h1>
-        <p className="text-neutral-400">
-          Use the search bar above to find anime series.
-        </p>
+      <div className="mx-auto max-w-container px-4 py-16 text-center space-y-2">
+        <h1 className="sh-display text-2xl">Buscar anime</h1>
+        <p className="text-sm text-ink-2">Todavía no buscaste nada.</p>
+        <p className="text-sm text-ink-3">Usá la lupa de arriba para encontrar tu próxima serie.</p>
       </div>
     );
   }
@@ -45,23 +44,24 @@ export default async function SearchPage({ searchParams }: Props) {
   }
 
   return (
-    <div className="container mx-auto px-4 py-8 space-y-6">
-      <AdSlot placement="search_top" />
-
-      <div>
-        <h1 className="text-xl font-bold text-white">
-          Results for{" "}
-          <span className="text-indigo-400">&ldquo;{q}&rdquo;</span>
-        </h1>
-        <p className="text-sm text-neutral-500 mt-1">
-          {results.total} series found
-        </p>
+    <div className="mx-auto max-w-container px-4 py-8 space-y-6">
+      <div className="flex flex-col gap-1">
+        <span className="sh-label">
+          {results.total.toLocaleString("es-AR")} resultado{results.total !== 1 ? "s" : ""}
+        </span>
+        <span className="sh-section-header items-center">
+          <span className="sh-cut" />
+          <h1 className="sh-display text-[clamp(20px,2.6vw,26px)]">
+            &ldquo;{q}&rdquo;
+          </h1>
+        </span>
       </div>
 
       {results.data.length === 0 ? (
-        <p className="text-neutral-400 py-8 text-center">
-          No results for &ldquo;{q}&rdquo;. Try a different search term.
-        </p>
+        <div className="py-8 text-center text-sm">
+          <p className="text-ink-2">No encontramos nada con &ldquo;{q}&rdquo;.</p>
+          <p className="mt-1 text-ink-3">Probá con otro término o con el título en romaji.</p>
+        </div>
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
           {results.data.map((s) => (

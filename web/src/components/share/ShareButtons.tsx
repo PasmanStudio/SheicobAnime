@@ -33,7 +33,7 @@ export default function ShareButtons({ url, text, label = "Compartir:" }: Props)
 
   return (
     <div className="flex items-center gap-2 flex-wrap">
-      {label && <span className="text-xs text-neutral-500 shrink-0">{label}</span>}
+      {label && <span className="text-xs text-ink-3 shrink-0">{label}</span>}
 
       {/* WhatsApp */}
       <a
@@ -70,7 +70,7 @@ export default function ShareButtons({ url, text, label = "Compartir:" }: Props)
         target="_blank"
         rel="noopener noreferrer"
         title="Compartir en X"
-        className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-neutral-700/40 hover:bg-neutral-700/70 text-neutral-300 text-xs font-medium transition-colors"
+        className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-abyss-3/40 hover:bg-abyss-3/70 text-ink-2 text-xs font-medium transition-colors"
       >
         <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor">
           <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.746l7.73-8.835L1.254 2.25H8.08l4.259 5.63zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
@@ -82,7 +82,7 @@ export default function ShareButtons({ url, text, label = "Compartir:" }: Props)
       <button
         onClick={handleCopy}
         title="Copiar link"
-        className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-neutral-700/40 hover:bg-neutral-700/70 text-neutral-300 text-xs font-medium transition-colors"
+        className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-abyss-3/40 hover:bg-abyss-3/70 text-ink-2 text-xs font-medium transition-colors"
       >
         {copied ? (
           <>

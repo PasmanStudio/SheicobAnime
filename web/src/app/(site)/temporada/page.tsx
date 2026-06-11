@@ -4,7 +4,6 @@ import {
   getCurrentSeason,
   getSeasonalAnime,
   getSeasonNav,
-  SEASON_EMOJI,
   SEASON_LABELS,
   SEASON_ORDER,
   titlesMatch,
@@ -125,33 +124,36 @@ export default async function TemporadaPage({ searchParams }: Props) {
   const isCurrentYear = year === currentYear;
 
   return (
-    <div className="container mx-auto px-4 py-8 space-y-6">
+    <div className="mx-auto max-w-container px-4 py-8 space-y-6">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold text-white">
-            {SEASON_EMOJI[season]} Temporada — {SEASON_LABELS[season]} {year}
-          </h1>
-          <p className="text-sm text-neutral-400 mt-1">
-            {availableCount} de {anilistData.length} títulos disponibles en SheicobAnime
-          </p>
+        <div className="flex flex-col gap-1">
+          <span className="sh-label">
+            {availableCount} de {anilistData.length} títulos disponibles
+          </span>
+          <span className="sh-section-header items-center">
+            <span className="sh-cut" />
+            <h1 className="sh-display text-[clamp(22px,3vw,28px)]">
+              {SEASON_LABELS[season]} {year}
+            </h1>
+          </span>
         </div>
 
         {/* Year navigation */}
         <div className="flex items-center gap-2 text-sm">
           <Link
             href={`/temporada?season=${season}&year=${prevYear}`}
-            className="px-3 py-1.5 rounded-md bg-neutral-800 text-neutral-400 hover:text-white hover:bg-neutral-700 transition-colors"
+            className="sh-stat px-3 py-1.5 rounded-btn bg-abyss-2 border border-line-1 text-xs text-ink-3 hover:text-ink-1 hover:border-line-2 transition-colors duration-fast"
           >
             ← {prevYear}
           </Link>
-          <span className="px-3 py-1.5 rounded-md bg-neutral-800 text-white font-semibold">
+          <span className="sh-stat px-3 py-1.5 rounded-btn bg-abyss-3 border border-line-2 text-xs text-ink-1">
             {year}
           </span>
           {!isCurrentYear && (
             <Link
               href={`/temporada?season=${season}&year=${nextYear}`}
-              className="px-3 py-1.5 rounded-md bg-neutral-800 text-neutral-400 hover:text-white hover:bg-neutral-700 transition-colors"
+              className="sh-stat px-3 py-1.5 rounded-btn bg-abyss-2 border border-line-1 text-xs text-ink-3 hover:text-ink-1 hover:border-line-2 transition-colors duration-fast"
             >
               {nextYear} →
             </Link>
@@ -168,40 +170,36 @@ export default async function TemporadaPage({ searchParams }: Props) {
             <Link
               key={s}
               href={`/temporada?season=${s}&year=${year}`}
-              className={`flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-medium whitespace-nowrap transition-colors ${
+              className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold whitespace-nowrap border transition-colors duration-fast ${
                 isActive
-                  ? "bg-indigo-600 text-white"
-                  : "bg-neutral-800 text-neutral-400 hover:text-white hover:bg-neutral-700"
+                  ? "bg-[var(--accent-muted)] text-brand-bright border-[var(--accent-border)]"
+                  : "bg-abyss-2 text-ink-3 border-line-1 hover:text-ink-1 hover:border-line-2"
               }`}
             >
-              {SEASON_EMOJI[s]}
+              {isActive && <span className="sh-cut !mr-0 !w-[3px] !h-3" />}
               {SEASON_LABELS[s]}
-              {isCurrent && (
-                <span className="w-1.5 h-1.5 rounded-full bg-green-400 inline-block" />
-              )}
+              {isCurrent && <span className="sh-live-dot !w-1.5 !h-1.5" />}
             </Link>
           );
         })}
       </div>
 
-      <AdSlot placement="directory_top" />
-
       {/* Grid */}
       {anilistData.length === 0 ? (
-        <div className="text-center py-20 text-neutral-400">
-          <p className="text-lg">No se encontraron datos para esta temporada.</p>
-          <p className="text-sm mt-2">Puede que AniList aún no tenga información disponible.</p>
+        <div className="text-center py-20 text-sm">
+          <p className="text-ink-2">No se encontraron datos para esta temporada.</p>
+          <p className="mt-1 text-ink-3">Puede que AniList todavía no tenga información — volvé en unos días.</p>
         </div>
       ) : (
         <>
           {/* Legend */}
-          <div className="flex items-center gap-4 text-xs text-neutral-500">
+          <div className="flex items-center gap-4 text-xs text-ink-3">
             <span className="flex items-center gap-1.5">
-              <span className="inline-block w-2.5 h-2.5 rounded-sm bg-green-600" />
+              <span className="inline-block w-2.5 h-2.5 rounded-sm bg-[var(--success)]" />
               Disponible en SheicobAnime
             </span>
             <span className="flex items-center gap-1.5">
-              <span className="inline-block w-2.5 h-2.5 rounded-sm bg-neutral-600" />
+              <span className="inline-block w-2.5 h-2.5 rounded-sm bg-abyss-3 border border-line-2" />
               No indexado aún
             </span>
           </div>

@@ -266,8 +266,8 @@ export default function EpisodePlayer({
 
   if (displayEntries.length === 0) {
     return (
-      <div className="aspect-video w-full bg-neutral-900 flex items-center justify-center rounded-lg border border-neutral-800">
-        <p className="text-neutral-400 text-sm">
+      <div className="aspect-video w-full bg-abyss-2 flex items-center justify-center rounded-lg border border-line-1">
+        <p className="text-ink-2 text-sm">
           No hay enlaces disponibles para este episodio.
         </p>
       </div>
@@ -288,14 +288,14 @@ export default function EpisodePlayer({
         )}
 
         {state.kind === "preroll" && (!VAST_URL || vastNoFill) && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center bg-neutral-950 z-10">
+          <div className="absolute inset-0 flex flex-col items-center justify-center bg-abyss-0 z-10">
             <div className="flex flex-col items-center gap-4">
-              <p className="text-xs text-neutral-500 uppercase tracking-wide">Publicidad</p>
+              <p className="text-xs text-ink-3 uppercase tracking-wide">Publicidad</p>
               <AdSlot placement="episode_above_player" />
             </div>
             <div className="absolute top-3 right-3">
               {state.remaining > 0 ? (
-                <span className="px-3 py-1.5 bg-neutral-800 text-neutral-400 rounded text-xs">
+                <span className="px-3 py-1.5 bg-abyss-3 text-ink-2 rounded text-xs">
                   Saltar en {state.remaining}s
                 </span>
               ) : (
@@ -312,9 +312,9 @@ export default function EpisodePlayer({
         )}
 
         {state.kind === "resolving" && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center bg-neutral-950 z-10 gap-3">
+          <div className="absolute inset-0 flex flex-col items-center justify-center bg-abyss-0 z-10 gap-3">
             <div className="w-12 h-12 border-4 border-orange-500 border-t-transparent rounded-full animate-spin" />
-            <p className="text-sm text-neutral-300">Cargando reproductor Sheicob…</p>
+            <p className="text-sm text-ink-2">Cargando reproductor Sheicob…</p>
           </div>
         )}
 
@@ -355,7 +355,7 @@ export default function EpisodePlayer({
           )}
 
         {state.kind === "error" && (
-          <div className="absolute inset-0 flex items-center justify-center bg-neutral-950 z-10">
+          <div className="absolute inset-0 flex items-center justify-center bg-abyss-0 z-10">
             <p className="text-sm text-red-400">{state.message}</p>
           </div>
         )}
@@ -374,7 +374,7 @@ export default function EpisodePlayer({
       </div>
 
       {/* ── Title bar + action icons (JKAnime-style) ── */}
-      <div className="bg-neutral-900 border-x border-neutral-700/50 px-4 py-2.5 flex items-center gap-3">
+      <div className="bg-abyss-2 border-x border-line-1 px-4 py-2.5 flex items-center gap-3">
         <h2 className="text-sm md:text-base font-bold text-white uppercase truncate flex-1">
           <span className="text-orange-400">{episodeTitle}</span>
         </h2>
@@ -389,7 +389,7 @@ export default function EpisodePlayer({
             className={`p-2 rounded-lg transition-colors ${
               currentReported
                 ? "text-green-400 cursor-default"
-                : "text-neutral-500 hover:text-red-400 hover:bg-neutral-800"
+                : "text-ink-3 hover:text-red-400 hover:bg-abyss-3"
             } disabled:opacity-40`}
           >
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
@@ -414,7 +414,7 @@ export default function EpisodePlayer({
             : displayEntries;
 
         return (
-          <div className="bg-neutral-900/80 rounded-b-lg border border-t-0 border-neutral-700/50 overflow-hidden">
+          <div className="bg-abyss-2 rounded-b-lg border border-t-0 border-line-1 overflow-hidden">
             <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5">
               {visibleEntries.map((entry) => {
                 // Map back to the real displayEntries index so handleEntrySelect works correctly.
@@ -431,14 +431,14 @@ export default function EpisodePlayer({
                     key={key}
                     onClick={() => handleEntrySelect(i)}
                     aria-pressed={selected}
-                    className={`px-3 py-3 text-sm font-medium transition-colors text-center border-b border-r border-neutral-700/40 ${
+                    className={`px-3 py-3 text-sm font-medium transition-colors text-center border-b border-r border-line-1 ${
                       selected
                         ? isSheicob
                           ? "bg-gradient-to-br from-amber-500 to-orange-600 text-black"
                           : "bg-orange-600 text-white"
                         : isSheicob
                         ? "bg-amber-950/30 text-amber-300 hover:bg-amber-900/40"
-                        : "bg-neutral-800/50 text-neutral-300 hover:bg-neutral-700/60 hover:text-white"
+                        : "bg-abyss-3 text-ink-2 hover:bg-abyss-3/60 hover:text-white"
                     }`}
                   >
                     <span className={`block ${isSheicob ? "font-bold tracking-wide" : "capitalize"}`}>
@@ -449,7 +449,7 @@ export default function EpisodePlayer({
                         className={`block text-[10px] mt-0.5 ${
                           selected
                             ? isSheicob ? "text-black/60" : "text-orange-200"
-                            : isSheicob ? "text-amber-400/60" : "text-neutral-500"
+                            : isSheicob ? "text-amber-400/60" : "text-ink-3"
                         }`}
                       >
                         {quality}p
@@ -463,7 +463,7 @@ export default function EpisodePlayer({
             {hasSeekStreaming && displayEntries.length > visibleEntries.length && (
               <button
                 onClick={() => setShowAllServers(true)}
-                className="w-full py-2 text-xs text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/60 transition-colors border-t border-neutral-700/40"
+                className="w-full py-2 text-xs text-ink-2 hover:text-ink-1 hover:bg-abyss-3 transition-colors border-t border-line-1"
               >
                 Ver otros servidores ▼
               </button>
@@ -471,7 +471,7 @@ export default function EpisodePlayer({
             {hasSeekStreaming && showAllServers && displayEntries.length > 1 && (
               <button
                 onClick={() => setShowAllServers(false)}
-                className="w-full py-2 text-xs text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/60 transition-colors border-t border-neutral-700/40"
+                className="w-full py-2 text-xs text-ink-2 hover:text-ink-1 hover:bg-abyss-3 transition-colors border-t border-line-1"
               >
                 Ocultar otros servidores ▲
               </button>

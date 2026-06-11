@@ -16,8 +16,8 @@ export async function generateMetadata({ params }: Pick<Props, "params">): Promi
   const { name: rawName } = await params;
   const name = decodeURIComponent(rawName);
   return {
-    title: `${name} Anime`,
-    description: `Browse ${name} anime series on SheicobAnime.`,
+    title: `Anime de ${name}`,
+    description: `Mirá series de anime de ${name} online en SheicobAnime.`,
   };
 }
 
@@ -30,29 +30,40 @@ export default async function GenrePage({ params, searchParams }: Props) {
   const results = await getSeries({ genre: name, page, pageSize: 24 });
 
   return (
-    <div className="container mx-auto px-4 py-8 space-y-6">
-      <AdSlot placement="genre_top" />
-
+    <div className="mx-auto max-w-container px-4 py-8 space-y-6">
       {/* Breadcrumb */}
-      <nav className="text-sm text-neutral-500 flex items-center gap-2">
-        <Link href="/genres" className="hover:text-white transition-colors">
-          Genres
+      <nav className="flex items-center gap-2 text-[13px]">
+        <Link
+          href="/genres"
+          className="font-semibold text-brand-bright hover:text-[var(--cyan-200)] transition-colors duration-fast"
+        >
+          Géneros
         </Link>
-        <span>/</span>
-        <span className="text-neutral-300">{name}</span>
+        <span className="text-ink-3">/</span>
+        <span className="text-ink-2">{name}</span>
       </nav>
 
-      <div>
-        <h1 className="text-2xl font-bold text-white">{name} Anime</h1>
-        <p className="text-sm text-neutral-500 mt-1">
-          {results.total} series
-        </p>
+      <div className="flex flex-col gap-1">
+        <span className="sh-label">
+          {results.total.toLocaleString("es-AR")} serie{results.total !== 1 ? "s" : ""}
+        </span>
+        <span className="sh-section-header items-center">
+          <span className="sh-cut" />
+          <h1 className="sh-display text-[clamp(22px,3vw,28px)]">{name}</h1>
+        </span>
       </div>
 
       {results.data.length === 0 ? (
-        <p className="text-neutral-400 py-8 text-center">
-          No series found for this genre.
-        </p>
+        <div className="py-8 text-center text-sm">
+          <p className="text-ink-2">Todavía no hay series de este género.</p>
+          <p className="mt-1 text-ink-3">
+            Explorá el{" "}
+            <Link href="/directory" className="font-semibold text-brand-bright">
+              directorio
+            </Link>{" "}
+            mientras tanto.
+          </p>
+        </div>
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
           {results.data.map((s) => (
@@ -65,7 +76,7 @@ export default async function GenrePage({ params, searchParams }: Props) {
         page={page}
         total={results.total}
         pageSize={24}
-          basePath={`/genres/${rawName}`}
+        basePath={`/genres/${rawName}`}
       />
 
       <AdSlot placement="genre_bottom" />

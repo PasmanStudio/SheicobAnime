@@ -1,87 +1,54 @@
+import EpisodeCard from "@/components/ui/EpisodeCard";
 import type { Episode } from "@/lib/types";
-import Image from "next/image";
-import Link from "next/link";
 
 interface RecentEpisodesProps {
   episodes: Episode[];
 }
 
-/** Group episodes by calendar date (Buenos Aires TZ) and render a JKAnime‑style schedule grid. */
+/** Group episodes by calendar date and render a schedule grid. */
 export default function RecentEpisodes({ episodes }: RecentEpisodesProps) {
   const grouped = groupByDate(episodes);
 
   if (grouped.length === 0) {
     return (
-      <p className="text-zinc-500 text-sm">No hay episodios recientes.</p>
+      <div className="text-sm text-ink-3">
+        <p>Todavía no hay episodios recientes.</p>
+        <p className="mt-1">Volvé en un rato — el catálogo se actualiza todos los días.</p>
+      </div>
     );
   }
+
+  const dayMs = 24 * 60 * 60 * 1000;
 
   return (
     <div className="space-y-8">
       {grouped.map(({ label, items }) => (
         <div key={label}>
-          <h3 className="text-sm font-semibold text-indigo-400 uppercase tracking-wider mb-3">
-            {label}
-          </h3>
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
-            {items.map((ep) => (
-              <EpisodeCard key={ep.id} episode={ep} />
-            ))}
+          <h3 className="sh-label mb-3 block">{label}</h3>
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3.5">
+            {items.map((ep) => {
+              const series = ep.series;
+              const href = series
+                ? `/series/${series.slug}/${ep.episodeNumber}`
+                : `/episodes/${ep.id}`;
+              const created = new Date(ep.createdAt).getTime();
+              return (
+                <EpisodeCard
+                  key={ep.id}
+                  href={href}
+                  seriesTitle={series?.title ?? ep.title ?? `Episodio ${ep.episodeNumber}`}
+                  episodeNumber={ep.episodeNumber}
+                  title={ep.title}
+                  thumbnailUrl={ep.thumbnailUrl ?? series?.coverUrl ?? null}
+                  timeAgo={formatTimeAgo(ep.createdAt)}
+                  isNew={Date.now() - created < dayMs}
+                />
+              );
+            })}
           </div>
         </div>
       ))}
     </div>
-  );
-}
-
-function EpisodeCard({ episode }: { episode: Episode }) {
-  const series = episode.series;
-  const href = series
-    ? `/series/${series.slug}/${episode.episodeNumber}`
-    : `/episodes/${episode.id}`;
-  const coverUrl = episode.thumbnailUrl ?? series?.coverUrl ?? null;
-
-  return (
-    <Link
-      href={href}
-      className="group block rounded-lg overflow-hidden bg-neutral-800 hover:ring-2 hover:ring-indigo-500 transition-all"
-    >
-      {/* Thumbnail — 16:9 */}
-      <div className="relative aspect-video bg-neutral-700 overflow-hidden">
-        {coverUrl ? (
-          <Image
-            src={coverUrl}
-            alt={series?.title ?? `Episodio ${episode.episodeNumber}`}
-            fill
-            sizes="(max-width: 640px) 50vw, (max-width: 1024px) 25vw, 16vw"
-            className="object-cover group-hover:scale-105 transition-transform duration-300"
-          />
-        ) : (
-          <div className="w-full h-full flex items-center justify-center text-neutral-500 text-xs">
-            Sin imagen
-          </div>
-        )}
-
-        {/* Episode number badge */}
-        <span className="absolute top-1.5 left-1.5 bg-indigo-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded">
-          Ep {episode.episodeNumber}
-        </span>
-
-        {/* Air day badge */}
-        {episode.airedAt && (
-          <span className="absolute top-1.5 right-1.5 bg-black/70 text-zinc-300 text-[10px] px-1.5 py-0.5 rounded">
-            {formatShortDay(episode.airedAt)}
-          </span>
-        )}
-      </div>
-
-      {/* Title */}
-      <div className="p-2">
-        <p className="text-xs text-white font-medium line-clamp-2 leading-tight">
-          {series?.title ?? episode.title ?? `Episodio ${episode.episodeNumber}`}
-        </p>
-      </div>
-    </Link>
   );
 }
 
@@ -147,7 +114,13 @@ function formatFullDate(key: string): string {
   return `${DAY_NAMES[d.getDay()]}, ${day} de ${MONTH_NAMES[d.getMonth()]}`;
 }
 
-function formatShortDay(iso: string): string {
-  const d = new Date(iso);
-  return `${DAY_NAMES[d.getDay()].slice(0, 3)} ${d.getDate()}`;
+function formatTimeAgo(iso: string): string {
+  const diffMs = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diffMs / 60_000);
+  if (mins < 60) return `hace ${Math.max(1, mins)} min`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `hace ${hours} h`;
+  const days = Math.floor(hours / 24);
+  if (days === 1) return "ayer";
+  return `hace ${days} días`;
 }

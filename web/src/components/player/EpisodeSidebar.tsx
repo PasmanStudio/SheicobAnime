@@ -49,24 +49,18 @@ export default function EpisodeSidebar({
   }, [episodes, filter]);
 
   return (
-    <div className="rounded-lg border border-neutral-700 bg-neutral-900 shadow-xl overflow-hidden">
+    <div className="rounded-card border border-line-1 bg-abyss-2 overflow-hidden">
       {/* Header — collapsible on mobile, always-visible label on desktop */}
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center gap-2 px-3 py-2.5 bg-neutral-800/80 text-neutral-300 text-sm font-medium w-full lg:cursor-default border-b border-neutral-700/50"
+        className="flex items-center gap-2.5 px-3.5 py-3 w-full lg:cursor-default border-b border-line-1 text-left"
       >
-        <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
-        </svg>
-        <span>Ep 1 - {episodes.length}</span>
-        <span className="text-neutral-500 text-xs ml-auto hidden lg:inline">
-          Filtrar episodio:
-        </span>
-        <span className="text-neutral-500 text-xs ml-auto lg:hidden">
-          {episodes.length} episodios
+        <span className="text-[13px] font-bold text-ink-1">Episodios</span>
+        <span className="sh-stat text-[11px] text-ink-3 ml-auto">
+          {currentEpisodeNumber} / {episodes.length}
         </span>
         <svg
-          className={`w-4 h-4 shrink-0 transition-transform lg:hidden ${isOpen ? "rotate-180" : ""}`}
+          className={`w-4 h-4 shrink-0 text-ink-3 transition-transform lg:hidden ${isOpen ? "rotate-180" : ""}`}
           fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
         >
           <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
@@ -76,24 +70,24 @@ export default function EpisodeSidebar({
       {/* Panel body — always visible on lg+, toggled on mobile */}
       <div className={`${isOpen ? "block" : "hidden"} lg:block`}>
         {/* Filter input */}
-        <div className="p-2 border-b border-neutral-800">
+        <div className="p-2 border-b border-line-1">
           <input
             type="text"
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
-            placeholder="Filtrar episodio..."
-            className="w-full px-3 py-1.5 text-sm bg-neutral-800 text-white rounded border border-neutral-700 focus:border-orange-500 focus:outline-none placeholder:text-neutral-500"
+            placeholder="Filtrar episodio…"
+            className="w-full px-3 py-1.5 text-sm bg-abyss-1 text-ink-1 rounded-btn border border-line-1 focus:border-brand focus:outline-none focus:shadow-focus placeholder:text-[var(--text-3)] transition-all duration-fast"
           />
         </div>
 
         {/* Episode list — scrollable */}
         <div className="max-h-60 sm:max-h-80 lg:max-h-[520px] overflow-y-auto overscroll-contain">
           {filtered.length === 0 ? (
-            <p className="text-neutral-500 text-sm p-3 text-center">
+            <p className="text-ink-3 text-sm p-3 text-center">
               No se encontraron episodios.
             </p>
           ) : (
-            <ul className="divide-y divide-neutral-800/60">
+            <ul className="divide-y divide-[var(--border-1)]">
               {filtered.map((ep) => {
                 const isCurrent = ep.episodeNumber === currentEpisodeNumber;
                 const thumb = ep.thumbnailUrl ?? ep.series?.coverUrl ?? seriesCoverUrl ?? null;
@@ -101,20 +95,21 @@ export default function EpisodeSidebar({
                 const ratio = prog && prog.durationSeconds > 0
                   ? Math.min(100, Math.round((prog.positionSeconds / prog.durationSeconds) * 100))
                   : 0;
+                const watched = Boolean(prog?.completed);
 
                 return (
                   <li key={ep.id}>
                     <Link
                       href={`/series/${seriesSlug}/${ep.episodeNumber}`}
                       onClick={() => setIsOpen(false)}
-                      className={`flex items-center gap-3 px-3 py-2 transition-colors ${
+                      className={`flex items-center gap-3 px-3 py-2 transition-colors duration-fast border-l-[3px] ${
                         isCurrent
-                          ? "bg-indigo-600/20 border-l-2 border-indigo-500"
-                          : "hover:bg-neutral-800 border-l-2 border-transparent"
+                          ? "bg-[var(--accent-muted)] border-brand"
+                          : "hover:bg-abyss-3 border-transparent"
                       }`}
                     >
                       {/* Thumbnail */}
-                      <div className="relative w-14 aspect-video rounded overflow-hidden bg-neutral-800 shrink-0">
+                      <div className="relative w-14 aspect-video rounded-badge overflow-hidden bg-abyss-3 shrink-0">
                         {thumb ? (
                           <Image
                             src={thumb}
@@ -124,20 +119,15 @@ export default function EpisodeSidebar({
                             className="object-cover"
                           />
                         ) : (
-                          <div className="w-full h-full flex items-center justify-center text-neutral-600 text-[10px]">
-                            Sin img
+                          <div className="w-full h-full flex items-center justify-center font-display italic font-black text-ink-3 text-xs">
+                            EP
                           </div>
                         )}
-                        {prog?.completed && (
-                          <span className="absolute top-0.5 right-0.5 bg-green-600 text-white text-[9px] font-bold px-1 rounded">
-                            Visto
-                          </span>
-                        )}
                         {prog && !prog.completed && ratio > 0 && (
-                          <div className="absolute bottom-0 left-0 right-0 h-1 bg-black/60">
+                          <div className="absolute bottom-0 left-0 right-0 h-1 bg-[rgba(5,7,11,0.6)]">
                             <div
-                              className="h-full bg-orange-500"
-                              style={{ width: `${ratio}%` }}
+                              className="h-full"
+                              style={{ width: `${ratio}%`, background: "var(--grad-action)" }}
                             />
                           </div>
                         )}
@@ -145,16 +135,34 @@ export default function EpisodeSidebar({
 
                       {/* Info */}
                       <div className="flex-1 min-w-0">
-                        <p className={`text-sm font-medium truncate ${
-                          isCurrent ? "text-orange-400" : "text-neutral-200"
-                        }`}>
-                          Episodio {ep.episodeNumber}
+                        <p
+                          className={`sh-stat text-xs truncate ${
+                            isCurrent
+                              ? "text-brand-bright"
+                              : watched
+                                ? "text-ink-3"
+                                : "text-ink-2"
+                          }`}
+                        >
+                          EP {String(ep.episodeNumber).padStart(2, "0")}
+                          {isCurrent && (
+                            <span className="ml-2 font-sans font-semibold text-ink-1 normal-case">
+                              Reproduciendo
+                            </span>
+                          )}
+                          {!isCurrent && watched && (
+                            <span className="ml-2 font-sans font-medium text-ink-3 normal-case">
+                              Visto
+                            </span>
+                          )}
                         </p>
-                        {/* Show episode-specific subtitle: real episode title (not series name) or aired date */}
+                        {/* Episode-specific subtitle: real episode title (not series name) or aired date */}
                         {ep.title && ep.title !== seriesTitle ? (
-                          <p className="text-[11px] text-neutral-500 truncate">{ep.title}</p>
+                          <p className={`text-[11px] truncate ${watched && !isCurrent ? "text-ink-3" : "text-ink-2"}`}>
+                            {ep.title}
+                          </p>
                         ) : ep.airedAt ? (
-                          <p className="text-[11px] text-neutral-600">
+                          <p className="sh-stat text-[10px] text-ink-3">
                             {new Date(ep.airedAt).toLocaleDateString("es-AR")}
                           </p>
                         ) : null}
@@ -168,15 +176,15 @@ export default function EpisodeSidebar({
         </div>
 
         {/* Footer — view all link */}
-        <div className="border-t border-neutral-800 p-2">
+        <div className="border-t border-line-1 p-2">
           <Link
             href={`/series/${seriesSlug}`}
-            className="block text-center text-xs text-neutral-400 hover:text-white transition-colors py-1"
+            className="block text-center text-xs font-semibold text-ink-3 hover:text-brand-bright transition-colors duration-fast py-1"
           >
-            ≡ Ver todos los episodios
+            Ver todos los episodios →
           </Link>
-          </div>
         </div>
+      </div>
     </div>
   );
 }
