@@ -1,5 +1,6 @@
 import { auth } from "@/lib/auth";
 import { getDb } from "@/lib/db";
+import { awardXp } from "@/lib/xp";
 import { NextResponse } from "next/server";
 
 type Params = { params: Promise<{ slug: string }> };
@@ -69,6 +70,8 @@ export async function POST(req: Request, { params }: Params) {
         [session.user.id, slug, body.seriesTitle ?? slug, body.coverUrl ?? null],
       );
       liked = true;
+      // +1 XP (cap 5/día; dedup por serie — no se farmea con like/unlike)
+      await awardXp(session.user.id, "series_liked", `like:${slug}`);
     }
 
     // Return updated count
