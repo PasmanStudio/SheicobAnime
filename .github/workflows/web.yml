@@ -56,3 +56,46 @@ jobs:
           AUTH_DISCORD_ID: "placeholder"
           AUTH_DISCORD_SECRET: "placeholder"
           NEXTAUTH_DATABASE_URL: ""
+
+  deploy:
+    name: Deploy to Cloudflare Workers
+    needs: typecheck-and-build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+
+      - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: web
+
+      - name: Build (OpenNext) and deploy to Cloudflare
+        run: npm run cf:deploy
+        working-directory: web
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          # NEXT_PUBLIC_* values are inlined into the client bundle at build
+          # time — they are public by definition, so they live here in plain
+          # text rather than in repo secrets.
+          NEXT_PUBLIC_API_URL: "https://sheicobanime-api.onrender.com"
+          NEXT_PUBLIC_AD_PROVIDER: "adsterra"
+          NEXT_PUBLIC_COMMENT_PROVIDER: "disqus"
+          NEXT_PUBLIC_DISQUS_SHORTNAME: "sheicobanime-vercel-app"
+          NEXT_PUBLIC_ADSTERRA_NATIVE_HASH: "7ee40e5de8cc821cc6ce096252393fd4"
+          NEXT_PUBLIC_ADSTERRA_NATIVE_SCRIPT: "https://pl29138492.profitablecpmratenetwork.com/7ee40e5de8cc821cc6ce096252393fd4/invoke.js"
+          NEXT_PUBLIC_ADSTERRA_SOCIALBAR_SCRIPT: "https://pl29138491.profitablecpmratenetwork.com/81/0e/8b/810e8b5ee34d29a8061284101b4768c6.js"
+          NEXT_PUBLIC_ADSTERRA_POPUNDER_SCRIPT: "https://pl29138490.profitablecpmratenetwork.com/3d/1b/5b/3d1b5b04f03946a5ecb8410c8025f660.js"
+          # Auth.js — build-time placeholders (real values are Worker secrets)
+          AUTH_SECRET: "ci-build-secret-placeholder-32chars!!"
+          AUTH_GOOGLE_ID: "placeholder"
+          AUTH_GOOGLE_SECRET: "placeholder"
+          AUTH_DISCORD_ID: "placeholder"
+          AUTH_DISCORD_SECRET: "placeholder"
+          NEXTAUTH_DATABASE_URL: ""

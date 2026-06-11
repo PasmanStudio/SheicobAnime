@@ -1,5 +1,6 @@
 export async function register() {
-  if (process.env.NEXT_RUNTIME === "nodejs") {
+  // Sentry's Node SDK is not supported on Cloudflare Workers — skipped via DISABLE_SENTRY
+  if (process.env.NEXT_RUNTIME === "nodejs" && !process.env.DISABLE_SENTRY) {
     await import("../sentry.server.config");
   }
 

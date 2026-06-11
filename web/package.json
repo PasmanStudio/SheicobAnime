@@ -7,7 +7,10 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "cf:build": "cross-env CLOUDFLARE_BUILD=1 opennextjs-cloudflare build",
+    "cf:preview": "npm run cf:build && opennextjs-cloudflare preview",
+    "cf:deploy": "npm run cf:build && opennextjs-cloudflare deploy"
   },
   "dependencies": {
     "@auth/pg-adapter": "^1.11.2",
@@ -21,15 +24,18 @@
     "react-dom": "^18"
   },
   "devDependencies": {
+    "@opennextjs/cloudflare": "^1.19.11",
     "@types/hls.js": "^0.13.3",
     "@types/node": "^20",
     "@types/pg": "^8.20.0",
     "@types/react": "^18",
     "@types/react-dom": "^18",
+    "cross-env": "^10.1.0",
     "eslint": "^8",
     "eslint-config-next": "15.5.18",
     "tailwindcss": "^3.4.1",
-    "typescript": "^5"
+    "typescript": "^5",
+    "wrangler": "^4.100.0"
   },
   "overrides": {
     "fast-uri": ">=3.1.2",
