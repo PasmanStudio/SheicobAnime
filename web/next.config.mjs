@@ -1,4 +1,13 @@
+import { fileURLToPath } from "node:url";
+import path from "node:path";
 import { withSentryConfig } from "@sentry/nextjs";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// Cloudflare Workers build: the Sentry SDK adds ~4 MiB to the server bundle,
+// blowing the 3 MiB Workers free-plan size limit. CLOUDFLARE_BUILD=1 swaps
+// @sentry/nextjs for a no-op stub and skips the Sentry webpack wrapper.
+const isCloudflareBuild = !!process.env.CLOUDFLARE_BUILD;
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
@@ -18,21 +27,32 @@ const nextConfig = {
       { protocol: "https", hostname: "**" },
     ],
   },
+  ...(isCloudflareBuild && {
+    webpack: (config) => {
+      config.resolve.alias["@sentry/nextjs"] = path.resolve(
+        __dirname,
+        "src/lib/sentry-stub.ts"
+      );
+      return config;
+    },
+  }),
 };
 
-export default withSentryConfig(nextConfig, {
-  // Upload source maps to Sentry for readable stack traces
-  org: process.env.SENTRY_ORG,
-  project: process.env.SENTRY_PROJECT,
+export default isCloudflareBuild
+  ? nextConfig
+  : withSentryConfig(nextConfig, {
+      // Upload source maps to Sentry for readable stack traces
+      org: process.env.SENTRY_ORG,
+      project: process.env.SENTRY_PROJECT,
 
-  // Only upload source maps during CI builds (when auth token is present)
-  silent: !process.env.SENTRY_AUTH_TOKEN,
+      // Only upload source maps during CI builds (when auth token is present)
+      silent: !process.env.SENTRY_AUTH_TOKEN,
 
-  // Wipe source maps after upload so they aren't served to the client
-  sourcemaps: {
-    deleteSourcemapsAfterUpload: true,
-  },
+      // Wipe source maps after upload so they aren't served to the client
+      sourcemaps: {
+        deleteSourcemapsAfterUpload: true,
+      },
 
-  // Disable Sentry telemetry
-  telemetry: false,
-});
+      // Disable Sentry telemetry
+      telemetry: false,
+    });
