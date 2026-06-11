@@ -1,5 +1,6 @@
 import { auth } from "@/lib/auth";
 import { getDb } from "@/lib/db";
+import { awardXp, registerStreakDay } from "@/lib/xp";
 import { NextResponse } from "next/server";
 
 // GET /api/history?limit=50 — recent episode watch history
@@ -58,5 +59,12 @@ export async function POST(req: Request) {
     ],
   );
 
-  return NextResponse.json({ ok: true });
+  // XP + racha (doc 3) — best-effort, dedup por episodio en la DB.
+  // El cliente marca "visto" al superar el umbral de reproducción.
+  const [xp, streak] = await Promise.all([
+    awardXp(session.user.id, "episode_watched", `ep:${episodeId}`),
+    registerStreakDay(session.user.id),
+  ]);
+
+  return NextResponse.json({ ok: true, xp, streak });
 }

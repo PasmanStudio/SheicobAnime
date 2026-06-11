@@ -1,0 +1,31 @@
+name: Badges — Nightly batch
+
+# Otorga los badges de engagement (doc 3) ejecutando grant_badges_batch()
+# en la DB una vez por día. La función es idempotente (ON CONFLICT DO NOTHING),
+# así que correrla de más nunca duplica nada.
+#
+# Corre a las 04:30 UTC (01:30 Argentina), bien después del scraper diario
+# (21:15 UTC) para que el batch vea los episodios del día ya indexados.
+#
+# Required secrets (ya existe, lo usa scraper-cron):
+#   DATABASE_URL — Supabase connection string en formato URI (postgresql://...)
+
+on:
+  schedule:
+    - cron: '30 4 * * *'   # 04:30 UTC = 01:30 Argentina (UTC-3) daily
+  workflow_dispatch:        # allow manual runs
+
+jobs:
+  grant-badges:
+    name: Run grant_badges_batch()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Grant badges
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          psql "$DATABASE_URL" \
+            --set ON_ERROR_STOP=1 \
+            -c "SELECT grant_badges_batch() AS badges_otorgados;"

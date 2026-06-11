@@ -1,5 +1,6 @@
 import { auth } from "@/lib/auth";
 import { getDb } from "@/lib/db";
+import { awardXp } from "@/lib/xp";
 import { NextResponse } from "next/server";
 
 interface Params { params: Promise<{ id: string }> }
@@ -58,6 +59,18 @@ export async function PUT(req: Request, { params }: Params) {
     );
     if (rows.length === 0)
       return NextResponse.json({ error: "No encontrado" }, { status: 404 });
+
+    // +25 XP al publicar (doc 3: requiere >= 8 animes clasificados; dedup por lista)
+    if (body.is_public === true) {
+      const { rows: countRows } = await db.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count FROM user_tier_entries WHERE tier_list_id = $1`,
+        [id],
+      );
+      if (parseInt(countRows[0]?.count ?? "0", 10) >= 8) {
+        await awardXp(session.user.id, "tierlist_published", `tierlist:${id}`);
+      }
+    }
+
     return NextResponse.json(rows[0]);
   } catch {
     return NextResponse.json({ error: "Error" }, { status: 500 });
