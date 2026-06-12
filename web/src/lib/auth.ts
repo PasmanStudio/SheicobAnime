@@ -5,25 +5,13 @@ import NextAuth from "next-auth";
 import Google from "next-auth/providers/google";
 import Discord from "next-auth/providers/discord";
 import PostgresAdapter from "@auth/pg-adapter";
-import { Pool } from "pg";
+import { dbFacade } from "@/lib/db";
 
-// Create a singleton Pool so we don't exhaust connections.
-// connectionString may be undefined during `next build` — Pool only
-// throws at query time, not construction time, so the build succeeds.
-// ssl: rejectUnauthorized:false is required for Supabase/Railway/Render poolers
-// that use self-signed or intermediate certs (avoids SELF_SIGNED_CERT_IN_CHAIN).
-const pool = new Pool({
-  connectionString: process.env.NEXTAUTH_DATABASE_URL,
-  max: 5,
-  idleTimeoutMillis: 30_000,
-  connectionTimeoutMillis: 5_000,
-  ssl: process.env.NEXTAUTH_DATABASE_URL
-    ? { rejectUnauthorized: false }
-    : false,
-});
-
+// dbFacade resolves the right Pool per environment: a per-request pool on
+// Cloudflare Workers (sockets can't cross requests) and a global singleton
+// on Node. See src/lib/db.ts.
 export const { handlers, auth, signIn, signOut } = NextAuth({
-  adapter: PostgresAdapter(pool),
+  adapter: PostgresAdapter(dbFacade),
 
   providers: [
     Google({
