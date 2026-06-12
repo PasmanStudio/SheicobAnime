@@ -1,0 +1,28 @@
+{
+  // Cloudflare Workers config — deployed via `npm run deploy` (OpenNext adapter).
+  // Docs: https://opennext.js.org/cloudflare
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "sheicobanime",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2025-09-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "binding": "ASSETS",
+    "directory": ".open-next/assets"
+  },
+  "observability": {
+    "enabled": true
+  },
+  "vars": {
+    // Sentry's Node SDK is not supported on Workers — instrumentation.ts skips init
+    "DISABLE_SENTRY": "1",
+    // Auth.js v5: trust the Host header set by the Cloudflare runtime
+    "AUTH_TRUST_HOST": "true",
+    // Server-side fetches read this at runtime (NEXT_PUBLIC_ inlining only
+    // covers client bundles) — without it the API base falls back to localhost
+    "NEXT_PUBLIC_API_URL": "https://sheicobanime-api.onrender.com",
+    "NEXT_PUBLIC_AD_PROVIDER": "adsterra",
+    "NEXT_PUBLIC_COMMENT_PROVIDER": "disqus",
+    "NEXT_PUBLIC_DISQUS_SHORTNAME": "sheicobanime"
+  }
+}
