@@ -67,7 +67,8 @@ jobs:
 
       - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4
         with:
-          node-version: '20'
+          # wrangler 4.x requires Node >= 22
+          node-version: '22'
           cache: 'npm'
           cache-dependency-path: web/package-lock.json
 
