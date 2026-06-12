@@ -21,8 +21,12 @@
     // Server-side fetches read this at runtime (NEXT_PUBLIC_ inlining only
     // covers client bundles) — without it the API base falls back to localhost
     "NEXT_PUBLIC_API_URL": "https://sheicobanime-api.onrender.com",
+    // URL canónica — cambiar dominio = tocar acá y en .env.production, nada más
+    "NEXT_PUBLIC_SITE_URL": "https://sheicobanime.sheicob.workers.dev",
     "NEXT_PUBLIC_AD_PROVIDER": "adsterra",
     "NEXT_PUBLIC_COMMENT_PROVIDER": "disqus",
-    "NEXT_PUBLIC_DISQUS_SHORTNAME": "sheicobanime"
+    // Shortname real de Disqus (el sitio se registró cuando vivía en Vercel —
+    // el shortname no se puede renombrar, solo se actualiza la Website URL)
+    "NEXT_PUBLIC_DISQUS_SHORTNAME": "sheicobanime-vercel-app"
   }
 }

@@ -1,0 +1,41 @@
+name: Notificaciones — Digest semanal
+
+# Email semanal a los usuarios con email_digest_opt_in: episodios de sus
+# series seguidas + top de la semana. Domingo 18:00 Argentina (21:00 UTC).
+# Un click para desuscribir (token por usuario).
+#
+# Required secrets:
+#   DATABASE_URL     — ya existe (lo usa scraper-cron)
+#   RESEND_API_KEY   — API key de https://resend.com
+#   DIGEST_FROM      — remitente verificado (ej: "SheicobAnime <hola@tudominio>")
+
+on:
+  schedule:
+    - cron: '0 21 * * 0'   # domingo 21:00 UTC = 18:00 Argentina
+  workflow_dispatch:
+
+jobs:
+  digest:
+    name: send-weekly-digest
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install deps
+        working-directory: scripts/notifications
+        run: npm install --no-audit --no-fund
+
+      - name: Send digest
+        working-directory: scripts/notifications
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          DIGEST_FROM: ${{ secrets.DIGEST_FROM }}
+          SITE_URL: https://sheicobanime.sheicob.workers.dev
+        run: node send-weekly-digest.mjs

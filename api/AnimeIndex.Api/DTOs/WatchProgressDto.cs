@@ -23,3 +23,15 @@ public record RecentProgressDto(
     int DurationSeconds,
     bool Completed,
     DateTime UpdatedAt);
+
+/// <summary>
+/// Serie que el viewer dejó pendiente: terminó un episodio y existe el
+/// siguiente sin empezar. Alimenta la fila "Seguir mirando" del home.
+/// </summary>
+public record PendingSeriesDto(
+    string SeriesSlug,
+    string? SeriesTitle,
+    string? SeriesCoverUrl,
+    int LastWatchedEpisode,
+    int NextEpisodeNumber,
+    DateTime UpdatedAt);

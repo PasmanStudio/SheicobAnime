@@ -1,3 +1,4 @@
+import { siteUrl } from "@/lib/site-url";
 import Image from "next/image";
 import Link from "next/link";
 
@@ -48,7 +49,7 @@ export default function SiteFooter() {
           </Link>
         </nav>
         <span className="font-mono text-[11px] text-ink-3">
-          sheicobanime.com — hecho por fans, para fans
+          {siteUrl().replace(/^https?:\/\//, "")} — hecho por fans, para fans
         </span>
       </div>
     </footer>

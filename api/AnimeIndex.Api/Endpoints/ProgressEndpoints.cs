@@ -20,6 +20,7 @@ public static class ProgressEndpoints
         group.MapPut("/{episodeId:guid}", UpdateProgress);
         group.MapGet("/{episodeId:guid}", GetProgress);
         group.MapGet("/recent", GetRecent);
+        group.MapGet("/pending", GetPending);
     }
 
     private static async Task<IResult> UpdateProgress(
@@ -134,5 +135,70 @@ public static class ProgressEndpoints
             .ToListAsync(ct);
 
         return Results.Ok(rows);
+    }
+
+    /// <summary>
+    /// Series pendientes de seguir: el último episodio tocado por el device
+    /// quedó completado y existe el siguiente publicado. Alimenta la fila
+    /// "Seguir mirando" del home (funciona logueado o no — va por device id).
+    /// </summary>
+    private static async Task<IResult> GetPending(
+        HttpContext http,
+        AppDbContext db,
+        CancellationToken ct,
+        int limit = 12)
+    {
+        if (limit <= 0 || limit > 24) limit = 12;
+
+        var deviceId = http.GetDeviceId();
+
+        // Actividad reciente del device con número de episodio resuelto
+        var rows = await (
+            from w in db.WatchProgress.AsNoTracking()
+            where w.DeviceId == deviceId
+            orderby w.UpdatedAt descending
+            join e in db.Episodes on w.EpisodeId equals e.Id
+            join s in db.Series on e.SeriesId equals s.Id
+            select new
+            {
+                w.SeriesSlug,
+                s.Title,
+                s.CoverUrl,
+                e.EpisodeNumber,
+                w.Completed,
+                w.UpdatedAt,
+            })
+            .Take(200)
+            .ToListAsync(ct);
+
+        // Última fila por serie (rows ya viene ordenado desc) — si quedó
+        // completada, la serie es candidata a "seguir mirando"
+        var candidates = rows
+            .GroupBy(r => r.SeriesSlug)
+            .Select(g => g.First())
+            .Where(r => r.Completed)
+            .Take(limit)
+            .ToList();
+
+        var result = new List<PendingSeriesDto>(candidates.Count);
+        foreach (var c in candidates)
+        {
+            // Siguiente episodio publicado (el más chico mayor al visto — tolera huecos)
+            var next = await db.Episodes.AsNoTracking()
+                .Where(e => e.Series!.Slug == c.SeriesSlug
+                    && e.IsPublished
+                    && e.EpisodeNumber > c.EpisodeNumber)
+                .OrderBy(e => e.EpisodeNumber)
+                .Select(e => (int?)e.EpisodeNumber)
+                .FirstOrDefaultAsync(ct);
+
+            if (next is null) continue; // serie al día — nada pendiente
+
+            result.Add(new PendingSeriesDto(
+                c.SeriesSlug, c.Title, c.CoverUrl,
+                c.EpisodeNumber, next.Value, c.UpdatedAt));
+        }
+
+        return Results.Ok(result);
     }
 }

@@ -2,6 +2,7 @@ import AdSlot from "@/components/ads/AdSlot";
 import LikeButton from "@/components/likes/LikeButton";
 import AddToListButton from "@/components/lists/AddToListButton";
 import AddToTierButton from "@/components/tierlist/AddToTierButton";
+import FollowButton from "@/components/series/FollowButton";
 import GenreChip from "@/components/ui/GenreChip";
 import Pagination from "@/components/ui/Pagination";
 import ScoreBadge from "@/components/ui/ScoreBadge";
@@ -209,6 +210,7 @@ export default async function SeriesPage({ params, searchParams }: Props) {
 
             {/* Action buttons */}
             <div className="flex flex-wrap gap-2 mt-1 justify-center md:justify-start">
+              <FollowButton seriesSlug={slug} />
               <LikeButton
                 seriesSlug={slug}
                 seriesTitle={series.title}

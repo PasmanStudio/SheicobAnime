@@ -130,6 +130,16 @@ export interface RecentProgress extends WatchProgress {
   episodeTitle: string | null;
 }
 
+/** Serie pendiente de seguir: terminaste un episodio y ya salió el siguiente. */
+export interface PendingSeries {
+  seriesSlug: string;
+  seriesTitle: string | null;
+  seriesCoverUrl: string | null;
+  lastWatchedEpisode: number;
+  nextEpisodeNumber: number;
+  updatedAt: string;
+}
+
 // ─── API response shapes ─────────────────────────────
 
 export interface PaginatedResponse<T> {
