@@ -1,0 +1,43 @@
+name: Notificaciones — Push de episodios nuevos
+
+# Avisa (in-app + Web Push) a los seguidores de cada serie cuando sale un
+# episodio nuevo. Corre cada 2 horas — el grueso del contenido entra con el
+# scraper diario (21:15 UTC), así que el aviso llega dentro de las 2 h.
+# Dedup en DB: correrlo de más nunca duplica avisos.
+#
+# Required secrets:
+#   DATABASE_URL       — ya existe (lo usa scraper-cron)
+#   VAPID_PUBLIC_KEY   — generar con: npx web-push generate-vapid-keys
+#   VAPID_PRIVATE_KEY  — (sin claves, solo se crean notificaciones in-app)
+
+on:
+  schedule:
+    - cron: '45 */2 * * *'  # cada 2 horas
+  workflow_dispatch:
+
+jobs:
+  notify:
+    name: notify-new-episodes
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install deps
+        working-directory: scripts/notifications
+        run: npm install --no-audit --no-fund
+
+      - name: Send notifications
+        working-directory: scripts/notifications
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          VAPID_PUBLIC_KEY: ${{ secrets.VAPID_PUBLIC_KEY }}
+          VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
+          SITE_URL: https://sheicobanime.sheicob.workers.dev
+          LOOKBACK_HOURS: '26'
+        run: node notify-new-episodes.mjs

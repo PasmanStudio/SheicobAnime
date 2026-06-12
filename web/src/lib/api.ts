@@ -5,7 +5,8 @@ import type {
     HealthResponse,
     Mirror,
     PaginatedResponse,
-    RecentProgress,
+    PendingSeries,
+  RecentProgress,
     ResolvableMirror,
     ResolvedSource,
     SearchQueryParams,
@@ -277,5 +278,11 @@ export async function updateWatchProgress(
 export async function getRecentProgress(limit = 20): Promise<RecentProgress[]> {
   return requestWithCredentials<RecentProgress[]>(
     `/progress/recent${toQueryString({ limit })}`
+  );
+}
+
+export async function getPendingSeries(limit = 12): Promise<PendingSeries[]> {
+  return requestWithCredentials<PendingSeries[]>(
+    `/progress/pending${toQueryString({ limit })}`
   );
 }

@@ -3,6 +3,7 @@ import InactivityAdTrigger from "@/components/ads/InactivityAdTrigger";
 import ContinueWatchingRow from "@/components/ui/ContinueWatchingRow";
 import GenreChip from "@/components/ui/GenreChip";
 import HeroCarousel from "@/components/ui/HeroCarousel";
+import PendingSeriesRow from "@/components/ui/PendingSeriesRow";
 import RankNumber from "@/components/ui/RankNumber";
 import RecentEpisodes from "@/components/ui/RecentEpisodes";
 import SectionHeader from "@/components/ui/SectionHeader";
@@ -46,8 +47,11 @@ export default async function HomePage() {
       {/* Hero */}
       {recent.data.length > 0 && <HeroCarousel series={recent.data} />}
 
-      {/* Continuar viendo — primero: client-side, hidden if no progress */}
+      {/* Continuar viendo (episodios a medio ver) — primero, client-side */}
       <ContinueWatchingRow />
+
+      {/* Seguir mirando (series con el siguiente episodio pendiente) */}
+      <PendingSeriesRow />
 
       {/* Últimos episodios */}
       <section>

@@ -9,6 +9,7 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import ProfileEditModal from "./ProfileEditModal";
 import AdSlot from "@/components/ads/AdSlot";
+import DigestToggle from "@/components/profile/DigestToggle";
 import ProgressBar from "@/components/ui/ProgressBar";
 import SectionHeader from "@/components/ui/SectionHeader";
 
@@ -323,21 +324,24 @@ export default async function UsuarioPage({ params }: Props) {
       <div className="mx-auto max-w-container px-5 py-6">
         {/* Quick links (own profile) */}
         {isOwn && (
-          <div className="mb-8 flex flex-wrap gap-3">
-            {[
-              ["/guardado", "Mi lista"],
-              ["/historial", "Historial"],
-              ["/listas", "Playlists"],
-              ["/tierlist", "Tier lists"],
-            ].map(([href, label]) => (
-              <Link
-                key={href}
-                href={href}
-                className="flex-1 basis-[140px] rounded-btn border border-line-1 bg-abyss-2 px-4 py-2.5 text-center text-sm font-semibold text-ink-2 transition-all duration-fast hover:border-line-2 hover:text-ink-1"
-              >
-                {label}
-              </Link>
-            ))}
+          <div className="mb-8 flex flex-col gap-3">
+            <div className="flex flex-wrap gap-3">
+              {[
+                ["/guardado", "Mi lista"],
+                ["/historial", "Historial"],
+                ["/listas", "Playlists"],
+                ["/tierlist", "Tier lists"],
+              ].map(([href, label]) => (
+                <Link
+                  key={href}
+                  href={href}
+                  className="flex-1 basis-[140px] rounded-btn border border-line-1 bg-abyss-2 px-4 py-2.5 text-center text-sm font-semibold text-ink-2 transition-all duration-fast hover:border-line-2 hover:text-ink-1"
+                >
+                  {label}
+                </Link>
+              ))}
+            </div>
+            <DigestToggle />
           </div>
         )}
 

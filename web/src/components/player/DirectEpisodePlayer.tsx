@@ -1,5 +1,6 @@
 "use client";
 
+import { reportMirrorFailure } from "@/lib/api";
 import type { Mirror } from "@/lib/types";
 import { useMemo, useState } from "react";
 
@@ -43,6 +44,17 @@ export default function DirectEpisodePlayer({ mirrors, episodeTitle }: Readonly<
     return seek?.id ?? activeMirrors[0]?.id ?? null;
   });
   const [showOthers, setShowOthers] = useState(false);
+  const [reportedIds, setReportedIds] = useState<Set<string>>(new Set());
+
+  async function handleReport(mirrorId: string) {
+    if (reportedIds.has(mirrorId)) return;
+    setReportedIds((prev) => new Set(prev).add(mirrorId));
+    try {
+      await reportMirrorFailure(mirrorId);
+    } catch {
+      // best-effort — el reporte nunca bloquea el visionado
+    }
+  }
 
   const selected = activeMirrors.find((m) => m.id === selectedId) ?? activeMirrors[0] ?? null;
   const sheicobMirrors = activeMirrors.filter((m) => m.providerName === "seekstreaming");
@@ -148,6 +160,22 @@ export default function DirectEpisodePlayer({ mirrors, episodeTitle }: Readonly<
             ))}
           </div>
         )}
+
+        {/* Reportar mirror caído — reporta el mirror seleccionado */}
+        <div className="flex items-center gap-2 border-t border-line-1 px-3 sm:px-4 py-2">
+          {reportedIds.has(selected.id) ? (
+            <span className="text-xs text-[var(--success)]">
+              Gracias por avisar — lo revisamos. Mientras tanto, probá otro mirror.
+            </span>
+          ) : (
+            <button
+              onClick={() => handleReport(selected.id)}
+              className="text-xs text-ink-3 hover:text-[var(--danger)] transition-colors duration-fast"
+            >
+              ¿El video no anda? Reportá este mirror
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );

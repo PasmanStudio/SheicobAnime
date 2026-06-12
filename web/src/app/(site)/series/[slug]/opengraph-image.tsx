@@ -177,7 +177,7 @@ export default async function Image({ params }: { params: Promise<{ slug: string
                 display: "flex",
               }}
             >
-              sheicobanime.com
+              {siteUrl().replace(/^https?:\/\//, "")}
             </div>
           </div>
         </div>

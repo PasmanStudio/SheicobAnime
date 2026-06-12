@@ -14,8 +14,11 @@ import type { Series } from "@/lib/types";
 import type { Metadata } from "next";
 import Link from "next/link";
 
-// ISR: revalidate every hour (AniList data changes daily, our DB changes daily)
-export const revalidate = 3600;
+// force-dynamic: en Cloudflare Workers no hay incremental cache (ver
+// open-next.config.ts), así que `revalidate` congelaba el HTML del build —
+// si AniList fallaba en CI, la página quedaba vacía para siempre.
+// El fetch a AniList se cachea aparte (next.revalidate en lib/anilist).
+export const dynamic = "force-dynamic";
 
 interface Props {
   searchParams: Promise<{ season?: string; year?: string }>;
@@ -187,8 +190,8 @@ export default async function TemporadaPage({ searchParams }: Props) {
       {/* Grid */}
       {anilistData.length === 0 ? (
         <div className="text-center py-20 text-sm">
-          <p className="text-ink-2">No se encontraron datos para esta temporada.</p>
-          <p className="mt-1 text-ink-3">Puede que AniList todavía no tenga información — volvé en unos días.</p>
+          <p className="text-ink-2">Todavía no hay información de esta temporada.</p>
+          <p className="mt-1 text-ink-3">Los estrenos se cargan apenas se anuncian — volvé en unos días.</p>
         </div>
       ) : (
         <>

@@ -1,5 +1,6 @@
 "use client";
 
+import { siteUrl } from "@/lib/site-url";
 import { useState } from "react";
 
 interface Props {
@@ -13,7 +14,7 @@ export default function ShareButtons({ listId, listName }: Props) {
   // Use the current page URL (already contains the short ID after any UUID redirect)
   const url = typeof window !== "undefined"
     ? window.location.href
-    : `https://sheicobanime.vercel.app/listas/${listId}`;
+    : `${siteUrl()}/listas/${listId}`;
   const text = `Mirá mi lista "${listName}" en SheicobAnime`;
 
   const handleCopy = async () => {
