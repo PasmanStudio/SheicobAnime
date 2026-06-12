@@ -86,9 +86,16 @@ jobs:
           # time — they are public by definition, so they live here in plain
           # text rather than in repo secrets.
           NEXT_PUBLIC_API_URL: "https://sheicobanime-api.onrender.com"
+          # URL canónica — cambiar dominio = tocar acá y en wrangler.jsonc
+          NEXT_PUBLIC_SITE_URL: "https://sheicobanime.sheicob.workers.dev"
           NEXT_PUBLIC_AD_PROVIDER: "adsterra"
           NEXT_PUBLIC_COMMENT_PROVIDER: "disqus"
-          NEXT_PUBLIC_DISQUS_SHORTNAME: "sheicobanime"
+          # Shortname real de Disqus (registrado cuando el sitio vivía en Vercel;
+          # no se puede renombrar — solo se actualiza la Website URL en el admin)
+          NEXT_PUBLIC_DISQUS_SHORTNAME: "sheicobanime-vercel-app"
+          # Web Push (opcional): clave pública VAPID — la privada es secret de
+          # los crons de notificaciones, nunca del build
+          NEXT_PUBLIC_VAPID_PUBLIC_KEY: ${{ secrets.VAPID_PUBLIC_KEY }}
           NEXT_PUBLIC_ADSTERRA_NATIVE_HASH: "7ee40e5de8cc821cc6ce096252393fd4"
           NEXT_PUBLIC_ADSTERRA_NATIVE_SCRIPT: "https://pl29138492.profitablecpmratenetwork.com/7ee40e5de8cc821cc6ce096252393fd4/invoke.js"
           NEXT_PUBLIC_ADSTERRA_SOCIALBAR_SCRIPT: "https://pl29138491.profitablecpmratenetwork.com/81/0e/8b/810e8b5ee34d29a8061284101b4768c6.js"
