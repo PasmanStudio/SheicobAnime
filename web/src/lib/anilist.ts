@@ -73,64 +73,30 @@ export function getSeasonNav(year: number): { season: AniListSeason; year: numbe
   }));
 }
 
-// ─── GraphQL query ─────────────────────────────────────────────────────────────
-
-const SEASONAL_QUERY = /* GraphQL */ `
-  query SeasonalAnime($season: MediaSeason, $seasonYear: Int) {
-    Page(page: 1, perPage: 50) {
-      media(
-        season: $season
-        seasonYear: $seasonYear
-        type: ANIME
-        sort: POPULARITY_DESC
-        format_in: [TV, TV_SHORT, ONA]
-        isAdult: false
-      ) {
-        id
-        title { romaji english native }
-        coverImage { extraLarge large color }
-        bannerImage
-        status
-        episodes
-        duration
-        genres
-        averageScore
-        popularity
-        startDate { year month day }
-        studios(isMain: true) { nodes { name } }
-        format
-      }
-    }
-  }
-`;
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5000";
 
 export async function getSeasonalAnime(
   season: AniListSeason,
   year: number,
 ): Promise<AniListMedia[]> {
+  // Vía el proxy del API (Render): el fetch directo a graphql.anilist.co desde
+  // Cloudflare Workers falla intermitentemente (bot-protection de AniList contra
+  // requests datacenter-a-datacenter). El proxy además cachea 6 h en Redis.
   try {
-    const res = await fetch("https://graphql.anilist.co", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
-      body: JSON.stringify({
-        query: SEASONAL_QUERY,
-        variables: { season, seasonYear: year },
-      }),
-      next: { revalidate: 3600 }, // cache 1 h — AniList data changes daily
-    });
+    const res = await fetch(
+      `${API_BASE_URL}/anilist/season/${encodeURIComponent(season)}/${year}`,
+      { cache: "no-store" },
+    );
 
     if (!res.ok) {
-      console.error(`AniList API error: ${res.status} ${res.statusText}`);
+      console.error(`AniList proxy error: ${res.status} ${res.statusText}`);
       return [];
     }
 
     const json = await res.json();
-    return (json?.data?.Page?.media ?? []) as AniListMedia[];
+    return (Array.isArray(json) ? json : []) as AniListMedia[];
   } catch (err) {
-    console.error("AniList fetch failed:", err);
+    console.error("AniList proxy fetch failed:", err);
     return [];
   }
 }

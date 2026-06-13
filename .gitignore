@@ -82,3 +82,6 @@ supabase/.temp/
 infra/supabase.exe
 .vercel
 .env*.local
+
+# Claude Code worktrees/locals
+.claude/worktrees/

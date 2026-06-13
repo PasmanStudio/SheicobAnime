@@ -68,25 +68,51 @@ public class TelegramBotClient(
             }
 
             var json = JsonSerializer.Serialize(payload, JsonOpts);
-            using var content = new StringContent(json, Encoding.UTF8, "application/json");
-            using var resp = await client.PostAsync(endpoint, content, ct);
 
-            var body = await resp.Content.ReadAsStringAsync(ct);
-
-            if (!resp.IsSuccessStatusCode)
+            // Telegram limita ~20 msgs/min por canal: en rachas largas devuelve
+            // 429 con parameters.retry_after. Esperamos lo que pida y reintentamos
+            // (hasta 3 veces) en vez de perder el post.
+            const int MaxAttempts = 3;
+            for (var attempt = 1; attempt <= MaxAttempts; attempt++)
             {
-                logger.LogWarning("Telegram API returned {Status}: {Body}", (int)resp.StatusCode, body);
-                return null;
+                using var content = new StringContent(json, Encoding.UTF8, "application/json");
+                using var resp = await client.PostAsync(endpoint, content, ct);
+                var body = await resp.Content.ReadAsStringAsync(ct);
+
+                if (resp.StatusCode == System.Net.HttpStatusCode.TooManyRequests && attempt < MaxAttempts)
+                {
+                    var retryAfter = 5;
+                    try
+                    {
+                        using var errDoc = JsonDocument.Parse(body);
+                        if (errDoc.RootElement.TryGetProperty("parameters", out var p) &&
+                            p.TryGetProperty("retry_after", out var ra))
+                            retryAfter = Math.Clamp(ra.GetInt32(), 1, 60);
+                    }
+                    catch { /* body sin parameters — usar default */ }
+
+                    logger.LogInformation(
+                        "Telegram 429 — esperando {Seconds}s y reintentando ({Attempt}/{Max})",
+                        retryAfter, attempt, MaxAttempts);
+                    await Task.Delay(TimeSpan.FromSeconds(retryAfter + 1), ct);
+                    continue;
+                }
+
+                if (!resp.IsSuccessStatusCode)
+                {
+                    logger.LogWarning("Telegram API returned {Status}: {Body}", (int)resp.StatusCode, body);
+                    return null;
+                }
+
+                using var doc = JsonDocument.Parse(body);
+                return doc.RootElement
+                    .GetProperty("result")
+                    .GetProperty("message_id")
+                    .GetInt64()
+                    .ToString();
             }
 
-            using var doc = JsonDocument.Parse(body);
-            var messageId = doc.RootElement
-                .GetProperty("result")
-                .GetProperty("message_id")
-                .GetInt64()
-                .ToString();
-
-            return messageId;
+            return null;
         }
         catch (Exception ex)
         {

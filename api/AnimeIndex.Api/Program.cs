@@ -336,6 +336,7 @@ try
     app.MapSeriesEndpoints();
     app.MapEpisodeEndpoints();
     app.MapGenreEndpoints();
+    app.MapAniListEndpoints();
     app.MapMirrorEndpoints();
     app.MapProgressEndpoints();
     app.MapAdminEndpoints();
