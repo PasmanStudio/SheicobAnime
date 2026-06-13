@@ -88,3 +88,12 @@ jobs:
           Telegram__SiteUrl:       "https://sheicobanime.sheicob.workers.dev"
           # Max episodes to post per run — enough to cover a heavy scrape day
           Telegram__MaxPostsPerRun: "25"
+          # ── Web Push (opcional) — avisos de episodio a seguidores ──
+          # La notificación in-app (campana) se crea SIN claves; el push del
+          # navegador necesita el par VAPID. Generar con:
+          #   npx web-push generate-vapid-keys
+          # La PÚBLICA va también en web.yml (NEXT_PUBLIC_VAPID_PUBLIC_KEY).
+          WebPush__PublicKey:  ${{ secrets.VAPID_PUBLIC_KEY }}
+          WebPush__PrivateKey: ${{ secrets.VAPID_PRIVATE_KEY }}
+          WebPush__Subject:    "https://sheicobanime.sheicob.workers.dev"
+          WebPush__SiteUrl:    "https://sheicobanime.sheicob.workers.dev"

@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sin conexión — SheicobAnime</title>
+<style>
+  :root { color-scheme: dark; }
+  body {
+    margin: 0; min-height: 100vh;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 16px; text-align: center; padding: 24px;
+    background: #07090E; color: #F2F6FB;
+    font-family: system-ui, -apple-system, sans-serif;
+  }
+  img { height: 40px; width: auto; }
+  h1 {
+    font-size: 20px; margin: 8px 0 0; font-style: italic; text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  p { color: #97A3B8; font-size: 14px; max-width: 320px; line-height: 1.5; margin: 0; }
+  button {
+    margin-top: 8px; padding: 10px 20px; border: none; border-radius: 10px;
+    background: linear-gradient(135deg, #38CBFA 0%, #14B1E7 55%, #0E84CE 100%);
+    color: #04121B; font-weight: 700; font-size: 14px; cursor: pointer;
+  }
+</style>
+</head>
+<body>
+  <img src="/logo.png" alt="SheicobAnime" style="mix-blend-mode:screen">
+  <h1>Sin conexión</h1>
+  <p>No pudimos conectarnos. Revisá tu internet y volvé a intentar — tu lista y tu progreso te esperan.</p>
+  <button onclick="location.reload()">Reintentar</button>
+</body>
+</html>

@@ -3,6 +3,7 @@ import Link from "next/link";
 import Image from "next/image";
 import SearchBar from "./SearchBar";
 import NavMenu from "./NavMenu";
+import NotificationBell from "./NotificationBell";
 
 const DISCORD_INVITE = process.env.NEXT_PUBLIC_DISCORD_INVITE ?? "";
 const TELEGRAM_CHANNEL = process.env.NEXT_PUBLIC_TELEGRAM_CHANNEL ?? "";
@@ -58,6 +59,7 @@ export default function SiteHeader() {
               </svg>
             </Link>
           )}
+          <NotificationBell />
           <UserButton />
         </div>
       </div>

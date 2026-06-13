@@ -2,9 +2,8 @@
   "name": "sheicobanime-notifications",
   "private": true,
   "type": "module",
-  "description": "Senders de notificaciones (push de episodios nuevos + digest semanal). Corren en GitHub Actions, no en el sitio.",
+  "description": "Digest semanal por email (corre en GitHub Actions). El push de episodios vive en el scraper .NET.",
   "dependencies": {
-    "pg": "^8.13.1",
-    "web-push": "^3.6.7"
+    "pg": "^8.13.1"
   }
 }
