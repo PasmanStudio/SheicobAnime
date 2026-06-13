@@ -43,12 +43,20 @@ const nextConfig = {
     ];
   },
   images: {
-    // Loader custom (src/lib/image-loader.ts): redimensiona + WebP vía wsrv.nl.
-    // Los posters de terceros llegaban a tamaño completo — el mayor costo móvil.
-    // remotePatterns no aplica con loader custom (lo valida solo el optimizer
-    // nativo), así que no hace falta listar hosts.
-    loader: "custom",
-    loaderFile: "./src/lib/image-loader.ts",
+    // Sin optimización: los posters vienen de CDNs de terceros (cdn.jkdesa.com,
+    // etc.) que bloquean el hotlink de proxies externos (wsrv.nl daba 403 → todas
+    // las imágenes rotas). Se sirven directo del origen. La optimización real
+    // (resize/WebP) hay que hacerla con Cloudflare Images sobre el dominio propio.
+    unoptimized: true,
+    remotePatterns: [
+      { protocol: "https", hostname: "cdn.jkdesa.com" },
+      { protocol: "https", hostname: "**.jkdesa.com" },
+      { protocol: "https", hostname: "**.jkanime.net" },
+      { protocol: "https", hostname: "**.supabase.co" },
+      { protocol: "https", hostname: "**.supabase.in" },
+      { protocol: "https", hostname: "asset.seekstreaming.info" },
+      { protocol: "https", hostname: "**" },
+    ],
   },
   ...(isCloudflareBuild && {
     webpack: (config) => {
