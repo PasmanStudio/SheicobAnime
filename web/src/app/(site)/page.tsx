@@ -24,22 +24,18 @@ export const metadata: Metadata = {
     "Mirá los últimos episodios de anime online, sub español. Catálogo actualizado todos los días.",
 };
 
-export default async function HomePage() {
-  let recent: PaginatedResponse<Series> = { data: [], total: 0, page: 1, pageSize: 12 };
-  let topRated: PaginatedResponse<Series> = { data: [], total: 0, page: 1, pageSize: 12 };
-  let recentEpisodes: Episode[] = [];
-  let genres: Genre[] = [];
+const EMPTY_PAGE: PaginatedResponse<Series> = { data: [], total: 0, page: 1, pageSize: 12 };
 
-  try {
-    [recent, topRated, recentEpisodes, genres] = await Promise.all([
-      getSeries({ sort: "updated", pageSize: 12 }),
-      getSeries({ sort: "score", pageSize: 10 }),
-      getRecentEpisodes({ days: 3, pageSize: 30 }),
-      getGenres().catch(() => [] as Genre[]),
-    ]);
-  } catch (error) {
-    console.error("Failed to fetch data for homepage:", error);
-  }
+export default async function HomePage() {
+  // Cada fetch falla de forma independiente: si Render está frío y uno se cae,
+  // las demás secciones siguen renderizando (antes un solo Promise.all que
+  // rechazaba dejaba TODA la home vacía).
+  const [recent, topRated, recentEpisodes, genres] = await Promise.all([
+    getSeries({ sort: "updated", pageSize: 12 }).catch(() => EMPTY_PAGE),
+    getSeries({ sort: "score", pageSize: 10 }).catch(() => EMPTY_PAGE),
+    getRecentEpisodes({ days: 3, pageSize: 30 }).catch(() => [] as Episode[]),
+    getGenres().catch(() => [] as Genre[]),
+  ]);
 
   return (
     <div className="mx-auto max-w-container px-4 py-6 space-y-10">

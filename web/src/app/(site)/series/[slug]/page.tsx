@@ -15,6 +15,7 @@ import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { TYPE_LABELS } from "@/lib/labels";
 
 export const revalidate = 300;
 
@@ -22,14 +23,6 @@ interface Props {
   params: Promise<{ slug: string }>;
   searchParams: Promise<{ page?: string }>;
 }
-
-const TYPE_LABELS: Record<string, string> = {
-  tv: "Serie",
-  movie: "Película",
-  ova: "OVA",
-  ona: "ONA",
-  special: "Especial",
-};
 
 export async function generateMetadata({ params }: Pick<Props, "params">): Promise<Metadata> {
   try {

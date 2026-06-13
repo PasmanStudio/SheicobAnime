@@ -21,6 +21,12 @@ import type {
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5000";
 
+// El API corre en Render free-tier: tras un deploy se enfría y el primer
+// request tarda ~50s en despertar. Sin timeout, un fetch del home colgaba el
+// Worker y la página renderizaba vacía. Abortamos a los 12s para degradar con
+// gracia (el ISR sirve la última copia buena; ver open-next.config.ts).
+const FETCH_TIMEOUT_MS = 12_000;
+
 // ─── Error class ─────────────────────────────────────
 
 export class ApiError extends Error {
@@ -49,6 +55,7 @@ async function request<T>(
 
   const res = await fetch(url, {
     ...options,
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     headers: {
       "Content-Type": "application/json",
       ...options.headers,
@@ -88,6 +95,7 @@ async function requestWithCredentials<T>(
     ...options,
     cache: "no-store",
     credentials: "include",
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     headers: {
       "Content-Type": "application/json",
       ...options.headers,

@@ -1,6 +1,7 @@
 "use client";
 
 import type { NotificationRow } from "@/app/api/notifications/route";
+import { timeAgo } from "@/lib/labels";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
@@ -15,15 +16,6 @@ const TYPE_LABEL: Record<string, string> = {
   system: "SheicobAnime",
 };
 
-function timeAgo(iso: string): string {
-  const mins = Math.floor((Date.now() - new Date(iso).getTime()) / 60_000);
-  if (mins < 1) return "recién";
-  if (mins < 60) return `hace ${mins} min`;
-  const h = Math.floor(mins / 60);
-  if (h < 24) return `hace ${h} h`;
-  const d = Math.floor(h / 24);
-  return d === 1 ? "ayer" : `hace ${d} días`;
-}
 
 export default function NotificationBell() {
   const { data: session } = useSession();
