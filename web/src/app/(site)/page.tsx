@@ -13,10 +13,11 @@ import { getGenres, getRecentEpisodes, getSeries } from "@/lib/api";
 import type { Episode, Genre, PaginatedResponse, Series } from "@/lib/types";
 import type { Metadata } from "next";
 
-// force-dynamic: skip static pre-render at build time.
-// The home page calls the external API (Render) which can be cold at build.
-// Vercel CDN / Next.js route cache handles caching at the edge.
-export const dynamic = "force-dynamic";
+// ISR: el HTML del home se cachea en el edge (Cloudflare KV) y se regenera en
+// background cada 120s (stale-while-revalidate). Render se toca como máximo una
+// vez cada 2 min, no por request → carga instantánea. Las secciones por-usuario
+// (Continuar viendo, campana) son client components y se mantienen frescas.
+export const revalidate = 120;
 
 export const metadata: Metadata = {
   title: "SheicobAnime — Mirá anime online en español",
