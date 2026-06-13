@@ -9,6 +9,15 @@ run-name: "Deploy — ${{ github.ref_name }} @ ${{ github.sha }}"
 on:
   push:
     branches: [main]
+    # Solo redeploya el API/migraciones cuando cambia el BACKEND. Antes corría
+    # en todo push (incluido frontend-only) y enfriaba Render gratuitamente —
+    # cada deploy dejaba el home sin episodios hasta que Render despertaba.
+    paths:
+      - 'api/**'
+      - 'scraper/**'
+      - 'supabase/**'
+      - 'db/**'
+      - '.github/workflows/deploy.yml'
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true

@@ -2,18 +2,11 @@
 
 import ScoreBadge from "@/components/ui/ScoreBadge";
 import StatusBadge from "@/components/ui/StatusBadge";
-import type { Series, SeriesType } from "@/lib/types";
+import { TYPE_LABELS } from "@/lib/labels";
+import type { Series } from "@/lib/types";
 import Image from "next/image";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
-
-const TYPE_LABELS: Record<SeriesType, string> = {
-  tv: "Serie",
-  movie: "Película",
-  ova: "OVA",
-  ona: "ONA",
-  special: "Especial",
-};
 
 interface HeroCarouselProps {
   series: Series[];
