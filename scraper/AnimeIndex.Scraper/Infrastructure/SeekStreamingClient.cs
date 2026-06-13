@@ -105,13 +105,14 @@ public sealed class SeekStreamingClient
             fileSize = await GetFileSizeAsync(dlClient, directVideoUrl, referer, ct);
             if (fileSize <= 0)
             {
-                _logger.LogInformation(
+                _logger.LogDebug(
                     "SeekStreaming: size unknown via headers — spooling to temp file (ep={EpisodeId} via={Provider})",
                     episodeId, provider);
                 tempFilePath = await SpoolToTempFileAsync(dlClient, directVideoUrl, referer, episodeId, provider, ct);
                 if (tempFilePath is null)
                 {
-                    _logger.LogWarning(
+                    // Per-attempt: el caller prueba el siguiente candidato/katanime.
+                    _logger.LogDebug(
                         "SeekStreaming: could not determine file size (ep={EpisodeId} via={Provider}) for {Url}",
                         episodeId, provider, directVideoUrl);
                     return null;
@@ -520,7 +521,9 @@ public sealed class SeekStreamingClient
         }
         catch (Exception ex) when (ex is not TaskCanceledException { CancellationToken.IsCancellationRequested: true })
         {
-            _logger.LogWarning(ex,
+            // Per-attempt: con fallback. Debug para no ensuciar el log con providers
+            // que igual se recuperan por otro candidato.
+            _logger.LogDebug(ex,
                 "SeekStreaming: temp spool failed (ep={EpisodeId} via={Provider}) for {Url}",
                 episodeId, provider, url);
             try { File.Delete(path); } catch { }

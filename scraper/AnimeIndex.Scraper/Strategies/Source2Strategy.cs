@@ -430,6 +430,12 @@ public sealed class Source2Strategy(
             }
         }
 
+        // Único log de fallo real por episodio: se agotaron jkanime + katanime.
+        // Los embeds (mixdrop, etc.) quedan igual como mirrors para el usuario;
+        // el sistema de reintentos de 7 días lo vuelve a intentar mañana.
+        logger.LogInformation(
+            "Episode {Id} ({Slug} EP {Ep}): sin subida a Sheicob este run — quedan embeds de terceros, reintenta en 7d",
+            item.EpisodeId, item.Slug, item.EpisodeNumber);
         return false;
     }
 

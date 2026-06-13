@@ -12,8 +12,8 @@ public class InstagramSettings
     public string ImgBbApiKey { get; set; } = string.Empty;
 
     // Public-facing site URL used in captions and CTAs.
-    // Override via Instagram__SiteUrl secret (e.g. https://sheicobanime.vercel.app)
-    public string SiteUrl { get; set; } = "https://sheicobanime.vercel.app";
+    // Override via Instagram__SiteUrl secret (e.g. https://sheicobanime.sheicob.workers.dev)
+    public string SiteUrl { get; set; } = "https://sheicobanime.sheicob.workers.dev";
 
     // Instagram handle shown in captions (without @)
     public string Handle { get; set; } = "sheicobanime";

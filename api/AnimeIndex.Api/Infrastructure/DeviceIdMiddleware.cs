@@ -27,12 +27,20 @@ public sealed class DeviceIdMiddleware
         {
             deviceId = Guid.NewGuid();
 
+            // El frontend (Cloudflare) y el API (Render) son sitios distintos, así
+            // que los fetch del progreso son CROSS-SITE. Con SameSite=Lax el browser
+            // NO manda la cookie en esos requests → cada llamada genera un device id
+            // nuevo y "Continuar viendo" siempre vuelve vacío. SameSite=None+Secure
+            // es obligatorio para que el progreso persista. En dev (localhost http)
+            // None+Secure no funciona → Lax.
+            var isDev = context.RequestServices
+                .GetRequiredService<IWebHostEnvironment>().IsDevelopment();
+
             context.Response.Cookies.Append(CookieName, deviceId.ToString(), new CookieOptions
             {
                 HttpOnly = false, // readable by JS intentionally — frontend uses it too
-                Secure = !context.RequestServices
-                    .GetRequiredService<IWebHostEnvironment>().IsDevelopment(),
-                SameSite = SameSiteMode.Lax,
+                Secure = !isDev,
+                SameSite = isDev ? SameSiteMode.Lax : SameSiteMode.None,
                 Expires = DateTimeOffset.UtcNow.Add(CookieLifetime),
                 IsEssential = true, // functional, not marketing — GDPR exemption
                 Path = "/",

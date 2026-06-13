@@ -72,18 +72,19 @@ jobs:
           Instagram__AppSecret:    ${{ secrets.INSTAGRAM_APP_SECRET }}
           # Max episodes in one carousel (Instagram hard limit: 10)
           Instagram__MaxCarouselItems: "10"
-          # Public site URL for story link stickers and captions
-          Instagram__SiteUrl: ${{ secrets.INSTAGRAM_SITE_URL }}
+          # URL canonica del sitio — links de stories/captions/posts.
+          # Cambiar dominio = tocar estas 3 lineas (Instagram/Discord/Telegram).
+          Instagram__SiteUrl: "https://sheicobanime.sheicob.workers.dev"
           # ── Discord publishing (optional — skipped if not set) ──
           # Incoming Webhook URL from: Server Settings → Integrations → Webhooks
           Discord__WebhookUrl: ${{ secrets.DISCORD_WEBHOOK_URL }}
           # Override display name / avatar if desired
           Discord__Username:   "SheicobAnime"
-          Discord__SiteUrl:    ${{ secrets.INSTAGRAM_SITE_URL }}
+          Discord__SiteUrl:    "https://sheicobanime.sheicob.workers.dev"
           # ── Telegram publishing (optional — skipped if not set) ──
           # Bot token from @BotFather. Channel must have the bot as admin.
           Telegram__BotToken:      ${{ secrets.TELEGRAM_BOT_TOKEN }}
           Telegram__ChannelId:     "@sheicobanime"
-          Telegram__SiteUrl:       ${{ secrets.INSTAGRAM_SITE_URL }}
+          Telegram__SiteUrl:       "https://sheicobanime.sheicob.workers.dev"
           # Max episodes to post per run — enough to cover a heavy scrape day
           Telegram__MaxPostsPerRun: "25"

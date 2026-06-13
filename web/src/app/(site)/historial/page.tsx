@@ -19,8 +19,11 @@ function timeAgo(date: string): string {
   if (hrs < 24) return `hace ${hrs}h`;
   const days = Math.floor(hrs / 24);
   if (days < 7) return `hace ${days}d`;
-  return new Date(date).toLocaleDateString("es-AR", { day: "numeric", month: "short" });
+  return new Date(date).toLocaleDateString("es-AR", { day: "numeric", month: "short", timeZone: SITE_TZ });
 }
+
+// Workers corre en UTC — agrupamos por día en hora argentina.
+const SITE_TZ = "America/Argentina/Buenos_Aires";
 
 async function getHistory(userId: string): Promise<EpisodeHistoryEntry[]> {
   try {
@@ -40,7 +43,7 @@ function groupByDate(entries: EpisodeHistoryEntry[]): Map<string, EpisodeHistory
   const map = new Map<string, EpisodeHistoryEntry[]>();
   for (const e of entries) {
     const date = new Date(e.watched_at);
-    const key = date.toLocaleDateString("es-AR", { weekday: "long", day: "numeric", month: "long" });
+    const key = date.toLocaleDateString("es-AR", { weekday: "long", day: "numeric", month: "long", timeZone: SITE_TZ });
     if (!map.has(key)) map.set(key, []);
     map.get(key)!.push(e);
   }

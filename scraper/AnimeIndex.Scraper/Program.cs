@@ -249,7 +249,7 @@ try
         c.Timeout = TimeSpan.FromSeconds(20);
         c.DefaultRequestHeaders.TryAddWithoutValidation(
             "User-Agent",
-            "Mozilla/5.0 (compatible; SheicobAnime-NewsBot/1.0; +https://sheicobanime.vercel.app)");
+            "Mozilla/5.0 (compatible; SheicobAnime-NewsBot/1.0; +https://sheicobanime.sheicob.workers.dev)");
     });
 
     // ─── Discord publishing services ───────────────────────

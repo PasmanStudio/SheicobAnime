@@ -59,10 +59,26 @@ interface DateGroup {
   items: Episode[];
 }
 
+// El sitio corre en Cloudflare Workers (UTC). Los límites de día (Hoy/Ayer) se
+// calculan en hora argentina, no UTC — si no, un episodio de las 21:00 ART
+// (= medianoche UTC) cae en "Ayer".
+const SITE_TZ = "America/Argentina/Buenos_Aires";
+
+/** Devuelve YYYY-MM-DD del instante dado, leído en hora argentina. */
+function dateKey(d: Date): string {
+  // en-CA da formato YYYY-MM-DD directamente
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: SITE_TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(d);
+}
+
 function groupByDate(episodes: Episode[]): DateGroup[] {
   const now = new Date();
   const todayKey = dateKey(now);
-  const yesterdayKey = dateKey(addDays(now, -1));
+  const yesterdayKey = dateKey(new Date(now.getTime() - 86_400_000));
 
   const map = new Map<string, Episode[]>();
 
@@ -92,16 +108,6 @@ function groupByDate(episodes: Episode[]): DateGroup[] {
   return groups;
 }
 
-function dateKey(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
-
-function addDays(d: Date, n: number): Date {
-  const result = new Date(d);
-  result.setDate(result.getDate() + n);
-  return result;
-}
-
 const DAY_NAMES = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
 const MONTH_NAMES = [
   "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
@@ -109,6 +115,7 @@ const MONTH_NAMES = [
 ];
 
 function formatFullDate(key: string): string {
+  // key ya viene en hora ART; lo interpretamos como fecha local "pura"
   const [year, month, day] = key.split("-").map(Number);
   const d = new Date(year, month - 1, day);
   return `${DAY_NAMES[d.getDay()]}, ${day} de ${MONTH_NAMES[d.getMonth()]}`;
