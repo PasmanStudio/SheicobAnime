@@ -1,6 +1,7 @@
 import AdSlot from "@/components/ads/AdSlot";
 import CommentSection from "@/components/comments/CommentSection";
 import DirectEpisodePlayer from "@/components/player/DirectEpisodePlayer";
+import WatchHeartbeat from "@/components/player/WatchHeartbeat";
 import EpisodeSidebar from "@/components/player/EpisodeSidebar";
 import SectionHeader from "@/components/ui/SectionHeader";
 import MarkWatchedButton from "@/components/watchlist/MarkWatchedButton";
@@ -155,6 +156,9 @@ export default async function EpisodePage({ params }: Readonly<Props>) {
         {/* Left: Player + mirrors + título + comentarios */}
         <div className="flex-1 min-w-0 w-full">
           <DirectEpisodePlayer mirrors={mirrors} episodeTitle={episodeTitle} />
+          {episode.id && (
+            <WatchHeartbeat episodeId={episode.id} durationSeconds={episode.durationSecs} />
+          )}
 
           {/* Título del episodio + nav EP anterior/siguiente — SIN ads en el medio */}
           <div className="mt-5 flex flex-wrap items-start justify-between gap-4">

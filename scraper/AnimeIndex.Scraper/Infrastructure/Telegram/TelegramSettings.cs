@@ -16,7 +16,7 @@ public class TelegramSettings
     public string ChannelId { get; set; } = "@sheicobanime";
 
     /// <summary>Public site URL used in message links.</summary>
-    public string SiteUrl { get; set; } = "https://sheicobanime.vercel.app";
+    public string SiteUrl { get; set; } = "https://sheicobanime.sheicob.workers.dev";
 
     /// <summary>Max episodes to post per scraper run (avoids flooding the channel).</summary>
     public int MaxPostsPerRun { get; set; } = 25;

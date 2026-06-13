@@ -32,11 +32,18 @@ public sealed class SeekStreamingUploadService
     // Providers with no resolver are filtered out before this order is applied.
     // mp4upload — highest quality; port 183 works from GHA but some CDN nodes block cloud IPs.
     // okru      — NOT IP-bound (confirmed); very reliable from cloud.
-    // mixdrop   — NOT IP-bound (confirmed via mxcontent.net CDN); needs MixdropResolver.
     // voe       — direct MP4 via var source= (updated 2026-05-08); sometimes serves placeholder.
     // streamwish/vidhide/filemoon — always HLS, filtered by the m3u8 check before upload.
     private static readonly string[] Mp4FirstOrder =
-        ["mp4upload", "okru", "mixdrop", "mediafire", "voe", "streamwish", "vidhide", "filemoon"];
+        ["mp4upload", "okru", "mediafire", "voe", "streamwish", "vidhide", "filemoon"];
+
+    // Providers que NO sirven para subir desde GitHub Actions (IP-block de
+    // datacenter en su CDN — devuelven 403 hasta en el GET). Se excluyen como
+    // FUENTE de upload, pero el embed se conserva como mirror para los usuarios
+    // (el browser del usuario no está IP-bloqueado). Purgar evita gastar el
+    // intento de spool + 403 en cada run (jun-2026: mxcontent.net de mixdrop).
+    private static readonly HashSet<string> UploadBlockedProviders =
+        new(StringComparer.OrdinalIgnoreCase) { "mixdrop" };
 
     public SeekStreamingUploadService(
         SeekStreamingClient seekStreaming,
@@ -70,7 +77,7 @@ public sealed class SeekStreamingUploadService
 
         var sorted = embedUrls
             .Select(url => (Url: url, Provider: Source2Strategy.ExtractProviderName(url)))
-            .Where(x => _registry.Supports(x.Provider))
+            .Where(x => _registry.Supports(x.Provider) && !UploadBlockedProviders.Contains(x.Provider))
             .OrderBy(x =>
             {
                 var idx = Array.IndexOf(Mp4FirstOrder, x.Provider);
@@ -205,7 +212,11 @@ public sealed class SeekStreamingUploadService
 
             if (seekEmbedUrl is null)
             {
-                _logger.LogWarning("\u274c Episode {Id}: SeekStreaming upload failed — tus returned no embed URL", target.EpisodeId);
+                // Esperado: este candidato no sirvio, el caller prueba el siguiente
+                // (otro provider o katanime). El fallo real se loguea una sola vez
+                // por episodio en TryUploadEpisodeAsync si se agotan todos.
+                _logger.LogDebug("Episode {Id}: candidato {Provider} sin embed, probando fallback",
+                    target.EpisodeId, target.Provider);
                 return false;
             }
 

@@ -11,7 +11,7 @@ public class DiscordSettings
     public string WebhookUrl { get; set; } = string.Empty;
 
     /// <summary>Public site URL used in embed links.</summary>
-    public string SiteUrl { get; set; } = "https://sheicobanime.vercel.app";
+    public string SiteUrl { get; set; } = "https://sheicobanime.sheicob.workers.dev";
 
     /// <summary>Display name shown as the webhook sender in Discord.</summary>
     public string Username { get; set; } = "SheicobAnime";
@@ -20,7 +20,7 @@ public class DiscordSettings
     /// URL of the avatar image shown next to the webhook message.
     /// Defaults to a placeholder; override via Discord__AvatarUrl secret.
     /// </summary>
-    public string AvatarUrl { get; set; } = "https://sheicobanime.vercel.app/favicon.ico";
+    public string AvatarUrl { get; set; } = "https://sheicobanime.sheicob.workers.dev/favicon.png";
 
     /// <summary>Accent color for embed side-bar (decimal of #6366f1 indigo).</summary>
     public int EmbedColor { get; set; } = 6511345; // #6366f1
