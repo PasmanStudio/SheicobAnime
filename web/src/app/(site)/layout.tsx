@@ -5,6 +5,7 @@ import AuthProvider from "@/components/auth/AuthProvider";
 import MobileBottomNav from "@/components/layout/MobileBottomNav";
 import SiteFooter from "@/components/layout/SiteFooter";
 import SiteHeader from "@/components/layout/SiteHeader";
+import ServiceWorkerRegister from "@/components/ServiceWorkerRegister";
 import { siteUrl } from "@/lib/site-url";
 import type { Metadata, Viewport } from "next";
 import { Archivo } from "next/font/google";
@@ -33,6 +34,7 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
+  themeColor: "#07090E", // barra de estado / chrome del navegador en el abismo
 };
 
 export const metadata: Metadata = {
@@ -42,10 +44,16 @@ export const metadata: Metadata = {
     template: "%s | SheicobAnime",
   },
   description: "Discover and watch anime episodes online. Updated daily.",
+  manifest: "/manifest.webmanifest",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+    title: "SheicobAnime",
+  },
   icons: {
     icon: "/favicon.png",
     shortcut: "/favicon.png",
-    apple: "/favicon.png",
+    apple: "/apple-touch-icon.png",
   },
   openGraph: {
     siteName: "SheicobAnime",
@@ -87,6 +95,7 @@ export default function RootLayout({
           <ConsentBanner />
           <AdsterraGlobalAds />
           <PageViewTracker />
+          <ServiceWorkerRegister />
         </AuthProvider>
       </body>
     </html>

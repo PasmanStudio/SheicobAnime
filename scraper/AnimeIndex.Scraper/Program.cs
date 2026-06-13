@@ -193,6 +193,10 @@ try
     builder.Configuration.GetSection("Telegram").Bind(telegramSettings);
     builder.Services.AddSingleton(telegramSettings);
 
+    var webPushSettings = new AnimeIndex.Scraper.Infrastructure.Notifications.WebPushSettings();
+    builder.Configuration.GetSection("WebPush").Bind(webPushSettings);
+    builder.Services.AddSingleton(webPushSettings);
+
     // ─── HTTP clients ─────────────────────────────────────
     builder.Services.AddHttpClient("discord", c =>
     {
@@ -259,6 +263,8 @@ try
     // ─── Telegram publishing services ──────────────────────
     builder.Services.AddScoped<TelegramBotClient>();
     builder.Services.AddScoped<TelegramPublisherService>();
+
+    builder.Services.AddScoped<AnimeIndex.Scraper.Infrastructure.Notifications.WebPushPublisherService>();
 
     // ─── Instagram publishing services ────────────────────
     builder.Services.AddScoped<MetaGraphApiClient>();

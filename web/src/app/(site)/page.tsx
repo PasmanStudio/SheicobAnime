@@ -2,6 +2,7 @@ import AdSlot from "@/components/ads/AdSlot";
 import InactivityAdTrigger from "@/components/ads/InactivityAdTrigger";
 import ContinueWatchingRow from "@/components/ui/ContinueWatchingRow";
 import GenreChip from "@/components/ui/GenreChip";
+import SeasonPollBanner from "@/components/polls/SeasonPollBanner";
 import HeroCarousel from "@/components/ui/HeroCarousel";
 import PendingSeriesRow from "@/components/ui/PendingSeriesRow";
 import RankNumber from "@/components/ui/RankNumber";
@@ -46,6 +47,9 @@ export default async function HomePage() {
 
       {/* Hero */}
       {recent.data.length > 0 && <HeroCarousel series={recent.data} />}
+
+      {/* Banner de encuesta de temporada (se oculta solo si no hay activa) */}
+      <SeasonPollBanner />
 
       {/* Continuar viendo (episodios a medio ver) — primero, client-side */}
       <ContinueWatchingRow />

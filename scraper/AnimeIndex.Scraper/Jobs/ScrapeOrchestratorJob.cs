@@ -31,6 +31,7 @@ public class ScrapeOrchestratorJob(
     InstagramPublisherService instagramPublisher,
     DiscordPublisherService discordPublisher,
     TelegramPublisherService telegramPublisher,
+    AnimeIndex.Scraper.Infrastructure.Notifications.WebPushPublisherService webPushPublisher,
     IServiceScopeFactory scopeFactory,
     IHostApplicationLifetime lifetime,
     ILogger<ScrapeOrchestratorJob> logger)
@@ -97,6 +98,17 @@ public class ScrapeOrchestratorJob(
                 catch (Exception tgEx)
                 {
                     logger.LogError(tgEx, "Telegram publishing encountered an unhandled error (non-critical)");
+                }
+
+                // Best-effort: notificación in-app + Web Push a seguidores de la serie.
+                // Reemplaza al cron notifications-cron.yml — corre dentro del scrape.
+                try
+                {
+                    await webPushPublisher.PublishNewEpisodesAsync(ct);
+                }
+                catch (Exception npEx)
+                {
+                    logger.LogError(npEx, "Notificaciones de episodio: error no crítico");
                 }
             }
             else

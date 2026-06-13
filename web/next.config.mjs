@@ -43,20 +43,12 @@ const nextConfig = {
     ];
   },
   images: {
-    // Disable Vercel Image Optimization to avoid 402 errors on the free tier.
-    // Images are served directly from the origin CDN (cdn.jkdesa.com, etc.)
-    // which is fast enough for MVP. Re-enable if/when upgrading Vercel plan.
-    unoptimized: true,
-    remotePatterns: [
-      { protocol: "https", hostname: "cdn.jkdesa.com" },
-      { protocol: "https", hostname: "**.jkdesa.com" },
-      { protocol: "https", hostname: "**.jkanime.net" },
-      { protocol: "https", hostname: "**.supabase.co" },
-      { protocol: "https", hostname: "**.supabase.in" },
-      { protocol: "https", hostname: "asset.seekstreaming.info" },
-      // Catch-all for any other image origin already in the DB
-      { protocol: "https", hostname: "**" },
-    ],
+    // Loader custom (src/lib/image-loader.ts): redimensiona + WebP vía wsrv.nl.
+    // Los posters de terceros llegaban a tamaño completo — el mayor costo móvil.
+    // remotePatterns no aplica con loader custom (lo valida solo el optimizer
+    // nativo), así que no hace falta listar hosts.
+    loader: "custom",
+    loaderFile: "./src/lib/image-loader.ts",
   },
   ...(isCloudflareBuild && {
     webpack: (config) => {

@@ -27,6 +27,8 @@
     <!-- Instagram image generation -->
     <PackageReference Include="SkiaSharp" Version="3.119.0" />
     <PackageReference Include="SkiaSharp.NativeAssets.Linux" Version="3.119.0" />
+    <!-- Web Push (avisos de episodios nuevos a los seguidores) -->
+    <PackageReference Include="WebPush" Version="1.0.12" />
   </ItemGroup>
 
   <ItemGroup>
