@@ -92,19 +92,31 @@ public sealed class SeekStreamingClient
             return null;
         }
 
-        // ─── Step 2: resolve file size (HEAD, fallback to GET Range:0-0) ──
+        // ─── Step 2: resolve file size (HEAD → Range GET → plain GET) ──
         // Some CDNs (mp4upload) block HEAD from cloud IPs → fall back to a
         // 1-byte GET Range request to read Content-Range: bytes 0-0/TOTAL.
+        // mixdrop (mxcontent.net) bloquea HEAD y Range pero responde el GET
+        // normal con Content-Length — y si ni eso, descargamos a disco para
+        // medir (tus exige Upload-Length por adelantado).
         long fileSize;
+        string? tempFilePath = null;
         using (var dlClient = _httpFactory.CreateClient("seek-download"))
         {
             fileSize = await GetFileSizeAsync(dlClient, directVideoUrl, referer, ct);
             if (fileSize <= 0)
             {
-                _logger.LogWarning(
-                    "SeekStreaming: could not determine file size (ep={EpisodeId} via={Provider}) for {Url}",
-                    episodeId, provider, directVideoUrl);
-                return null;
+                _logger.LogInformation(
+                    "SeekStreaming: size unknown via headers — spooling to temp file (ep={EpisodeId} via={Provider})",
+                    episodeId, provider);
+                tempFilePath = await SpoolToTempFileAsync(dlClient, directVideoUrl, referer, episodeId, provider, ct);
+                if (tempFilePath is null)
+                {
+                    _logger.LogWarning(
+                        "SeekStreaming: could not determine file size (ep={EpisodeId} via={Provider}) for {Url}",
+                        episodeId, provider, directVideoUrl);
+                    return null;
+                }
+                fileSize = new FileInfo(tempFilePath).Length;
             }
         }
 
@@ -132,6 +144,8 @@ public sealed class SeekStreamingClient
             _logger.LogWarning(ex,
                 "SeekStreaming: failed to create tus upload slot (ep={EpisodeId} via={Provider}) for {Url}",
                 episodeId, provider, directVideoUrl);
+            if (tempFilePath is not null)
+                try { File.Delete(tempFilePath); } catch { /* best-effort cleanup */ }
             return null;
         }
 
@@ -150,15 +164,26 @@ public sealed class SeekStreamingClient
             using var dlClient = _httpFactory.CreateClient("seek-download");
             using var tusClient = _httpFactory.CreateClient("seek-tus");
 
-            using var downloadReq = new HttpRequestMessage(HttpMethod.Get, directVideoUrl);
-            downloadReq.Headers.TryAddWithoutValidation("User-Agent", BrowserUserAgent);
-            if (!string.IsNullOrEmpty(referer))
-                downloadReq.Headers.TryAddWithoutValidation("Referer", referer);
-            using var downloadResp = await dlClient.SendAsync(
-                downloadReq, HttpCompletionOption.ResponseHeadersRead, ct);
-            downloadResp.EnsureSuccessStatusCode();
-
-            await using var downloadStream = await downloadResp.Content.ReadAsStreamAsync(ct);
+            // Fuente: el temp file (si tuvimos que spoolear para medir) o el stream de red
+            HttpResponseMessage? downloadResp = null;
+            Stream downloadStream;
+            if (tempFilePath is not null)
+            {
+                downloadStream = File.OpenRead(tempFilePath);
+            }
+            else
+            {
+                using var downloadReq = new HttpRequestMessage(HttpMethod.Get, directVideoUrl);
+                downloadReq.Headers.TryAddWithoutValidation("User-Agent", BrowserUserAgent);
+                if (!string.IsNullOrEmpty(referer))
+                    downloadReq.Headers.TryAddWithoutValidation("Referer", referer);
+                downloadResp = await dlClient.SendAsync(
+                    downloadReq, HttpCompletionOption.ResponseHeadersRead, ct);
+                downloadResp.EnsureSuccessStatusCode();
+                downloadStream = await downloadResp.Content.ReadAsStreamAsync(ct);
+            }
+            using var _downloadResp = downloadResp;
+            await using var _downloadStream = downloadStream;
             var buffer = new byte[ChunkSize];
             long offset = 0;
 
@@ -258,18 +283,26 @@ public sealed class SeekStreamingClient
                 episodeId, provider, directVideoUrl);
             return null;
         }
+        finally
+        {
+            if (tempFilePath is not null)
+                try { File.Delete(tempFilePath); } catch { /* best-effort cleanup */ }
+        }
 
         _logger.LogInformation(
             "SeekStreaming tus transfer complete (ep={EpisodeId} via={Provider} {Size} bytes) for {Url} — polling for transcoding",
             episodeId, provider, fileSize, directVideoUrl);
 
         // ─── Step 5: poll video/manage until Active ───────────────
-        var videoId = await PollForVideoAsync(filename, pollTimeoutMinutes, episodeId, provider, directVideoUrl, ct);
+        // El transcoding escala con el tamaño: un archivo de 500 MB no entra en
+        // 15 min. ~1 min extra por cada 25 MB, con piso en el valor configurado.
+        var effectiveTimeout = Math.Max(pollTimeoutMinutes, (int)(fileSize / (25L * 1024 * 1024)));
+        var videoId = await PollForVideoAsync(filename, effectiveTimeout, episodeId, provider, directVideoUrl, ct);
         if (videoId is null)
         {
             _logger.LogWarning(
                 "\u274c SeekStreaming: transcoding timed out after {Timeout} min (ep={EpisodeId} via={Provider} filename={Filename} sourceUrl={Url})",
-                pollTimeoutMinutes, episodeId, provider, filename, directVideoUrl);
+                effectiveTimeout, episodeId, provider, filename, directVideoUrl);
             return null;
         }
 
@@ -417,7 +450,82 @@ public sealed class SeekStreamingClient
             _logger.LogDebug(ex, "SeekStreaming: Range GET also failed for {Url}", url);
         }
 
+        // Strategy 3: plain GET, leer Content-Length de los headers y abortar.
+        // mixdrop (mxcontent.net) bloquea HEAD y Range pero el GET normal trae
+        // Content-Length — con ResponseHeadersRead no descargamos el cuerpo.
+        try
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Get, url);
+            req.Headers.TryAddWithoutValidation("User-Agent", BrowserUserAgent);
+            if (!string.IsNullOrEmpty(referer))
+                req.Headers.TryAddWithoutValidation("Referer", referer);
+            else if (Uri.TryCreate(url, UriKind.Absolute, out var uri))
+                req.Headers.TryAddWithoutValidation("Referer", $"{uri.Scheme}://{uri.Host}/");
+            using var resp = await client.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
+            if (resp.IsSuccessStatusCode && resp.Content.Headers.ContentLength is long cl3 and > 0)
+                return cl3;
+            if (!resp.IsSuccessStatusCode)
+                _logger.LogDebug(
+                    "SeekStreaming: plain GET {Status} for {Url}",
+                    (int)resp.StatusCode, url);
+        }
+        catch (Exception ex) when (ex is not TaskCanceledException { CancellationToken.IsCancellationRequested: true })
+        {
+            _logger.LogDebug(ex, "SeekStreaming: plain GET also failed for {Url}", url);
+        }
+
         return 0;
+    }
+
+    /// <summary>
+    /// Último recurso cuando ningún header revela el tamaño: descarga el archivo
+    /// completo a un temp file para medirlo (tus exige Upload-Length por
+    /// adelantado). El caller es responsable de borrar el archivo.
+    /// Devuelve null si la descarga falla o viene vacía.
+    /// </summary>
+    private async Task<string?> SpoolToTempFileAsync(
+        HttpClient client, string url, string? referer,
+        Guid? episodeId, string? provider, CancellationToken ct)
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"seekspool_{Guid.NewGuid():N}.mp4");
+        try
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Get, url);
+            req.Headers.TryAddWithoutValidation("User-Agent", BrowserUserAgent);
+            if (!string.IsNullOrEmpty(referer))
+                req.Headers.TryAddWithoutValidation("Referer", referer);
+            else if (Uri.TryCreate(url, UriKind.Absolute, out var uri))
+                req.Headers.TryAddWithoutValidation("Referer", $"{uri.Scheme}://{uri.Host}/");
+
+            using var resp = await client.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
+            resp.EnsureSuccessStatusCode();
+
+            await using (var src = await resp.Content.ReadAsStreamAsync(ct))
+            await using (var dst = File.Create(path))
+            {
+                await src.CopyToAsync(dst, 1 << 20, ct);
+            }
+
+            var size = new FileInfo(path).Length;
+            if (size <= 0)
+            {
+                try { File.Delete(path); } catch { }
+                return null;
+            }
+
+            _logger.LogInformation(
+                "SeekStreaming: spooled {Size} bytes to temp file (ep={EpisodeId} via={Provider})",
+                size, episodeId, provider);
+            return path;
+        }
+        catch (Exception ex) when (ex is not TaskCanceledException { CancellationToken.IsCancellationRequested: true })
+        {
+            _logger.LogWarning(ex,
+                "SeekStreaming: temp spool failed (ep={EpisodeId} via={Provider}) for {Url}",
+                episodeId, provider, url);
+            try { File.Delete(path); } catch { }
+            return null;
+        }
     }
 
     /// <summary>
