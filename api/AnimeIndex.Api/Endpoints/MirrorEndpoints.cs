@@ -1,5 +1,6 @@
 using AnimeIndex.Api.Data;
 using AnimeIndex.Api.DTOs;
+using AnimeIndex.Api.Infrastructure;
 using AnimeIndex.Api.Infrastructure.Cache;
 using AnimeIndex.Api.Infrastructure.Proxy;
 using AnimeIndex.Api.Infrastructure.Resolvers;
@@ -128,6 +129,7 @@ public static class MirrorEndpoints
         Guid episodeId,
         AppDbContext db,
         ResolverRegistry registry,
+        IConfiguration config,
         CancellationToken ct = default)
     {
         var mirrors = await db.Mirrors
@@ -135,6 +137,8 @@ public static class MirrorEndpoints
             .Where(m => m.EpisodeId == episodeId && m.IsActive)
             .OrderBy(m => m.Priority)
             .ToListAsync(ct);
+
+        mirrors = OwnHostMirrors.Apply(mirrors, config.GetValue("Mirrors:OwnHostsOnly", false));
 
         var items = mirrors.Select(m => new ResolvableMirrorDto(
             MirrorId: m.Id,

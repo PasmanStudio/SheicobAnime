@@ -23,6 +23,26 @@ export function typeLabel(t: SeriesType | null | undefined): string {
   return t ? (TYPE_LABELS[t] ?? t) : "";
 }
 
+// Rótulo lindo del servidor en el botón del player. "voe-sa" es nuestra subida
+// propia a Voe (se muestra como "Voe"). Fallback: el provider crudo.
+const SERVER_LABELS: Record<string, string> = {
+  seekstreaming: "Sheicob",
+  doodstream: "DoodStream",
+  "voe-sa": "Voe",
+  voe: "Voe",
+  streamwish: "StreamWish",
+  filemoon: "Filemoon",
+  vidhide: "VidHide",
+  okru: "OK.ru",
+  mp4upload: "MP4Upload",
+  mixdrop: "Mixdrop",
+  mediafire: "MediaFire",
+};
+
+export function serverLabel(provider: string): string {
+  return SERVER_LABELS[provider.toLowerCase()] ?? provider;
+}
+
 // El sitio corre en Cloudflare Workers (UTC). Las fechas "humanas" se muestran
 // en hora argentina, no UTC.
 export const SITE_TZ = "America/Argentina/Buenos_Aires";

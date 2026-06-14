@@ -1,5 +1,6 @@
 using AnimeIndex.Api.Data;
 using AnimeIndex.Api.DTOs;
+using AnimeIndex.Api.Infrastructure;
 using AnimeIndex.Api.Infrastructure.Cache;
 using Mapster;
 using Microsoft.EntityFrameworkCore;
@@ -256,11 +257,14 @@ public static class SeriesEndpoints
     private static async Task<IResult> GetEpisodeMirrorsBySlugAndNumber(
         AppDbContext db,
         ICacheService cache,
+        IConfiguration config,
         string slug,
         int number,
         CancellationToken ct = default)
     {
-        var cacheKey = $"series:{slug}:episode:{number}:mirrors";
+        // Flag en la cache key: prenderlo no sirve resultados cacheados de antes.
+        var ownOnly = config.GetValue("Mirrors:OwnHostsOnly", false);
+        var cacheKey = $"series:{slug}:episode:{number}:mirrors:{(ownOnly ? "own" : "all")}";
         var cached = await cache.GetAsync<MirrorDto[]>(cacheKey, ct);
         if (cached is not null) return Results.Ok(cached);
 
@@ -278,6 +282,8 @@ public static class SeriesEndpoints
             .Where(m => m.EpisodeId == episode.Id && m.IsActive)
             .OrderBy(m => m.Priority)
             .ToListAsync(ct);
+
+        mirrors = OwnHostMirrors.Apply(mirrors, ownOnly);
 
         var dtos = mirrors.Select(m => m.Adapt<MirrorDto>()).ToArray();
         await cache.SetAsync(cacheKey, dtos, CacheDuration, ct);

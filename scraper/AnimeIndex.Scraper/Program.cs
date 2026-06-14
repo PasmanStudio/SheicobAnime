@@ -247,6 +247,12 @@ try
     {
         c.Timeout = TimeSpan.FromMinutes(90);
     });
+    // Multi-host remote-upload client (DoodStream / Voe) — la llamada solo ENCOLA
+    // el remote upload (ellos descargan server-side), así que un timeout corto basta.
+    builder.Services.AddHttpClient("multihost", c =>
+    {
+        c.Timeout = TimeSpan.FromSeconds(60);
+    });
     // RSS feed fetcher — reads anime news XML feeds
     builder.Services.AddHttpClient("news-rss", c =>
     {
@@ -284,6 +290,7 @@ try
     builder.Services.AddScoped<JkAnimeHttpClient>();
     builder.Services.AddScoped<KatanimeHttpClient>();
     builder.Services.AddSingleton<SeekStreamingClient>();
+    builder.Services.AddScoped<MultiHostUploadService>();
     builder.Services.AddScoped<SeekStreamingUploadService>();
 
     // ─── Hoster resolvers (reuse same impls as API) ───────

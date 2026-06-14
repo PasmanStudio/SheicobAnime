@@ -60,6 +60,11 @@ jobs:
           # solo estanca la cola paralela. Piso 8 / tope 12 min (antes 15-20). Tunear aca.
           SeekStreaming__TranscodeTimeoutMinutes: "8"
           SeekStreaming__TranscodeTimeoutCapMinutes: "12"
+          # Hosts propios extra con reparto de ingresos (remote upload por URL).
+          # Sin estos secrets, MultiHostUploadService se omite (no-op). Cargar en
+          # Settings → Secrets and variables → Actions → Secrets.
+          Doodstream__ApiKey: ${{ secrets.DOODSTREAM_API_KEY }}
+          Voe__ApiKey: ${{ secrets.VOE_API_KEY }}
           # Speed up scheduler: check every 30s (default is 15s but let's be explicit)
           Source2__DelayMs: "2000"
           # Force scheduler to fire immediately on startup (override 2am cron for GHA runs)
