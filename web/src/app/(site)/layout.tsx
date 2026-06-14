@@ -1,6 +1,7 @@
 import AdsterraGlobalAds from "@/components/ads/AdsterraGlobalAds";
 import ConsentBanner from "@/components/ads/ConsentBanner";
 import PageViewTracker from "@/components/ads/PageViewTracker";
+import Analytics from "@/components/Analytics";
 import AuthProvider from "@/components/auth/AuthProvider";
 import MobileBottomNav from "@/components/layout/MobileBottomNav";
 import SiteFooter from "@/components/layout/SiteFooter";
@@ -95,6 +96,7 @@ export default function RootLayout({
           <ConsentBanner />
           <AdsterraGlobalAds />
           <PageViewTracker />
+          <Analytics />
           <ServiceWorkerRegister />
         </AuthProvider>
       </body>
