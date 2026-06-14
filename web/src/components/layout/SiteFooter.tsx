@@ -45,7 +45,7 @@ export default function SiteFooter() {
             </Link>
           )}
           <Link href="/apoyanos" className="hover:text-brand-bright transition-colors duration-fast">
-            Ko-fi
+            Apoyanos
           </Link>
         </nav>
         <span className="font-mono text-[11px] text-ink-3">
