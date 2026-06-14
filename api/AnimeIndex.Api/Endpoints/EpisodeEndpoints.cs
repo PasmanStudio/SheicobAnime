@@ -1,5 +1,6 @@
 using AnimeIndex.Api.Data;
 using AnimeIndex.Api.DTOs;
+using AnimeIndex.Api.Infrastructure;
 using AnimeIndex.Api.Infrastructure.Cache;
 using Mapster;
 using Microsoft.EntityFrameworkCore;
@@ -50,10 +51,12 @@ public static class EpisodeEndpoints
     private static async Task<IResult> GetEpisode(
         AppDbContext db,
         ICacheService cache,
+        IConfiguration config,
         Guid id,
         CancellationToken ct = default)
     {
-        var cacheKey = $"episode:{id}";
+        var ownOnly = config.GetValue("Mirrors:OwnHostsOnly", false);
+        var cacheKey = $"episode:{id}:{(ownOnly ? "own" : "all")}";
         var cached = await cache.GetAsync<EpisodeDto>(cacheKey, ct);
         if (cached is not null) return Results.Ok(cached);
 
@@ -68,6 +71,8 @@ public static class EpisodeEndpoints
                 new ErrorResponse("Episode not found", "NOT_FOUND"),
                 statusCode: 404);
 
+        episode.Mirrors = OwnHostMirrors.Apply([.. episode.Mirrors], ownOnly);
+
         var dto = episode.Adapt<EpisodeDto>();
         await cache.SetAsync(cacheKey, dto, CacheDuration, ct);
         return Results.Ok(dto);
@@ -76,10 +81,12 @@ public static class EpisodeEndpoints
     private static async Task<IResult> GetEpisodeMirrors(
         AppDbContext db,
         ICacheService cache,
+        IConfiguration config,
         Guid id,
         CancellationToken ct = default)
     {
-        var cacheKey = $"episode:{id}:mirrors";
+        var ownOnly = config.GetValue("Mirrors:OwnHostsOnly", false);
+        var cacheKey = $"episode:{id}:mirrors:{(ownOnly ? "own" : "all")}";
         var cached = await cache.GetAsync<MirrorDto[]>(cacheKey, ct);
         if (cached is not null) return Results.Ok(cached);
 
@@ -94,6 +101,8 @@ public static class EpisodeEndpoints
             .Where(m => m.EpisodeId == id && m.IsActive)
             .OrderBy(m => m.Priority)
             .ToListAsync(ct);
+
+        mirrors = OwnHostMirrors.Apply(mirrors, ownOnly);
 
         var dtos = mirrors.Select(m => m.Adapt<MirrorDto>()).ToArray();
         await cache.SetAsync(cacheKey, dtos, CacheDuration, ct);

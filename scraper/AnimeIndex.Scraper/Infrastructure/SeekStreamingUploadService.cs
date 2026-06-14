@@ -25,6 +25,7 @@ public sealed class SeekStreamingUploadService
     private readonly SeekStreamingClient _seekStreaming;
     private readonly ResolverRegistry _registry;
     private readonly UpsertPipelineService _upsert;
+    private readonly MultiHostUploadService _multiHost;
     private readonly ILogger<SeekStreamingUploadService> _logger;
 
     // Priority order for providers that can yield a direct downloadable MP4 (not HLS).
@@ -49,11 +50,13 @@ public sealed class SeekStreamingUploadService
         SeekStreamingClient seekStreaming,
         ResolverRegistry registry,
         UpsertPipelineService upsert,
+        MultiHostUploadService multiHost,
         ILogger<SeekStreamingUploadService> logger)
     {
         _seekStreaming = seekStreaming;
         _registry = registry;
         _upsert = upsert;
+        _multiHost = multiHost;
         _logger = logger;
     }
 
@@ -230,6 +233,12 @@ public sealed class SeekStreamingUploadService
             _logger.LogInformation(
                 "\u2705 Episode {Id}: SeekStreaming video created OK (embed={Embed}, source={Provider})",
                 target.EpisodeId, seekEmbedUrl, target.Provider);
+
+            // Replica a hosts propios con reparto de ingresos (DoodStream, Voe) reusando
+            // la MISMA URL directa ya validada. Best-effort: no afecta el resultado del
+            // upload a SeekStreaming. No-op si no hay hosts configurados.
+            if (_multiHost.Enabled)
+                await _multiHost.ReplicateAsync(target.EpisodeId, target.DirectUrl, ct);
 
             return true;
         }
