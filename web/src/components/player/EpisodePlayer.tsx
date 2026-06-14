@@ -3,6 +3,7 @@
 import AdSlot from "@/components/ads/AdSlot";
 import { useWatchProgress } from "@/hooks/useWatchProgress";
 import { ApiError, getResolvableSet, reportMirrorFailure, resolveMirror } from "@/lib/api";
+import { serverLabel } from "@/lib/labels";
 import type { Mirror, ResolvableMirror, ResolvedSource } from "@/lib/types";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import CustomVideoPlayer from "./CustomVideoPlayer";
@@ -421,7 +422,7 @@ export default function EpisodePlayer({
                 const i = displayEntries.indexOf(entry);
                 const isSheicob = entry.kind === "sheicob";
                 const selected = i === currentDisplayIdx;
-                const label = isSheicob ? "Sheicob" : entry.mirror.providerName;
+                const label = isSheicob ? "Sheicob" : serverLabel(entry.mirror.providerName);
                 const quality = isSheicob
                   ? resolvableMirrors[0]?.qualityLabel ?? 0
                   : entry.mirror.qualityLabel;

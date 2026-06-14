@@ -1,6 +1,7 @@
 "use client";
 
 import { reportMirrorFailure } from "@/lib/api";
+import { serverLabel } from "@/lib/labels";
 import type { Mirror } from "@/lib/types";
 import { useMemo, useState } from "react";
 
@@ -123,7 +124,7 @@ export default function DirectEpisodePlayer({ mirrors, episodeTitle }: Readonly<
                 aria-pressed={selectedId === m.id}
                 className={`${chipClass(selectedId === m.id)} capitalize`}
               >
-                {m.providerName}
+                {serverLabel(m.providerName)}
                 {m.qualityLabel > 0 && (
                   <span className="sh-stat text-[10px] opacity-80">{m.qualityLabel}p</span>
                 )}
@@ -152,7 +153,7 @@ export default function DirectEpisodePlayer({ mirrors, episodeTitle }: Readonly<
                 aria-pressed={selectedId === m.id}
                 className={`${chipClass(selectedId === m.id)} capitalize`}
               >
-                {m.providerName}
+                {serverLabel(m.providerName)}
                 {m.qualityLabel > 0 && (
                   <span className="sh-stat text-[10px] opacity-80">{m.qualityLabel}p</span>
                 )}
