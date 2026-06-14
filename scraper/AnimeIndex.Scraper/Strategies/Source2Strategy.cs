@@ -28,6 +28,9 @@ public sealed class Source2Strategy(
             ?? throw new InvalidOperationException("Source2:BaseUrl is not configured.");
         var delayMs = config.GetValue("Source2:DelayMs", 1500);
         var maxPages = config.GetValue("Source2:MaxPages", 3);
+        // Directorio listing es liviano (JSON embebido) y NO escribe DB por página
+        // tras el dedup en memoria — un delay menor que el de páginas de episodio.
+        var discoveryDelayMs = config.GetValue("Source2:DiscoveryDelayMs", 700);
 
         var seriesCount = 0;
         var episodeCount = 0;
@@ -84,7 +87,7 @@ public sealed class Source2Strategy(
 
         // ── Phase 1: Discover and upsert all series to DB ─────
         // Returns only the count — in-memory list discarded after upsert.
-        totalDiscovered = await DiscoverSeriesAsync(baseUrl, maxPages, delayMs, scrapeJobId, ct);
+        totalDiscovered = await DiscoverSeriesAsync(baseUrl, maxPages, discoveryDelayMs, scrapeJobId, ct);
 
         // ── Phase 2: Enrich from DB (resumable on container restart) ──
         // Query series that still need episodes or mirrors, 0-episode series first.
@@ -468,7 +471,20 @@ public sealed class Source2Strategy(
     private async Task<int> DiscoverSeriesAsync(
         string baseUrl, int maxPages, int delayMs, Guid scrapeJobId, CancellationToken ct)
     {
+        // Pre-cargar slugs bloqueados + existentes UNA vez. Antes esto era un N+1
+        // brutal: por CADA serie del catálogo se hacía un AnyAsync (blocked) + un
+        // UpsertSeriesAsync (2 round-trips), re-escribiendo TODO el catálogo cada
+        // corrida → miles de viajes secuenciales a Supabase (~20 min de la corrida).
+        // Ahora discovery solo INSERTA series nuevas; las existentes las refresca
+        // la Fase 2 (enrichment de 'ongoing'), y las 'completed' son inmutables
+        // (UpsertSeriesAsync nunca las saca de 'completed').
+        var blockedSlugs = (await db.BlockedSlugs.Select(b => b.Slug).ToListAsync(ct))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var knownSlugs = (await db.Series.Select(s => s.Slug).ToListAsync(ct))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
         var discovered = 0;
+        var inserted = 0;
 
         for (var page = 1; page <= maxPages; page++)
         {
@@ -480,7 +496,7 @@ public sealed class Source2Strategy(
             {
                 try
                 {
-                    var msg = $"p1:discovering page {page}/{maxPages} ({discovered} series so far)";
+                    var msg = $"p1:discovering page {page}/{maxPages} ({discovered} seen, {inserted} new)";
                     await db.Database.ExecuteSqlRawAsync(
                         """UPDATE scrape_jobs SET progress_message = {0}, last_heartbeat = now() WHERE id = {1}""",
                         msg, scrapeJobId);
@@ -495,6 +511,14 @@ public sealed class Source2Strategy(
             foreach (var item in directoryPage.Data)
             {
                 if (string.IsNullOrWhiteSpace(item.Slug) || string.IsNullOrWhiteSpace(item.Title))
+                    continue;
+
+                var slug = item.Slug.Trim();
+                discovered++;
+
+                // Bloqueada o ya conocida → sin escritura. knownSlugs.Add devuelve
+                // false si ya estaba (también dedup de páginas repetidas).
+                if (blockedSlugs.Contains(slug) || !knownSlugs.Add(slug))
                     continue;
 
                 var status = item.Status switch
@@ -515,29 +539,30 @@ public sealed class Source2Strategy(
                     _ => "tv"
                 };
 
-                // Upsert immediately so series are in DB for Phase 2 to pick up.
-                var isBlocked = await db.BlockedSlugs.AnyAsync(b => b.Slug == item.Slug.Trim(), ct);
-                if (!isBlocked)
-                {
-                    await upsert.UpsertSeriesAsync(new SeriesScrapedData(
-                        Slug: item.Slug.Trim(),
-                        Title: item.Title.Trim(),
-                        CoverUrl: item.Image,
-                        Status: status,
-                        Type: type,
-                        Synopsis: string.IsNullOrWhiteSpace(item.Synopsis) ? null : item.Synopsis.Trim()), ct);
-                    discovered++;
-                }
+                // Insert inmediato para que la serie esté en DB y la Fase 2 la tome.
+                await upsert.UpsertSeriesAsync(new SeriesScrapedData(
+                    Slug: slug,
+                    Title: item.Title.Trim(),
+                    CoverUrl: item.Image,
+                    Status: status,
+                    Type: type,
+                    Synopsis: string.IsNullOrWhiteSpace(item.Synopsis) ? null : item.Synopsis.Trim()), ct);
+                inserted++;
             }
 
-            logger.LogDebug("Page {Page}/{LastPage}: discovered {Count} series",
-                page, directoryPage.LastPage, directoryPage.Data.Count);
+            logger.LogDebug("Page {Page}/{LastPage}: {Count} series ({Inserted} new so far)",
+                page, directoryPage.LastPage, directoryPage.Data.Count, inserted);
 
             // Stop when JKAnime says there are no more pages.
             if (page >= directoryPage.LastPage) break;
 
             await JkAnimeHttpClient.JitterDelayAsync(delayMs, ct);
         }
+
+        if (inserted > 0)
+            logger.LogInformation(
+                "Discovery: {Inserted} serie(s) nueva(s) insertada(s) ({Discovered} vistas en el catálogo)",
+                inserted, discovered);
 
         return discovered;
     }
