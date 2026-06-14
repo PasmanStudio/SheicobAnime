@@ -33,10 +33,11 @@ public sealed class SeekStreamingUploadService
     // Providers with no resolver are filtered out before this order is applied.
     // mp4upload — highest quality; port 183 works from GHA but some CDN nodes block cloud IPs.
     // okru      — NOT IP-bound (confirmed); very reliable from cloud.
+    // streamtape — MP4 directo (token reconstruido); CDN tapecontent.net cloud-friendly.
     // voe       — direct MP4 via var source= (updated 2026-05-08); sometimes serves placeholder.
     // streamwish/vidhide/filemoon — always HLS, filtered by the m3u8 check before upload.
     private static readonly string[] Mp4FirstOrder =
-        ["mp4upload", "okru", "mediafire", "voe", "streamwish", "vidhide", "filemoon"];
+        ["mp4upload", "okru", "streamtape", "mediafire", "voe", "streamwish", "vidhide", "filemoon"];
 
     // Providers que NO sirven para subir desde GitHub Actions (IP-block de
     // datacenter en su CDN — devuelven 403 hasta en el GET). Se excluyen como
