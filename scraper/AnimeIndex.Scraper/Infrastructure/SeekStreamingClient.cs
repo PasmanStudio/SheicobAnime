@@ -30,6 +30,8 @@ public sealed class SeekStreamingClient
     private readonly HttpClient _http;
     private readonly IHttpClientFactory _httpFactory;
     private readonly string _baseUrl;
+    private readonly int _transcodeFloorMinutes;
+    private readonly int _transcodeCapMinutes;
     private readonly ILogger<SeekStreamingClient> _logger;
 
     private static readonly JsonSerializerOptions JsonOpts = new()
@@ -51,6 +53,12 @@ public sealed class SeekStreamingClient
 
         _baseUrl = config["SeekStreaming:BaseUrl"]?.TrimEnd('/') ?? "https://seekstreaming.com";
 
+        // Los transcodes exitosos terminan en ~1-3 min; un archivo que sigue
+        // "Pending" pasado el piso casi nunca se recupera y solo estanca la cola
+        // paralela de Phase B. Piso 8 / tope 12 min (configurable) en vez de 15-20.
+        _transcodeFloorMinutes = config.GetValue("SeekStreaming:TranscodeTimeoutMinutes", 8);
+        _transcodeCapMinutes = config.GetValue("SeekStreaming:TranscodeTimeoutCapMinutes", 12);
+
         _http = httpFactory.CreateClient("seekstreaming");
         _http.DefaultRequestHeaders.TryAddWithoutValidation("api-token", apiKey);
     }
@@ -64,7 +72,7 @@ public sealed class SeekStreamingClient
     public async Task<string?> UploadFromUrlAsync(
         string directVideoUrl,
         string? referer = null,
-        int pollTimeoutMinutes = 15,
+        int pollTimeoutMinutes = 0, // 0 = usar el piso configurado (SeekStreaming:TranscodeTimeoutMinutes)
         Guid? episodeId = null,
         string? provider = null,
         CancellationToken ct = default)
@@ -279,9 +287,13 @@ public sealed class SeekStreamingClient
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex,
-                "SeekStreaming: tus upload failed (ep={EpisodeId} via={Provider}) for {Url}",
-                episodeId, provider, directVideoUrl);
+            // Per-attempt: el caller cae al siguiente candidato/katanime y loguea el
+            // fallo real UNA sola vez por episodio. Los 403 de CDNs (mp4upload port
+            // 183 bloquea IPs de datacenter) son esperados → Debug, sin stacktrace,
+            // para no llenar el log de "errores" en una corrida que igual termina OK.
+            _logger.LogDebug(
+                "SeekStreaming: tus upload failed (ep={EpisodeId} via={Provider}): {Error}",
+                episodeId, provider, ex.Message);
             return null;
         }
         finally
@@ -295,15 +307,21 @@ public sealed class SeekStreamingClient
             episodeId, provider, fileSize, directVideoUrl);
 
         // ─── Step 5: poll video/manage until Active ───────────────
-        // El transcoding escala con el tamaño: un archivo de 500 MB no entra en
-        // 15 min. ~1 min extra por cada 25 MB, con piso en el valor configurado.
-        var effectiveTimeout = Math.Max(pollTimeoutMinutes, (int)(fileSize / (25L * 1024 * 1024)));
+        // El transcoding escala con el tamaño (~1 min por cada 25 MB) pero acotado:
+        // piso = override del caller o el configurado; tope = cap configurado. Así
+        // un archivo trabado no espera 15-20 min estancando la cola paralela.
+        var floor = pollTimeoutMinutes > 0 ? pollTimeoutMinutes : _transcodeFloorMinutes;
+        var cap = Math.Max(floor, _transcodeCapMinutes);
+        var sizeBasedMinutes = (int)(fileSize / (25L * 1024 * 1024));
+        var effectiveTimeout = Math.Clamp(Math.Max(floor, sizeBasedMinutes), floor, cap);
         var videoId = await PollForVideoAsync(filename, effectiveTimeout, episodeId, provider, directVideoUrl, ct);
         if (videoId is null)
         {
-            _logger.LogWarning(
-                "\u274c SeekStreaming: transcoding timed out after {Timeout} min (ep={EpisodeId} via={Provider} filename={Filename} sourceUrl={Url})",
-                effectiveTimeout, episodeId, provider, filename, directVideoUrl);
+            // Esperado para algunos archivos; el episodio cae al siguiente candidato
+            // o a katanime, as\u00ed que Information (no Warning) para no alarmar.
+            _logger.LogInformation(
+                "SeekStreaming: transcoding timed out after {Timeout} min (ep={EpisodeId} via={Provider} filename={Filename}) \u2014 probando fallback",
+                effectiveTimeout, episodeId, provider, filename);
             return null;
         }
 
