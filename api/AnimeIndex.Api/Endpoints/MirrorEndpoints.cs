@@ -138,7 +138,18 @@ public static class MirrorEndpoints
             .OrderBy(m => m.Priority)
             .ToListAsync(ct);
 
-        mirrors = OwnHostMirrors.Apply(mirrors, config.GetValue("Mirrors:OwnHostsOnly", false));
+        // "Solo míos" desde una fecha: solo afecta episodios nuevos; los viejos
+        // quedan intactos. Solo consultamos CreatedAt cuando el filtro está activo.
+        var since = OwnHostMirrors.ParseSince(config);
+        if (since is not null)
+        {
+            var createdAt = await db.Episodes
+                .Where(e => e.Id == episodeId)
+                .Select(e => (DateTime?)e.CreatedAt)
+                .FirstOrDefaultAsync(ct);
+            if (createdAt is not null)
+                mirrors = OwnHostMirrors.Apply(mirrors, createdAt.Value, since);
+        }
 
         var items = mirrors.Select(m => new ResolvableMirrorDto(
             MirrorId: m.Id,
