@@ -55,8 +55,8 @@ public static class EpisodeEndpoints
         Guid id,
         CancellationToken ct = default)
     {
-        var ownOnly = config.GetValue("Mirrors:OwnHostsOnly", false);
-        var cacheKey = $"episode:{id}:{(ownOnly ? "own" : "all")}";
+        var since = OwnHostMirrors.ParseSince(config);
+        var cacheKey = $"episode:{id}:{(since is null ? "all" : "new")}";
         var cached = await cache.GetAsync<EpisodeDto>(cacheKey, ct);
         if (cached is not null) return Results.Ok(cached);
 
@@ -71,7 +71,7 @@ public static class EpisodeEndpoints
                 new ErrorResponse("Episode not found", "NOT_FOUND"),
                 statusCode: 404);
 
-        episode.Mirrors = OwnHostMirrors.Apply([.. episode.Mirrors], ownOnly);
+        episode.Mirrors = OwnHostMirrors.Apply([.. episode.Mirrors], episode.CreatedAt, since);
 
         var dto = episode.Adapt<EpisodeDto>();
         await cache.SetAsync(cacheKey, dto, CacheDuration, ct);
@@ -85,13 +85,17 @@ public static class EpisodeEndpoints
         Guid id,
         CancellationToken ct = default)
     {
-        var ownOnly = config.GetValue("Mirrors:OwnHostsOnly", false);
-        var cacheKey = $"episode:{id}:mirrors:{(ownOnly ? "own" : "all")}";
+        var since = OwnHostMirrors.ParseSince(config);
+        var cacheKey = $"episode:{id}:mirrors:{(since is null ? "all" : "new")}";
         var cached = await cache.GetAsync<MirrorDto[]>(cacheKey, ct);
         if (cached is not null) return Results.Ok(cached);
 
-        var episodeExists = await db.Episodes.AnyAsync(e => e.Id == id, ct);
-        if (!episodeExists)
+        // CreatedAt en vez de un simple existence-check: lo necesita el filtro por fecha.
+        var createdAt = await db.Episodes
+            .Where(e => e.Id == id)
+            .Select(e => (DateTime?)e.CreatedAt)
+            .FirstOrDefaultAsync(ct);
+        if (createdAt is null)
             return Results.Json(
                 new ErrorResponse("Episode not found", "NOT_FOUND"),
                 statusCode: 404);
@@ -102,7 +106,7 @@ public static class EpisodeEndpoints
             .OrderBy(m => m.Priority)
             .ToListAsync(ct);
 
-        mirrors = OwnHostMirrors.Apply(mirrors, ownOnly);
+        mirrors = OwnHostMirrors.Apply(mirrors, createdAt.Value, since);
 
         var dtos = mirrors.Select(m => m.Adapt<MirrorDto>()).ToArray();
         await cache.SetAsync(cacheKey, dtos, CacheDuration, ct);

@@ -262,9 +262,10 @@ public static class SeriesEndpoints
         int number,
         CancellationToken ct = default)
     {
-        // Flag en la cache key: prenderlo no sirve resultados cacheados de antes.
-        var ownOnly = config.GetValue("Mirrors:OwnHostsOnly", false);
-        var cacheKey = $"series:{slug}:episode:{number}:mirrors:{(ownOnly ? "own" : "all")}";
+        // "Solo míos" desde una fecha (solo episodios nuevos). El estado va en la
+        // cache key: cambiarlo no sirve resultados cacheados de antes.
+        var since = OwnHostMirrors.ParseSince(config);
+        var cacheKey = $"series:{slug}:episode:{number}:mirrors:{(since is null ? "all" : "new")}";
         var cached = await cache.GetAsync<MirrorDto[]>(cacheKey, ct);
         if (cached is not null) return Results.Ok(cached);
 
@@ -283,7 +284,7 @@ public static class SeriesEndpoints
             .OrderBy(m => m.Priority)
             .ToListAsync(ct);
 
-        mirrors = OwnHostMirrors.Apply(mirrors, ownOnly);
+        mirrors = OwnHostMirrors.Apply(mirrors, episode.CreatedAt, since);
 
         var dtos = mirrors.Select(m => m.Adapt<MirrorDto>()).ToArray();
         await cache.SetAsync(cacheKey, dtos, CacheDuration, ct);
