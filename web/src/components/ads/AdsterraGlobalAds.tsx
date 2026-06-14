@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import { getAdProvider } from "@/lib/ad-config";
+import { canFirePopunder, markPopunderFired } from "@/lib/ad-frequency";
 import { hasAdConsent } from "./ConsentBanner";
 
 /**
@@ -26,29 +27,25 @@ export default function AdsterraGlobalAds() {
       process.env.NEXT_PUBLIC_ADSTERRA_SOCIALBAR_SCRIPT ||
       "https://pl29138491.profitablecpmratenetwork.com/81/0e/8b/810e8b5ee34d29a8061284101b4768c6.js";
 
-    // On touch/mobile ALL Adsterra global scripts are disabled.
-    // Popunder and Social Bar both attach global click/tap interceptors that
-    // open new browser windows on every touch event — completely breaking
-    // mobile navigation. Desktop-only.
     const isTouchDevice =
       window.matchMedia("(pointer: coarse)").matches || window.innerWidth < 768;
 
-    if (isTouchDevice) {
-      loaded.current = true; // mark as handled so we don't retry
-      return;
-    }
-
-    // Load Popunder script — DESKTOP ONLY
-    if (popunderSrc) {
+    // Popunder — el formato de mayor CPM. Se carga TAMBIÉN en móvil (≈80% del
+    // tráfico) porque solo dispara en el primer click del usuario y se autocapa.
+    // Encima le ponemos un cooldown propio (canFirePopunder) para no molestar:
+    // un maratón de episodios no abre un pop por página.
+    if (popunderSrc && canFirePopunder()) {
       const popScript = document.createElement("script");
       popScript.src = popunderSrc;
       popScript.async = true;
       popScript.dataset.cfasync = "false";
       document.body.appendChild(popScript);
+      markPopunderFired();
     }
 
-    // Load Social Bar script — DESKTOP ONLY
-    if (socialBarSrc) {
+    // Social Bar — SOLO desktop. En móvil su barra fija intercepta los taps y
+    // rompe la navegación (el usuario queda atrapado). Nunca en touch.
+    if (socialBarSrc && !isTouchDevice) {
       const sbScript = document.createElement("script");
       sbScript.src = socialBarSrc;
       sbScript.async = true;

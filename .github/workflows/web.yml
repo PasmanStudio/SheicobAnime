@@ -100,6 +100,11 @@ jobs:
           NEXT_PUBLIC_ADSTERRA_NATIVE_SCRIPT: "https://pl29138492.profitablecpmratenetwork.com/7ee40e5de8cc821cc6ce096252393fd4/invoke.js"
           NEXT_PUBLIC_ADSTERRA_SOCIALBAR_SCRIPT: "https://pl29138491.profitablecpmratenetwork.com/81/0e/8b/810e8b5ee34d29a8061284101b4768c6.js"
           NEXT_PUBLIC_ADSTERRA_POPUNDER_SCRIPT: "https://pl29138490.profitablecpmratenetwork.com/3d/1b/5b/3d1b5b04f03946a5ecb8410c8025f660.js"
+          # Analytics + donaciones — definir como Repository Variables en
+          # Settings → Secrets and variables → Actions → Variables (vacías = off).
+          NEXT_PUBLIC_CF_ANALYTICS_TOKEN: ${{ vars.NEXT_PUBLIC_CF_ANALYTICS_TOKEN }}
+          NEXT_PUBLIC_CAFECITO_URL: ${{ vars.NEXT_PUBLIC_CAFECITO_URL }}
+          NEXT_PUBLIC_KOFI_URL: ${{ vars.NEXT_PUBLIC_KOFI_URL }}
           # Auth.js — build-time placeholders (real values are Worker secrets)
           AUTH_SECRET: "ci-build-secret-placeholder-32chars!!"
           AUTH_GOOGLE_ID: "placeholder"
