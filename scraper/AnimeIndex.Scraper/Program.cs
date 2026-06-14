@@ -302,6 +302,8 @@ try
     // Extra resolvers that katanime commonly exposes and that aren't IP-bound — high-value for the fallback.
     builder.Services.AddSingleton<AnimeIndex.Api.Infrastructure.Resolvers.IHosterResolver, AnimeIndex.Api.Infrastructure.Resolvers.MediafireResolver>();
     builder.Services.AddSingleton<AnimeIndex.Api.Infrastructure.Resolvers.IHosterResolver, AnimeIndex.Api.Infrastructure.Resolvers.MixdropResolver>();
+    // Streamtape: MP4 directo y cloud-friendly — alto valor como fuente de upload.
+    builder.Services.AddSingleton<AnimeIndex.Api.Infrastructure.Resolvers.IHosterResolver, AnimeIndex.Api.Infrastructure.Resolvers.StreamtapeResolver>();
     builder.Services.AddSingleton<AnimeIndex.Api.Infrastructure.Resolvers.ResolverRegistry>();
 
     // ─── Scrape strategies (all IScrapeStrategy impls) ────

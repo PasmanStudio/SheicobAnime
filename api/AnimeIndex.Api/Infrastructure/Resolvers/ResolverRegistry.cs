@@ -51,6 +51,7 @@ public sealed class ResolverRegistry
             "voe" or "voe.sx" => "voe",
             "mixdrop" or "mxdrop" or "mix-drop" => "mixdrop",
             "filemoon" or "file-moon" or "fmoon" => "filemoon",
+            "streamtape" or "stape" or "tape" or "streamta.pe" => "streamtape",
             _ => n
         };
     }
