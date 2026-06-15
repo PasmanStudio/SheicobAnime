@@ -33,37 +33,46 @@ namespace AnimeIndex.Scraper.Infrastructure;
 ///  - Dedup: si el episodio ya tiene mirror activo de ese provider, no re-sube.
 ///
 /// Config (env entre [corchetes]):
-///   Doodstream:ApiKey   [DOODSTREAM__APIKEY]   — sin esto, DoodStream se omite
+///   Doodstream:ApiKey   [DOODSTREAM__APIKEY]   — sin esto, DoodStream se omite (XFileSharing)
 ///   Doodstream:ApiBase  [DOODSTREAM__APIBASE]  — default https://doodapi.co
 ///   Doodstream:EmbedBase[DOODSTREAM__EMBEDBASE]— default https://dood.wf
-///   Voe:ApiKey          [VOE__APIKEY]          — sin esto, Voe se omite
-///   Voe:ApiBase         [VOE__APIBASE]         — default https://voe.sx
-///   Voe:EmbedBase       [VOE__EMBEDBASE]       — default https://voe.sx
+///   Player4me:ApiKey    [PLAYER4ME__APIKEY]    — sin esto, player4me se omite (TUS)
+///   Player4me:ApiBase   [PLAYER4ME__APIBASE]   — default https://player4me.com
+///   Player4me:EmbedBase [PLAYER4ME__EMBEDBASE] — default https://player4me.com
 /// </summary>
 public sealed class MultiHostUploadService
 {
     private readonly IHttpClientFactory _httpFactory;
     private readonly UpsertPipelineService _upsert;
     private readonly AppDbContext _db;
+    private readonly TusVideoUploader _tus;
     private readonly ILogger<MultiHostUploadService> _logger;
     private readonly IReadOnlyList<HostConfig> _hosts;
 
-    /// <param name="Provider">
-    /// Provider name PROPIO. "voe-sa" ≠ "voe": jkanime usa "voe" para embeds que
-    /// NO son nuestros; las subidas propias van con nombre propio para distinguirlas.
-    /// </param>
-    private sealed record HostConfig(string Provider, string ApiKey, string ApiBase, string EmbedBase);
+    /// <summary>Mecanismo de subida del host.</summary>
+    private enum HostKind
+    {
+        /// XFileSharing: GET /api/upload/server → POST file. Auth por ?key=. (DoodStream)
+        Xfs,
+        /// Seek-compatible TUS: GET /api/v1/video/upload → tus. Auth por header api-token. (player4me)
+        Tus,
+    }
+
+    /// <param name="Provider">Provider name PROPIO (distinto de los externos de jkanime).</param>
+    private sealed record HostConfig(HostKind Kind, string Provider, string ApiKey, string ApiBase, string EmbedBase);
 
     public MultiHostUploadService(
         IHttpClientFactory httpFactory,
         IConfiguration config,
         UpsertPipelineService upsert,
         AppDbContext db,
+        TusVideoUploader tus,
         ILogger<MultiHostUploadService> logger)
     {
         _httpFactory = httpFactory;
         _upsert = upsert;
         _db = db;
+        _tus = tus;
         _logger = logger;
 
         var hosts = new List<HostConfig>();
@@ -71,18 +80,20 @@ public sealed class MultiHostUploadService
         var doodKey = config["Doodstream:ApiKey"];
         if (!string.IsNullOrWhiteSpace(doodKey))
             hosts.Add(new HostConfig(
+                HostKind.Xfs,
                 "doodstream",
                 doodKey,
                 config["Doodstream:ApiBase"]?.TrimEnd('/') ?? "https://doodapi.co",
                 config["Doodstream:EmbedBase"]?.TrimEnd('/') ?? "https://dood.wf"));
 
-        var voeKey = config["Voe:ApiKey"];
-        if (!string.IsNullOrWhiteSpace(voeKey))
+        var p4mKey = config["Player4me:ApiKey"];
+        if (!string.IsNullOrWhiteSpace(p4mKey))
             hosts.Add(new HostConfig(
-                "voe-sa",
-                voeKey,
-                config["Voe:ApiBase"]?.TrimEnd('/') ?? "https://voe.sx",
-                config["Voe:EmbedBase"]?.TrimEnd('/') ?? "https://voe.sx"));
+                HostKind.Tus,
+                "player4me",
+                p4mKey,
+                config["Player4me:ApiBase"]?.TrimEnd('/') ?? "https://player4me.com",
+                config["Player4me:EmbedBase"]?.TrimEnd('/') ?? "https://player4me.com"));
 
         _hosts = hosts;
     }
@@ -127,7 +138,10 @@ public sealed class MultiHostUploadService
                 if (ct.IsCancellationRequested) break;
                 try
                 {
-                    await LocalUploadToHostAsync(host, episodeId, tempPath, fileName, ct);
+                    if (host.Kind == HostKind.Tus)
+                        await TusUploadToHostAsync(host, episodeId, tempPath, fileName, ct);
+                    else
+                        await LocalUploadToHostAsync(host, episodeId, tempPath, fileName, ct);
                 }
                 catch (TaskCanceledException) when (ct.IsCancellationRequested)
                 {
@@ -206,6 +220,29 @@ public sealed class MultiHostUploadService
             TryDelete(path);
             return null;
         }
+    }
+
+    /// <summary>Subida TUS (player4me / Seek-compatible): sube el archivo y registra {embedBase}/e/{id}.</summary>
+    private async Task TusUploadToHostAsync(HostConfig host, Guid episodeId, string filePath, string fileName, CancellationToken ct)
+    {
+        var id = await _tus.UploadFileAsync(host.ApiBase, host.ApiKey, filePath, fileName, pollTimeoutMinutes: 12, ct);
+        if (string.IsNullOrEmpty(id))
+        {
+            _logger.LogDebug("MultiHost: {Provider} sin id tras TUS (ep={EpisodeId})", host.Provider, episodeId);
+            return;
+        }
+
+        var embedUrl = $"{host.EmbedBase}/e/{id}";
+        await _upsert.UpsertMirrorAsync(new MirrorScrapedData(
+            EpisodeId: episodeId,
+            ProviderName: host.Provider,
+            EmbedUrl: embedUrl,
+            QualityLabel: 720,
+            Priority: 1), ct);
+
+        _logger.LogInformation(
+            "✅ MultiHost: ep={EpisodeId} subido a {Provider} (id={Id}, embed={Embed})",
+            episodeId, host.Provider, id, embedUrl);
     }
 
     private async Task LocalUploadToHostAsync(HostConfig host, Guid episodeId, string filePath, string fileName, CancellationToken ct)

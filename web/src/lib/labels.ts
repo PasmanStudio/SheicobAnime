@@ -28,6 +28,7 @@ export function typeLabel(t: SeriesType | null | undefined): string {
 const SERVER_LABELS: Record<string, string> = {
   seekstreaming: "Sheicob",
   doodstream: "DoodStream",
+  player4me: "Player4me",
   "voe-sa": "Voe",
   voe: "Voe",
   streamwish: "StreamWish",
