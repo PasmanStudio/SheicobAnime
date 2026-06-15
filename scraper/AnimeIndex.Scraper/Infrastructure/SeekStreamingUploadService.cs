@@ -235,11 +235,11 @@ public sealed class SeekStreamingUploadService
                 "\u2705 Episode {Id}: SeekStreaming video created OK (embed={Embed}, source={Provider})",
                 target.EpisodeId, seekEmbedUrl, target.Provider);
 
-            // Replica a hosts propios con reparto de ingresos (DoodStream, Voe) reusando
-            // la MISMA URL directa ya validada. Best-effort: no afecta el resultado del
-            // upload a SeekStreaming. No-op si no hay hosts configurados.
+            // Replica a hosts propios con reparto de ingresos (DoodStream, Voe): descarga
+            // el MP4 (misma URL/referer ya validados) y lo sube por POST. Best-effort: no
+            // afecta el resultado del upload a SeekStreaming. No-op si no hay hosts.
             if (_multiHost.Enabled)
-                await _multiHost.ReplicateAsync(target.EpisodeId, target.DirectUrl, ct);
+                await _multiHost.ReplicateAsync(target.EpisodeId, target.DirectUrl, target.Referer, ct);
 
             return true;
         }
