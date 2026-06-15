@@ -16,15 +16,15 @@ namespace AnimeIndex.Api.Infrastructure;
 public static class OwnHostMirrors
 {
     /// <summary>
-    /// Provider names propios. "voe-sa" es nuestra subida a Voe — distinta del
-    /// "voe" a secas, que es un embed de jkanime que NO nos paga.
+    /// Provider names PROPIOS (subidos por nosotros). Distintos de los externos de
+    /// jkanime (p. ej. "voe" a secas es un embed ajeno que NO nos paga).
     /// </summary>
     public static readonly HashSet<string> OwnProviders =
         new(StringComparer.OrdinalIgnoreCase)
         {
             "seekstreaming", // player propio (limpio, sin ads)
             "doodstream",    // reparto de ingresos
-            "voe-sa",        // reparto de ingresos (Voe propio)
+            "player4me",     // reparto de ingresos (Seek-compatible, TUS)
         };
 
     /// <summary>
