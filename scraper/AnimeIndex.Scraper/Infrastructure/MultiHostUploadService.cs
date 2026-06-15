@@ -1,3 +1,4 @@
+using System.Net.Http.Headers;
 using System.Text.Json;
 using AnimeIndex.Api.Data;
 using Microsoft.EntityFrameworkCore;
@@ -11,19 +12,25 @@ namespace AnimeIndex.Scraper.Infrastructure;
 
 /// <summary>
 /// Replica el video de un episodio a hosts PROPIOS adicionales con reparto de
-/// ingresos (DoodStream, Voe) vía su API de <c>remote upload</c> (le pasamos la
-/// URL directa y ellos la descargan server-side — cero ancho de banda extra en
-/// GitHub Actions). Cada host embebido corre SUS anuncios y nos paga por vista.
+/// ingresos (DoodStream, Voe). Cada host embebido corre SUS anuncios y nos paga
+/// por vista.
+///
+/// IMPORTANTE — usa LOCAL upload, no remote-upload-por-URL. El remote upload falla
+/// porque las URLs que resolvemos (streamtape, etc.) son IP-bound al runner de GHA:
+/// cuando el host las descarga desde SU IP, el origen rechaza el token (0 bytes,
+/// error). En cambio acá el scraper DESCARGA el MP4 él mismo (misma IP que lo
+/// resolvió → token válido) y SUBE el archivo por POST. Misma lógica que SeekStreaming.
+///
+/// Flujo de cada host (patrón XFileSharing):
+///   1. GET  {apiBase}/api/upload/server?key=KEY → URL del nodo de subida
+///   2. POST multipart (key + file) al nodo       → filecode
+///   3. embed = {embedBase}/e/{filecode}          → se upserta como mirror
 ///
 /// Diseño:
-///  - Best-effort: nunca lanza. Un fallo de un host no afecta a SeekStreaming
-///    ni al otro host ni al scraping.
-///  - No-op si la API key del host no está configurada (mergeable sin secrets).
-///  - Dedup: si el episodio ya tiene un mirror activo de ese provider, no re-sube
-///    (evita duplicados cuando un episodio se reprocesa).
-///
-/// Se dispara una sola vez por episodio, desde SeekStreamingUploadService tras un
-/// upload exitoso, reusando la MISMA URL directa ya validada.
+///  - Best-effort: nunca lanza. Un fallo no afecta a SeekStreaming ni al scraping.
+///  - No-op si la API key del host no está configurada.
+///  - Descarga UNA sola vez y sube a todos los hosts pendientes desde ese temp file.
+///  - Dedup: si el episodio ya tiene mirror activo de ese provider, no re-sube.
 ///
 /// Config (env entre [corchetes]):
 ///   Doodstream:ApiKey   [DOODSTREAM__APIKEY]   — sin esto, DoodStream se omite
@@ -42,10 +49,8 @@ public sealed class MultiHostUploadService
     private readonly IReadOnlyList<HostConfig> _hosts;
 
     /// <param name="Provider">
-    /// Provider name PROPIO. Distinto del externo de jkanime a propósito:
-    /// "voe" lo usa jkanime para embeds que NO son nuestros (no nos pagan), así
-    /// que nuestras subidas a Voe van como "voe-sa" para poder distinguirlas y
-    /// que el filtro "solo hosts propios" no muestre embeds ajenos.
+    /// Provider name PROPIO. "voe-sa" ≠ "voe": jkanime usa "voe" para embeds que
+    /// NO son nuestros; las subidas propias van con nombre propio para distinguirlas.
     /// </param>
     private sealed record HostConfig(string Provider, string ApiKey, string ApiBase, string EmbedBase);
 
@@ -86,62 +91,141 @@ public sealed class MultiHostUploadService
     public bool Enabled => _hosts.Count > 0;
 
     /// <summary>
-    /// Para cada host propio configurado, encola un remote upload del MP4 directo
-    /// y registra el embed como mirror. Best-effort: nunca lanza.
+    /// Descarga el MP4 una sola vez y lo sube por POST a cada host propio pendiente,
+    /// registrando el embed como mirror. Best-effort: nunca lanza.
     /// </summary>
-    public async Task ReplicateAsync(Guid episodeId, string directUrl, CancellationToken ct = default)
+    public async Task ReplicateAsync(Guid episodeId, string directUrl, string? referer, CancellationToken ct = default)
     {
         if (_hosts.Count == 0 || string.IsNullOrWhiteSpace(directUrl)) return;
 
-        foreach (var host in _hosts)
+        // Dedup primero: si ya están todos, ni descargamos.
+        var pending = new List<HostConfig>();
+        foreach (var h in _hosts)
         {
-            if (ct.IsCancellationRequested) break;
-            try
+            var already = await _db.Mirrors
+                .AsNoTracking()
+                .AnyAsync(m => m.EpisodeId == episodeId && m.ProviderName == h.Provider && m.IsActive, ct);
+            if (!already) pending.Add(h);
+        }
+        if (pending.Count == 0) return;
+
+        var tempPath = await DownloadToTempAsync(directUrl, referer, episodeId, ct);
+        if (tempPath is null)
+        {
+            _logger.LogDebug("MultiHost: no se pudo descargar el MP4 (ep={EpisodeId}), omito replicación", episodeId);
+            return;
+        }
+
+        try
+        {
+            foreach (var host in pending)
             {
-                await ReplicateToHostAsync(host, episodeId, directUrl, ct);
+                if (ct.IsCancellationRequested) break;
+                try
+                {
+                    await LocalUploadToHostAsync(host, episodeId, tempPath, ct);
+                }
+                catch (TaskCanceledException) when (ct.IsCancellationRequested)
+                {
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "MultiHost: {Provider} falló (ep={EpisodeId})", host.Provider, episodeId);
+                }
             }
-            catch (TaskCanceledException) when (ct.IsCancellationRequested)
-            {
-                break;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogDebug(ex,
-                    "MultiHost: {Provider} replicación falló (ep={EpisodeId})", host.Provider, episodeId);
-            }
+        }
+        finally
+        {
+            TryDelete(tempPath);
         }
     }
 
-    private async Task ReplicateToHostAsync(HostConfig host, Guid episodeId, string directUrl, CancellationToken ct)
+    /// <summary>Descarga directUrl a un temp file (misma IP que lo resolvió → token válido).</summary>
+    private async Task<string?> DownloadToTempAsync(string directUrl, string? referer, Guid episodeId, CancellationToken ct)
     {
-        // Dedup: no re-subir si ya hay un mirror activo de este host para el episodio.
-        var already = await _db.Mirrors
-            .AsNoTracking()
-            .AnyAsync(m => m.EpisodeId == episodeId && m.ProviderName == host.Provider && m.IsActive, ct);
-        if (already)
+        var path = Path.Combine(Path.GetTempPath(), $"mh_{Guid.NewGuid():N}.mp4");
+        try
         {
-            _logger.LogDebug("MultiHost: {Provider} ya tiene mirror para ep={EpisodeId}, omito", host.Provider, episodeId);
+            // "seek-download" ya trae timeout de 90 min + User-Agent de browser.
+            var dl = _httpFactory.CreateClient("seek-download");
+            using var req = new HttpRequestMessage(HttpMethod.Get, directUrl);
+            if (!string.IsNullOrEmpty(referer))
+                req.Headers.TryAddWithoutValidation("Referer", referer);
+
+            using var resp = await dl.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
+            resp.EnsureSuccessStatusCode();
+
+            await using (var src = await resp.Content.ReadAsStreamAsync(ct))
+            await using (var dst = File.Create(path))
+            {
+                await src.CopyToAsync(dst, 1 << 20, ct);
+            }
+
+            var size = new FileInfo(path).Length;
+            if (size <= 0)
+            {
+                TryDelete(path);
+                return null;
+            }
+
+            _logger.LogDebug("MultiHost: descargado {Size} bytes a temp (ep={EpisodeId})", size, episodeId);
+            return path;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogDebug(ex, "MultiHost: descarga del MP4 falló (ep={EpisodeId})", episodeId);
+            TryDelete(path);
+            return null;
+        }
+    }
+
+    private async Task LocalUploadToHostAsync(HostConfig host, Guid episodeId, string filePath, CancellationToken ct)
+    {
+        var api = _httpFactory.CreateClient("multihost"); // timeout largo: el POST sube el archivo entero
+
+        // 1. Nodo de subida
+        using var serverResp = await api.GetAsync(
+            $"{host.ApiBase}/api/upload/server?key={Uri.EscapeDataString(host.ApiKey)}", ct);
+        if (!serverResp.IsSuccessStatusCode)
+        {
+            _logger.LogDebug("MultiHost: {Provider} upload/server HTTP {Status} (ep={EpisodeId})",
+                host.Provider, (int)serverResp.StatusCode, episodeId);
+            return;
+        }
+        var serverUrl = ReadServerUrl(await serverResp.Content.ReadAsStringAsync(ct));
+        if (string.IsNullOrWhiteSpace(serverUrl))
+        {
+            _logger.LogDebug("MultiHost: {Provider} sin URL de nodo (ep={EpisodeId})", host.Provider, episodeId);
             return;
         }
 
-        var client = _httpFactory.CreateClient("multihost");
-        var reqUrl =
-            $"{host.ApiBase}/api/upload/url?key={Uri.EscapeDataString(host.ApiKey)}&url={Uri.EscapeDataString(directUrl)}";
-
-        using var resp = await client.GetAsync(reqUrl, ct);
-        if (!resp.IsSuccessStatusCode)
+        // 2. POST del archivo (key como form field y en la query — cubre ambas convenciones)
+        using var form = new MultipartFormDataContent
         {
-            _logger.LogDebug("MultiHost: {Provider} remote-upload HTTP {Status} (ep={EpisodeId})",
-                host.Provider, (int)resp.StatusCode, episodeId);
+            { new StringContent(host.ApiKey), "api_key" },
+            { new StringContent(host.ApiKey), "key" },
+        };
+        await using var fs = File.OpenRead(filePath);
+        var fileContent = new StreamContent(fs);
+        fileContent.Headers.ContentType = new MediaTypeHeaderValue("video/mp4");
+        form.Add(fileContent, "file", "video.mp4");
+
+        var postUrl = serverUrl + (serverUrl.Contains('?') ? "&" : "?") + "key=" + Uri.EscapeDataString(host.ApiKey);
+        using var uploadResp = await api.PostAsync(postUrl, form, ct);
+        if (!uploadResp.IsSuccessStatusCode)
+        {
+            _logger.LogDebug("MultiHost: {Provider} POST file HTTP {Status} (ep={EpisodeId})",
+                host.Provider, (int)uploadResp.StatusCode, episodeId);
             return;
         }
 
-        var json = await resp.Content.ReadAsStringAsync(ct);
-        var filecode = ExtractFilecode(json);
+        var body = await uploadResp.Content.ReadAsStringAsync(ct);
+        var filecode = ParseFilecode(body);
         if (string.IsNullOrEmpty(filecode))
         {
             _logger.LogDebug("MultiHost: {Provider} sin filecode en la respuesta (ep={EpisodeId}): {Body}",
-                host.Provider, episodeId, json.Length > 200 ? json[..200] : json);
+                host.Provider, episodeId, body.Length > 200 ? body[..200] : body);
             return;
         }
 
@@ -156,51 +240,71 @@ public sealed class MultiHostUploadService
             Priority: 1), ct);
 
         _logger.LogInformation(
-            "✅ MultiHost: ep={EpisodeId} encolado en {Provider} (filecode={Filecode}, embed={Embed})",
+            "✅ MultiHost: ep={EpisodeId} subido a {Provider} (filecode={Filecode}, embed={Embed})",
             episodeId, host.Provider, filecode, embedUrl);
     }
 
-    /// <summary>
-    /// Extrae el filecode de la respuesta de remote upload, tolerante a las dos
-    /// formas: DoodStream {"result":{"filecode":"..."}} y Voe {"file_code":"..."}.
-    /// Busca filecode/file_code en result y en la raíz.
-    /// </summary>
-    private static string? ExtractFilecode(string json)
+    /// <summary>Lee la URL del nodo de subida de {"result":"https://..."}.</summary>
+    private static string? ReadServerUrl(string json)
     {
         try
         {
             using var doc = JsonDocument.Parse(json);
-            var root = doc.RootElement;
-
-            if (root.ValueKind == JsonValueKind.Object)
-            {
-                if (root.TryGetProperty("result", out var result))
-                {
-                    var fromResult = ReadFilecode(result);
-                    if (fromResult is not null) return fromResult;
-                }
-                var fromRoot = ReadFilecode(root);
-                if (fromRoot is not null) return fromRoot;
-            }
+            if (doc.RootElement.ValueKind == JsonValueKind.Object &&
+                doc.RootElement.TryGetProperty("result", out var r) &&
+                r.ValueKind == JsonValueKind.String)
+                return r.GetString();
         }
-        catch (JsonException)
-        {
-            /* respuesta no-JSON → sin filecode */
-        }
+        catch (JsonException) { /* no-JSON */ }
         return null;
     }
 
-    private static string? ReadFilecode(JsonElement el)
+    /// <summary>
+    /// Busca recursivamente el primer "filecode"/"file_code" en la respuesta —
+    /// tolerante a DoodStream ({"result":[{"filecode":...}]}) y Voe ({"file_code":...}).
+    /// </summary>
+    private static string? ParseFilecode(string json)
     {
-        if (el.ValueKind != JsonValueKind.Object) return null;
-        foreach (var key in (ReadOnlySpan<string>)["filecode", "file_code"])
+        try
         {
-            if (el.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.String)
-            {
-                var s = v.GetString();
-                if (!string.IsNullOrWhiteSpace(s)) return s;
-            }
+            using var doc = JsonDocument.Parse(json);
+            return FindFilecode(doc.RootElement);
         }
-        return null;
+        catch (JsonException) { return null; }
+    }
+
+    private static string? FindFilecode(JsonElement el)
+    {
+        switch (el.ValueKind)
+        {
+            case JsonValueKind.Object:
+                foreach (var p in el.EnumerateObject())
+                    if ((p.NameEquals("filecode") || p.NameEquals("file_code")) &&
+                        p.Value.ValueKind == JsonValueKind.String)
+                    {
+                        var s = p.Value.GetString();
+                        if (!string.IsNullOrWhiteSpace(s)) return s;
+                    }
+                foreach (var p in el.EnumerateObject())
+                {
+                    var r = FindFilecode(p.Value);
+                    if (r is not null) return r;
+                }
+                return null;
+            case JsonValueKind.Array:
+                foreach (var item in el.EnumerateArray())
+                {
+                    var r = FindFilecode(item);
+                    if (r is not null) return r;
+                }
+                return null;
+            default:
+                return null;
+        }
+    }
+
+    private static void TryDelete(string path)
+    {
+        try { File.Delete(path); } catch { /* best-effort */ }
     }
 }
