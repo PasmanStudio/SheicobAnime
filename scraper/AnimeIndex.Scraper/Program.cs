@@ -247,11 +247,11 @@ try
     {
         c.Timeout = TimeSpan.FromMinutes(90);
     });
-    // Multi-host remote-upload client (DoodStream / Voe) — la llamada solo ENCOLA
-    // el remote upload (ellos descargan server-side), así que un timeout corto basta.
+    // Multi-host upload client (DoodStream / Voe) — local upload: el POST sube el
+    // archivo entero, así que necesita timeout largo (igual que las subidas a Seek).
     builder.Services.AddHttpClient("multihost", c =>
     {
-        c.Timeout = TimeSpan.FromSeconds(60);
+        c.Timeout = TimeSpan.FromMinutes(90);
     });
     // RSS feed fetcher — reads anime news XML feeds
     builder.Services.AddHttpClient("news-rss", c =>
