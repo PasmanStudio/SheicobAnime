@@ -109,6 +109,10 @@ public sealed class MultiHostUploadService
         }
         if (pending.Count == 0) return;
 
+        // Nombre con sentido: "{slug}-{nº}.mp4" en vez de "video.mp4", para que en
+        // los paneles de DoodStream/Voe cada archivo referencie su episodio.
+        var fileName = await BuildFileNameAsync(episodeId, ct);
+
         var tempPath = await DownloadToTempAsync(directUrl, referer, episodeId, ct);
         if (tempPath is null)
         {
@@ -123,7 +127,7 @@ public sealed class MultiHostUploadService
                 if (ct.IsCancellationRequested) break;
                 try
                 {
-                    await LocalUploadToHostAsync(host, episodeId, tempPath, ct);
+                    await LocalUploadToHostAsync(host, episodeId, tempPath, fileName, ct);
                 }
                 catch (TaskCanceledException) when (ct.IsCancellationRequested)
                 {
@@ -139,6 +143,30 @@ public sealed class MultiHostUploadService
         {
             TryDelete(tempPath);
         }
+    }
+
+    /// <summary>
+    /// Arma "{slug}-{nº}.mp4" desde el episodio. Los slugs ya son URL-safe → válidos
+    /// como nombre de archivo. Fallback "video.mp4" si el episodio no se encuentra.
+    /// </summary>
+    private async Task<string> BuildFileNameAsync(Guid episodeId, CancellationToken ct)
+    {
+        try
+        {
+            var info = await _db.Episodes
+                .AsNoTracking()
+                .Where(e => e.Id == episodeId)
+                .Select(e => new { e.EpisodeNumber, Slug = e.Series.Slug })
+                .FirstOrDefaultAsync(ct);
+
+            if (info is not null && !string.IsNullOrWhiteSpace(info.Slug))
+                return $"{info.Slug}-{info.EpisodeNumber}.mp4";
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogDebug(ex, "MultiHost: no se pudo armar el nombre (ep={EpisodeId})", episodeId);
+        }
+        return "video.mp4";
     }
 
     /// <summary>Descarga directUrl a un temp file (misma IP que lo resolvió → token válido).</summary>
@@ -180,7 +208,7 @@ public sealed class MultiHostUploadService
         }
     }
 
-    private async Task LocalUploadToHostAsync(HostConfig host, Guid episodeId, string filePath, CancellationToken ct)
+    private async Task LocalUploadToHostAsync(HostConfig host, Guid episodeId, string filePath, string fileName, CancellationToken ct)
     {
         var api = _httpFactory.CreateClient("multihost"); // timeout largo: el POST sube el archivo entero
 
@@ -209,7 +237,7 @@ public sealed class MultiHostUploadService
         await using var fs = File.OpenRead(filePath);
         var fileContent = new StreamContent(fs);
         fileContent.Headers.ContentType = new MediaTypeHeaderValue("video/mp4");
-        form.Add(fileContent, "file", "video.mp4");
+        form.Add(fileContent, "file", fileName);
 
         var postUrl = serverUrl + (serverUrl.Contains('?') ? "&" : "?") + "key=" + Uri.EscapeDataString(host.ApiKey);
         using var uploadResp = await api.PostAsync(postUrl, form, ct);
