@@ -290,6 +290,7 @@ try
     builder.Services.AddScoped<JkAnimeHttpClient>();
     builder.Services.AddScoped<KatanimeHttpClient>();
     builder.Services.AddSingleton<SeekStreamingClient>();
+    builder.Services.AddSingleton<TusVideoUploader>();
     builder.Services.AddScoped<MultiHostUploadService>();
     builder.Services.AddScoped<SeekStreamingUploadService>();
 
