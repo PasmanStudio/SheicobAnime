@@ -32,6 +32,7 @@ public class ScrapeOrchestratorJob(
     DiscordPublisherService discordPublisher,
     TelegramPublisherService telegramPublisher,
     AnimeIndex.Scraper.Infrastructure.Notifications.WebPushPublisherService webPushPublisher,
+    SiteRevalidationService siteRevalidation,
     IServiceScopeFactory scopeFactory,
     IHostApplicationLifetime lifetime,
     ILogger<ScrapeOrchestratorJob> logger)
@@ -109,6 +110,17 @@ public class ScrapeOrchestratorJob(
                 catch (Exception npEx)
                 {
                     logger.LogError(npEx, "Notificaciones de episodio: error no crítico");
+                }
+
+                // Best-effort: purga el cache de contenido del frontend (Cloudflare KV)
+                // para que lo recién scrapeado aparezca al instante, sin esperar el TTL.
+                try
+                {
+                    await siteRevalidation.RevalidateAsync("content", ct);
+                }
+                catch (Exception rvEx)
+                {
+                    logger.LogError(rvEx, "Revalidación del sitio: error no crítico");
                 }
             }
             else
