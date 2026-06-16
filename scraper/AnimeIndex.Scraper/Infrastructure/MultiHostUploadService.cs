@@ -37,8 +37,8 @@ namespace AnimeIndex.Scraper.Infrastructure;
 ///   Doodstream:ApiBase  [DOODSTREAM__APIBASE]  — default https://doodapi.co
 ///   Doodstream:EmbedBase[DOODSTREAM__EMBEDBASE]— default https://dood.wf
 ///   Player4me:ApiKey    [PLAYER4ME__APIKEY]    — sin esto, player4me se omite (TUS)
-///   Player4me:ApiBase   [PLAYER4ME__APIBASE]   — default https://player4me.com
-///   Player4me:EmbedBase [PLAYER4ME__EMBEDBASE] — default https://player4me.com
+///   Player4me:ApiBase   [PLAYER4ME__APIBASE]   — default https://player4me.com (dashboard/API)
+///   Player4me:EmbedBase [PLAYER4ME__EMBEDBASE] — default https://player4me.online (player real; embed = {base}/#{id})
 /// </summary>
 public sealed class MultiHostUploadService
 {
@@ -93,7 +93,7 @@ public sealed class MultiHostUploadService
                 "player4me",
                 p4mKey,
                 config["Player4me:ApiBase"]?.TrimEnd('/') ?? "https://player4me.com",
-                config["Player4me:EmbedBase"]?.TrimEnd('/') ?? "https://player4me.com"));
+                config["Player4me:EmbedBase"]?.TrimEnd('/') ?? "https://player4me.online"));
 
         _hosts = hosts;
     }
@@ -222,7 +222,13 @@ public sealed class MultiHostUploadService
         }
     }
 
-    /// <summary>Subida TUS (player4me / Seek-compatible): sube el archivo y registra {embedBase}/e/{id}.</summary>
+    /// <summary>
+    /// Subida TUS (player4me / Seek-compatible): sube el archivo y registra el embed.
+    /// OJO — estos hosts NO embeben por <c>/e/{id}</c> (eso es la SPA del dashboard,
+    /// que devuelve 404). El reproductor real vive en el dominio de player y lee el
+    /// id del fragmento hash: <c>{embedBase}/#{id}</c> (igual que SeekStreaming, que
+    /// usa <c>https://sheicobanime.seekplayer.me/#{id}</c>).
+    /// </summary>
     private async Task TusUploadToHostAsync(HostConfig host, Guid episodeId, string filePath, string fileName, CancellationToken ct)
     {
         var id = await _tus.UploadFileAsync(host.ApiBase, host.ApiKey, filePath, fileName, pollTimeoutMinutes: 12, ct);
@@ -232,7 +238,7 @@ public sealed class MultiHostUploadService
             return;
         }
 
-        var embedUrl = $"{host.EmbedBase}/e/{id}";
+        var embedUrl = $"{host.EmbedBase}/#{id}";
         await _upsert.UpsertMirrorAsync(new MirrorScrapedData(
             EpisodeId: episodeId,
             ProviderName: host.Provider,

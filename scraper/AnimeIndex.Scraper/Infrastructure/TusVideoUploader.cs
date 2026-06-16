@@ -13,7 +13,8 @@ namespace AnimeIndex.Scraper.Infrastructure;
 ///   POST tusUrl                        → 201 + Location (slot)
 ///   PATCH Location en chunks de 50 MB  → 204
 ///   GET  {base}/api/v1/video/manage    → busca por nombre, espera status=="Active"
-/// Devuelve el id del video (el embed se arma como {embedBase}/e/{id}) o null.
+/// Devuelve el id del video (el embed lo arma el caller como {embedBase}/#{id} —
+/// el reproductor lee el id del fragmento hash; /e/{id} es la SPA del dashboard, da 404) o null.
 /// Best-effort: nunca lanza salvo cancelación.
 /// </summary>
 public sealed class TusVideoUploader
