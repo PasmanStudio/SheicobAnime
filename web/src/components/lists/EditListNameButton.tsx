@@ -103,7 +103,7 @@ export default function EditListNameButton({ listId, initialName, initialDescrip
         className="bg-abyss-3 border border-line-2 rounded-lg px-3 py-1.5 text-xs text-ink-2 placeholder-[var(--text-3)] outline-none focus:border-brand transition-colors"
         disabled={loading}
       />
-      {error && <p className="text-xs text-red-400">{error}</p>}
+      {error && <p className="text-xs text-danger">{error}</p>}
     </form>
   );
 }

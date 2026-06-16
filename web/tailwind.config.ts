@@ -19,6 +19,24 @@ const config: Config = {
         line: { 1: "var(--border-1)", 2: "var(--border-2)" },
         ink: { 1: "var(--text-1)", 2: "var(--text-2)", 3: "var(--text-3)" },
         brand: { DEFAULT: "var(--cyan-500)", bright: "var(--cyan-300)" },
+        // Semantic tokens — single source of truth for success/error/warning.
+        // `soft` = translucent fill, `line` = translucent border (var() colors can't
+        // take Tailwind's /opacity modifier, so the translucent shades are their own vars).
+        danger: {
+          DEFAULT: "var(--danger)",
+          soft: "var(--danger-soft)",
+          line: "var(--danger-line)",
+        },
+        success: {
+          DEFAULT: "var(--success)",
+          soft: "var(--success-soft)",
+          line: "var(--success-line)",
+        },
+        warning: {
+          DEFAULT: "var(--warning)",
+          soft: "var(--warning-soft)",
+          line: "var(--warning-line)",
+        },
         tier: {
           s: "var(--tier-s)",
           a: "var(--tier-a)",

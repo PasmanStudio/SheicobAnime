@@ -6,6 +6,7 @@ import {
 import type { Series } from "@/lib/types";
 import Image from "next/image";
 import Link from "next/link";
+import ScoreBadge from "./ScoreBadge";
 
 interface SeasonCardProps {
   media: AniListMedia;
@@ -51,21 +52,17 @@ export default function SeasonCard({ media, match }: SeasonCardProps) {
           </span>
         </div>
 
-        {/* Score */}
-        {score && (
-          <span className={`absolute top-1.5 right-1.5 bg-black/75 text-xs font-bold px-1.5 py-0.5 rounded ${
-            parseFloat(score) >= 8 ? "text-green-400" :
-            parseFloat(score) >= 6 ? "text-amber-400" :
-                                     "text-ink-2"
-          }`}>
-            ★ {score}
-          </span>
-        )}
+        {/* Score — vía ScoreBadge para un único umbral (8/6) en todo el sitio */}
+        <ScoreBadge
+          score={score ? parseFloat(score) : null}
+          overlay
+          className="absolute top-1.5 right-1.5"
+        />
 
         {/* Availability badge — bottom overlay */}
         <div className="absolute bottom-0 left-0 right-0">
           {isAvailable ? (
-            <div className="bg-green-600/90 text-white text-[10px] font-bold px-2 py-1 text-center">
+            <div className="bg-success text-abyss-0 text-[10px] font-bold px-2 py-1 text-center">
               ✓ Disponible
             </div>
           ) : (

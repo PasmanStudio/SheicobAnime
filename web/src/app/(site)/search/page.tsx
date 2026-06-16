@@ -5,6 +5,7 @@ export const dynamic = "force-dynamic";
 import SeriesCard from "@/components/ui/SeriesCard";
 import Pagination from "@/components/ui/Pagination";
 import AdSlot from "@/components/ads/AdSlot";
+import EmptyState from "@/components/ui/EmptyState";
 
 interface Props {
   searchParams: Promise<{ q?: string; page?: string }>;
@@ -58,10 +59,11 @@ export default async function SearchPage({ searchParams }: Props) {
       </div>
 
       {results.data.length === 0 ? (
-        <div className="py-8 text-center text-sm">
-          <p className="text-ink-2">No encontramos nada con &ldquo;{q}&rdquo;.</p>
-          <p className="mt-1 text-ink-3">Probá con otro término o con el título en romaji.</p>
-        </div>
+        <EmptyState
+          title={`Sin resultados para “${q}”`}
+          description="Probá con otro término o con el título en romaji."
+          cta={{ href: "/directory", label: "Explorar el directorio" }}
+        />
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
           {results.data.map((s) => (

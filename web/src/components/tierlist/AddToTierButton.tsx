@@ -91,7 +91,7 @@ export default function AddToTierButton({ seriesSlug, seriesTitle, coverUrl }: P
       <button
         onClick={handleOpen}
         className={`flex items-center gap-1.5 px-3 py-2 rounded-lg border text-sm font-medium transition-colors hover:bg-abyss-3
-          ${addedCount > 0 ? "border-amber-600/60 text-amber-300" : "border-line-2 text-ink-2"}`}
+          ${addedCount > 0 ? "border-warning-line text-warning" : "border-line-2 text-ink-2"}`}
         aria-haspopup="listbox"
         aria-expanded={open}
       >
@@ -166,7 +166,7 @@ export default function AddToTierButton({ seriesSlug, seriesTitle, coverUrl }: P
                       {currentTier && (
                         <button
                           onClick={() => handleSelectTier(list.id, currentTier)}
-                          className="ml-auto text-[10px] text-ink-3 hover:text-red-400 transition-colors"
+                          className="ml-auto text-[10px] text-ink-3 hover:text-danger transition-colors"
                         >
                           Quitar
                         </button>

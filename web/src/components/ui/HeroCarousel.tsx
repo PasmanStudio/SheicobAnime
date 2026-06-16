@@ -14,6 +14,8 @@ interface HeroCarouselProps {
 
 export default function HeroCarousel({ series }: HeroCarouselProps) {
   const [current, setCurrent] = useState(0);
+  const [paused, setPaused] = useState(false);
+  const [reduceMotion, setReduceMotion] = useState(false);
   const items = series.slice(0, 10);
 
   const next = useCallback(() => {
@@ -24,19 +26,37 @@ export default function HeroCarousel({ series }: HeroCarouselProps) {
     setCurrent((prev) => (prev - 1 + items.length) % items.length);
   }, [items.length]);
 
-  // Auto-advance every 6 seconds
+  // Respetar prefers-reduced-motion para el auto-avance
   useEffect(() => {
-    if (items.length <= 1) return;
+    const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
+    setReduceMotion(mq.matches);
+    const onChange = (e: MediaQueryListEvent) => setReduceMotion(e.matches);
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, []);
+
+  // Auto-advance every 6 seconds — pausado en hover/foco y con reduced-motion
+  useEffect(() => {
+    if (items.length <= 1 || paused || reduceMotion) return;
     const interval = setInterval(next, 6000);
     return () => clearInterval(interval);
-  }, [next, items.length]);
+  }, [next, items.length, paused, reduceMotion]);
 
   if (items.length === 0) return null;
 
   const item = items[current];
 
   return (
-    <div className="relative w-full h-[300px] sm:h-[400px] md:h-[480px] overflow-hidden rounded-modal border border-line-1 bg-abyss-1">
+    <div
+      className="relative w-full h-[300px] sm:h-[400px] md:h-[480px] overflow-hidden rounded-modal border border-line-1 bg-abyss-1"
+      role="region"
+      aria-roledescription="carrusel"
+      aria-label="Series destacadas"
+      onMouseEnter={() => setPaused(true)}
+      onMouseLeave={() => setPaused(false)}
+      onFocus={() => setPaused(true)}
+      onBlur={() => setPaused(false)}
+    >
       {/* Background image */}
       <div className="absolute inset-0">
         {(item.bannerUrl ?? item.coverUrl) ? (

@@ -61,8 +61,8 @@ export default function MarkWatchedButton({
       disabled={loading}
       className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm font-medium transition-colors disabled:opacity-60
         ${watched
-          ? "text-green-400 border-green-700/50 hover:border-red-700/50 hover:text-red-400"
-          : "text-ink-2 border-line-2 hover:text-green-400 hover:border-green-700/50"
+          ? "text-success border-success-line hover:border-danger-line hover:text-danger"
+          : "text-ink-2 border-line-2 hover:text-success hover:border-success-line"
         }`}
       title={watched ? "Quitar de historial" : "Marcar como visto"}
     >

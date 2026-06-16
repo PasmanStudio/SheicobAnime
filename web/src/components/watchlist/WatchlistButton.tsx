@@ -128,7 +128,7 @@ export default function WatchlistButton({ seriesSlug, seriesTitle, coverUrl }: P
               <div className="border-t border-line-1" />
               <button
                 onClick={() => handleSelect(null)}
-                className="w-full flex items-center gap-2 px-3 py-2.5 text-sm text-ink-3 hover:text-red-400 hover:bg-abyss-3 transition-colors"
+                className="w-full flex items-center gap-2 px-3 py-2.5 text-sm text-ink-3 hover:text-danger hover:bg-abyss-3 transition-colors"
               >
                 <span className="w-4 text-center">✕</span>
                 Quitar de lista

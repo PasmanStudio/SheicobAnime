@@ -40,7 +40,7 @@ export default function TogglePublicButton({ listId, initialIsPublic }: Props) {
       title={isPublic ? "Hacer privada" : "Hacer pública"}
       className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors disabled:opacity-60
         ${isPublic
-          ? "border-green-700/60 bg-green-900/20 text-green-400 hover:bg-green-900/40"
+          ? "border-success-line bg-success-soft text-success hover:bg-success-line"
           : "border-line-2 bg-abyss-3 text-ink-2 hover:text-ink-1 hover:bg-abyss-3"
         }`}
     >

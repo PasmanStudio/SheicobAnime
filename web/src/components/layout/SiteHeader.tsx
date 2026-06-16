@@ -20,7 +20,7 @@ export default function SiteHeader() {
             width={180}
             height={40}
             priority
-            className="h-8 sm:h-9 w-auto max-w-[110px] sm:max-w-[160px] lg:max-w-none"
+            className="h-12 sm:h-14 w-auto max-w-[180px] sm:max-w-[280px] lg:max-w-none"
             style={{ mixBlendMode: "screen" }}
           />
         </Link>
