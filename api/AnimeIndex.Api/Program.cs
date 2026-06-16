@@ -8,7 +8,6 @@ using AnimeIndex.Api.Endpoints;
 using AnimeIndex.Api.Infrastructure;
 using AnimeIndex.Api.Infrastructure.Auth;
 using AnimeIndex.Api.Infrastructure.Cache;
-using AnimeIndex.Api.Infrastructure.Resolvers;
 using AnimeIndex.Api.Infrastructure.Scraping;
 using AnimeIndex.Api.Validators;
 using FluentValidation;
@@ -214,51 +213,16 @@ try
     });
     builder.Services.AddScoped<MirrorProbeService>();
 
-    // ─── VAST proxy client ─────────────────────────────────
-    builder.Services.AddHttpClient("vast", c =>
-    {
-        c.Timeout = TimeSpan.FromSeconds(10);
-    });
-
-    // ─── Resolvers (Phase 20) ─────────────────────────────
+    // ─── In-memory cache (L1 for the two-tier RedisCacheService) ──
     builder.Services.AddMemoryCache();
-    builder.Services.AddHttpClient("resolver", c =>
-    {
-        c.Timeout = TimeSpan.FromSeconds(15);
-    })
-    .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
-    {
-        // Higher connection pool for concurrent proxy streaming (default is 2 per host).
-        MaxConnectionsPerServer = 64,
-        // Keep TCP connections alive between segment requests.
-        PooledConnectionIdleTimeout = TimeSpan.FromMinutes(2),
-        EnableMultipleHttp2Connections = true,
-    });
-    builder.Services.AddSingleton<IHosterResolver, Mp4UploadResolver>();
-    builder.Services.AddSingleton<IHosterResolver, VidhideResolver>();
-    builder.Services.AddSingleton<IHosterResolver, OkruResolver>();
-    builder.Services.AddSingleton<IHosterResolver, StreamwishResolver>();
-    builder.Services.AddSingleton<IHosterResolver, VoeResolver>();
-    builder.Services.AddSingleton<IHosterResolver, MixdropResolver>();
-    builder.Services.AddSingleton<IHosterResolver, MediafireResolver>();
-    builder.Services.AddSingleton<IHosterResolver, StreamtapeResolver>();
-    builder.Services.AddSingleton<ResolverRegistry>();
-
-    // ─── Streaming proxy (signed HMAC) ──────────────────
-    builder.Services.AddSingleton<AnimeIndex.Api.Infrastructure.Proxy.ProxyUrlSigner>();
 
     var app = builder.Build();
 
     // ─── Forwarded Headers (Railway / Cloudflare reverse proxy) ──
     // Railway terminates TLS at its edge and forwards requests to the container
-    // over plain HTTP. Without this, HttpContext.Request.Scheme is "http" and
-    // proxy URLs returned by /mirrors/{id}/resolve have an http:// base, causing
-    // Mixed Content errors in the browser.
-    // ─── Forwarded Headers (Railway / Cloudflare reverse proxy) ──
-    // Railway terminates TLS at its edge and forwards requests to the container
-    // over plain HTTP. Without this, HttpContext.Request.Scheme is "http" and
-    // proxy URLs returned by /mirrors/{id}/resolve have an http:// base, causing
-    // Mixed Content errors in the browser.
+    // over plain HTTP. Without this, HttpContext.Request.Scheme is "http" and any
+    // absolute URL the API builds from the request (canonical links, redirects)
+    // gets an http:// base, causing Mixed Content errors in the browser.
     {
         var fhOpts = new ForwardedHeadersOptions
         {
@@ -341,8 +305,6 @@ try
     app.MapMirrorEndpoints();
     app.MapProgressEndpoints();
     app.MapAdminEndpoints();
-    app.MapProxyEndpoints();
-    app.MapVastProxyEndpoints();
 
     // ─── DB seeding ────────────────────────────────────────
     if (app.Environment.IsDevelopment())

@@ -7,8 +7,6 @@ import type {
     PaginatedResponse,
     PendingSeries,
   RecentProgress,
-    ResolvableMirror,
-    ResolvedSource,
     SearchQueryParams,
     Series,
     SeriesQueryParams,
@@ -207,14 +205,6 @@ export async function getRecentEpisodes(
   );
 }
 
-export async function getEpisodeMirrors(id: string): Promise<Mirror[]> {
-  // Mirrors are stable once uploaded — cache aggressively.
-  return request<Mirror[]>(
-    `/episodes/${encodeURIComponent(id)}/mirrors`,
-    { next: { revalidate: 3600 } }
-  );
-}
-
 export async function getEpisodeMirrorsBySlug(slug: string, episodeNumber: number): Promise<Mirror[]> {
   // Mirrors are stable once uploaded — cache aggressively.
   return request<Mirror[]>(
@@ -233,30 +223,6 @@ export async function reportMirrorFailure(id: string): Promise<void> {
 
 export async function getGenres(): Promise<Genre[]> {
   return request<Genre[]>("/genres", { next: { revalidate: 3600 } });
-}
-
-// ─── Resolver (Sheicob) ──────────────────────────────
-
-/**
- * Asks the API to extract the actual video URL (m3u8/mp4) for a mirror.
- * Returns 501 if hoster is unsupported, 503 if extraction failed, 410 if blocked.
- */
-export async function resolveMirror(mirrorId: string): Promise<ResolvedSource> {
-  return request<ResolvedSource>(`/mirrors/${encodeURIComponent(mirrorId)}/resolve`, {
-    method: "POST",
-    cache: "no-store", // resolved URLs are short-lived — never cache
-  });
-}
-
-/**
- * Returns the list of mirrors for an episode with `resolvable=true` for those whose
- * hoster is supported by the resolver registry — used to render Sheicob-branded buttons.
- */
-export async function getResolvableSet(episodeId: string): Promise<ResolvableMirror[]> {
-  return request<ResolvableMirror[]>(
-    `/mirrors/${encodeURIComponent(episodeId)}/resolvable-set`,
-    { next: { revalidate: 3600 } }
-  );
 }
 
 // ─── Watch progress (user-specific — never cache) ────
