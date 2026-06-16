@@ -90,7 +90,12 @@ export default function DirectEpisodePlayer({ mirrors, episodeTitle }: Readonly<
           className="w-full h-full border-0 block"
           allowFullScreen
           allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
-          referrerPolicy="no-referrer"
+          // "origin" (no "no-referrer"): los hosts Seek-compatibles (player4me)
+          // identifican el sitio leyendo document.referrer para autorizar la
+          // reproducción y atribuir los ads. Con no-referrer el player no reconoce
+          // el dominio ("player is not recognized"). Mandamos solo el origin, no la
+          // URL completa. SeekStreaming se reconoce por subdominio, no se ve afectado.
+          referrerPolicy="origin"
         />
       </div>
 
