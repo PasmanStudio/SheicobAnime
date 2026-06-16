@@ -106,3 +106,10 @@ jobs:
           WebPush__PrivateKey: ${{ secrets.VAPID_PRIVATE_KEY }}
           WebPush__Subject:    "https://sheicobanime.sheicob.workers.dev"
           WebPush__SiteUrl:    "https://sheicobanime.sheicob.workers.dev"
+          # ── Revalidación on-demand del frontend ──
+          # Al terminar el scrape, pega a {SiteUrl}/api/revalidate para purgar el
+          # cache KV de contenido (series/episodios/mirrors nuevos al instante).
+          # El secret DEBE coincidir con REVALIDATE_SECRET seteado en el worker
+          # (wrangler secret put REVALIDATE_SECRET). Sin el secret, es no-op (queda TTL 60s).
+          Revalidate__SiteUrl: "https://sheicobanime.sheicob.workers.dev"
+          Revalidate__Secret:  ${{ secrets.REVALIDATE_SECRET }}

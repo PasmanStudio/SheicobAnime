@@ -272,6 +272,9 @@ try
 
     builder.Services.AddScoped<AnimeIndex.Scraper.Infrastructure.Notifications.WebPushPublisherService>();
 
+    // Revalidación on-demand del frontend (purga el cache KV al terminar el scrape)
+    builder.Services.AddScoped<AnimeIndex.Scraper.Infrastructure.SiteRevalidationService>();
+
     // ─── Instagram publishing services ────────────────────
     builder.Services.AddScoped<MetaGraphApiClient>();
     builder.Services.AddScoped<InstagramImageService>();

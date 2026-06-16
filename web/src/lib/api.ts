@@ -25,6 +25,18 @@ const API_BASE_URL =
 // gracia (el ISR sirve la última copia buena; ver open-next.config.ts).
 const FETCH_TIMEOUT_MS = 12_000;
 
+// Cache de CONTENIDO que cambia con cada scrape (series/episodios/mirrors).
+// - `revalidate: 60` → piso de frescura: contenido nuevo visible en ≤1 min.
+//   (En Next, el revalidate más bajo entre página y sus fetches manda, así que
+//   esto baja la regeneración de toda la ruta a 60s sin tocar cada page.tsx.)
+// - `tags: ["content"]` → revalidación ON-DEMAND: el scraper pega a /api/revalidate
+//   al terminar un run y purga este tag → contenido nuevo al instante. Requiere el
+//   tag cache KV (NEXT_TAG_CACHE_KV en wrangler.jsonc + open-next.config.ts). Sin
+//   ese binding el tag es no-op y queda solo el TTL de 60s. Degrada con gracia.
+const CONTENT_CACHE: { next: NextFetchRequestConfig } = {
+  next: { revalidate: 60, tags: ["content"] },
+};
+
 // ─── Error class ─────────────────────────────────────
 
 export class ApiError extends Error {
@@ -142,7 +154,7 @@ export async function getSeries(
 ): Promise<PaginatedResponse<Series>> {
   return request<PaginatedResponse<Series>>(
     `/series${toQueryString({ ...params })}`,
-    { next: { revalidate: 300 } }
+    CONTENT_CACHE
   );
 }
 
@@ -167,7 +179,7 @@ export async function suggestSeries(q: string): Promise<SeriesSuggest[]> {
 export async function getSeriesBySlug(slug: string): Promise<Series> {
   return request<Series>(
     `/series/${encodeURIComponent(slug)}`,
-    { next: { revalidate: 300 } }
+    CONTENT_CACHE
   );
 }
 
@@ -177,39 +189,40 @@ export async function getSeriesEpisodes(
 ): Promise<PaginatedResponse<Episode>> {
   return request<PaginatedResponse<Episode>>(
     `/series/${encodeURIComponent(slug)}/episodes${toQueryString({ ...params })}`,
-    { next: { revalidate: 300 } }
+    CONTENT_CACHE
   );
 }
 
 export async function getEpisode(id: string): Promise<Episode> {
   return request<Episode>(
     `/episodes/${encodeURIComponent(id)}`,
-    { next: { revalidate: 300 } }
+    CONTENT_CACHE
   );
 }
 
 export async function getEpisodeBySlug(slug: string, episodeNumber: number): Promise<Episode> {
   return request<Episode>(
     `/series/${encodeURIComponent(slug)}/episodes/${episodeNumber}`,
-    { next: { revalidate: 300 } }
+    CONTENT_CACHE
   );
 }
 
 export async function getRecentEpisodes(
   params: { days?: number; pageSize?: number } = {}
 ): Promise<Episode[]> {
-  // Recent episodes change often — short TTL so the homepage stays fresh.
+  // Recent episodes change often — short TTL + tag para refresco on-demand del home.
   return request<Episode[]>(
     `/episodes/recent${toQueryString({ ...params })}`,
-    { next: { revalidate: 120 } }
+    CONTENT_CACHE
   );
 }
 
 export async function getEpisodeMirrorsBySlug(slug: string, episodeNumber: number): Promise<Mirror[]> {
-  // Mirrors are stable once uploaded — cache aggressively.
+  // Los mirrors cambian cuando el scraper sube a hosts nuevos (player4me, etc.) —
+  // por eso NO se cachean 1h: TTL 60s + tag "content" para refresco on-demand.
   return request<Mirror[]>(
     `/series/${encodeURIComponent(slug)}/episodes/${episodeNumber}/mirrors`,
-    { next: { revalidate: 3600 } }
+    CONTENT_CACHE
   );
 }
 

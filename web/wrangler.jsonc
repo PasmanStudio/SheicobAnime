@@ -13,8 +13,13 @@
   // Incremental cache de OpenNext (ISR): las páginas cacheadas se guardan acá
   // y se sirven desde el edge. Render solo se toca en cache miss (cada N seg),
   // no por request → el sitio vuela y deja de depender de que Render esté tibio.
+  // NEXT_TAG_CACHE_KV: tag cache de OpenNext para revalidación on-demand
+  // (revalidateTag desde /api/revalidate). Apunta al MISMO namespace que el
+  // incremental cache — OpenNext prefija las keys por build-id + tipo, no colisionan.
+  // No requiere D1 ni crear un namespace nuevo: deploya con el `cf:deploy` normal.
   "kv_namespaces": [
-    { "binding": "NEXT_INC_CACHE_KV", "id": "04a3953b73b94c67abdc0dd9c4cb87b1" }
+    { "binding": "NEXT_INC_CACHE_KV", "id": "04a3953b73b94c67abdc0dd9c4cb87b1" },
+    { "binding": "NEXT_TAG_CACHE_KV", "id": "04a3953b73b94c67abdc0dd9c4cb87b1" }
   ],
   "observability": {
     "enabled": true
