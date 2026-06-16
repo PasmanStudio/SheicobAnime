@@ -76,42 +76,6 @@ export interface Genre {
   name: string;
 }
 
-// ─── Resolver (Sheicob branding) ─────────────────────
-
-export type SourceFormat = "hls" | "mp4" | "dash";
-
-export interface SubtitleTrack {
-  url: string;
-  language: string;
-  label: string | null;
-  isDefault: boolean;
-}
-
-export interface QualityVariant {
-  url: string;
-  height: number;
-  label: string;
-}
-
-export interface ResolvedSource {
-  url: string;
-  format: SourceFormat;
-  headers: Record<string, string>;
-  subtitles: SubtitleTrack[];
-  qualities: QualityVariant[];
-  expiresAt: string | null;
-  proxyRequired: boolean;
-  hoster: string;
-}
-
-export interface ResolvableMirror {
-  mirrorId: string;
-  providerName: string;
-  qualityLabel: number;
-  priority: number;
-  resolvable: boolean;
-}
-
 // ─── Watch progress ──────────────────────────────────
 
 export interface WatchProgress {
