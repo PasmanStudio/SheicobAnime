@@ -34,7 +34,7 @@ export default function UserButton() {
       <>
         <button
           onClick={() => setShowModal(true)}
-          className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-brand text-[var(--text-on-accent)] hover:brightness-110 text-sm font-medium transition-colors"
+          className="flex items-center gap-2 px-3 py-1.5 rounded-btn bg-brand text-[var(--text-on-accent)] hover:brightness-110 text-sm font-medium transition-colors"
         >
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
@@ -74,7 +74,7 @@ export default function UserButton() {
       </button>
 
       {dropdownOpen && (
-        <div className="absolute right-0 top-full mt-2 w-52 rounded-xl bg-abyss-2 border border-line-2 shadow-2xl overflow-hidden z-50">
+        <div className="absolute right-0 top-full mt-2 w-52 rounded-card bg-abyss-2 border border-line-2 shadow-2xl overflow-hidden z-50">
           {/* User info */}
           <div className="px-4 py-3 border-b border-line-1">
             <p className="text-sm font-semibold text-white truncate">{displayName}</p>
@@ -144,7 +144,7 @@ export default function UserButton() {
                 setDropdownOpen(false);
                 signOut({ callbackUrl: "/" });
               }}
-              className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-ink-2 hover:text-red-400 hover:bg-abyss-3 transition-colors"
+              className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-ink-2 hover:text-danger hover:bg-abyss-3 transition-colors"
             >
               <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15m3 0l3-3m0 0l-3-3m3 3H9" />

@@ -36,7 +36,7 @@ export default function ShareButtons({ listId, listName }: Props) {
         href={`https://wa.me/?text=${encodeURIComponent(`${text}\n${url}`)}`}
         target="_blank"
         rel="noopener noreferrer"
-        className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-green-700/20 hover:bg-green-700/40 text-green-400 text-xs font-medium transition-colors"
+        className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-success-soft hover:bg-success-line text-success text-xs font-medium transition-colors"
         title="Compartir en WhatsApp"
       >
         <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor">
@@ -68,10 +68,10 @@ export default function ShareButtons({ listId, listName }: Props) {
       >
         {copied ? (
           <>
-            <svg className="w-3.5 h-3.5 text-green-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}>
+            <svg className="w-3.5 h-3.5 text-success" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
             </svg>
-            <span className="text-green-400">Copiado</span>
+            <span className="text-success">Copiado</span>
           </>
         ) : (
           <>

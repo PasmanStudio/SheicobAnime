@@ -39,7 +39,7 @@ export default function DeleteTierListButton({ tierListId, tierListName }: Props
           setOpen(true);
         }}
         title="Borrar tier list"
-        className="absolute top-2 right-2 z-10 p-1.5 rounded-md bg-abyss-2 text-ink-3 hover:text-red-400 hover:bg-abyss-3 transition-colors opacity-0 group-hover:opacity-100 focus:opacity-100"
+        className="absolute top-2 right-2 z-10 p-1.5 rounded-md bg-abyss-2 text-ink-3 hover:text-danger hover:bg-abyss-3 transition-colors opacity-0 group-hover:opacity-100 focus:opacity-100"
         aria-label="Borrar tier list"
       >
         <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
@@ -66,7 +66,7 @@ export default function DeleteTierListButton({ tierListId, tierListName }: Props
             </p>
             <p className="text-xs text-ink-3 mb-5">Esta acción no se puede deshacer.</p>
 
-            {error && <p className="text-sm text-red-400 mb-4">{error}</p>}
+            {error && <p className="text-sm text-danger mb-4">{error}</p>}
 
             <div className="flex gap-3">
               <button
@@ -79,7 +79,7 @@ export default function DeleteTierListButton({ tierListId, tierListName }: Props
               <button
                 onClick={handleDelete}
                 disabled={loading}
-                className="flex-1 px-4 py-2 rounded-xl bg-red-600 hover:bg-red-500 text-white font-semibold text-sm transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                className="flex-1 px-4 py-2 rounded-xl bg-danger hover:brightness-110 text-white font-semibold text-sm transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
               >
                 {loading ? (
                   <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>

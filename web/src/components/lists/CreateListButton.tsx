@@ -73,7 +73,7 @@ export default function CreateListButton() {
         disabled={loading}
       />
       {error && (
-        <span className="text-xs text-red-400 shrink-0">{error}</span>
+        <span className="text-xs text-danger shrink-0">{error}</span>
       )}
       <button
         type="submit"

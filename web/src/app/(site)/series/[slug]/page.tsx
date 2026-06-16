@@ -7,6 +7,7 @@ import GenreChip from "@/components/ui/GenreChip";
 import Pagination from "@/components/ui/Pagination";
 import ScoreBadge from "@/components/ui/ScoreBadge";
 import SectionHeader from "@/components/ui/SectionHeader";
+import EmptyState from "@/components/ui/EmptyState";
 import StatusBadge from "@/components/ui/StatusBadge";
 import WatchlistButton from "@/components/watchlist/WatchlistButton";
 import { ApiError, getSeriesBySlug, getSeriesEpisodes } from "@/lib/api";
@@ -241,10 +242,11 @@ export default async function SeriesPage({ params, searchParams }: Props) {
           />
 
           {episodesPage.data.length === 0 ? (
-            <div className="text-sm text-ink-3">
-              <p>Todavía no hay episodios disponibles.</p>
-              <p className="mt-1">Sumala a tu lista y te va a aparecer apenas salga.</p>
-            </div>
+            <EmptyState
+              title="Todavía no hay episodios"
+              description="Sumala a tu lista y te va a aparecer apenas salga el primero."
+              cta={{ href: "/temporada", label: "Ver la temporada" }}
+            />
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
               {episodesPage.data.map((ep) => (

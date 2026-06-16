@@ -72,7 +72,7 @@ export default function CreateTierListButton() {
         className="bg-transparent text-sm text-white placeholder-[var(--text-3)] outline-none flex-1 min-w-0"
         disabled={loading}
       />
-      {error && <span className="text-xs text-red-400 shrink-0">{error}</span>}
+      {error && <span className="text-xs text-danger shrink-0">{error}</span>}
       <button
         type="submit"
         disabled={loading || !name.trim()}

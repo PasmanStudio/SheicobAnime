@@ -43,6 +43,10 @@ export default async function DirectoryPage({ searchParams }: Props) {
   if (sp.year) params.year = parseInt(sp.year, 10);
   if (sp.letter) params.letter = sp.letter;
 
+  const hasFilters = Boolean(
+    sp.genre || sp.letter || sp.type || sp.status || sp.year || (sp.sort && sp.sort !== "updated")
+  );
+
   let results;
   try {
     results = await getSeries(params);
@@ -66,7 +70,7 @@ export default async function DirectoryPage({ searchParams }: Props) {
       <InactivityAdTrigger />
       <div className="flex flex-col gap-1">
         <span className="sh-label">
-          {results.total.toLocaleString("es-AR")} anime en el catálogo
+          {results.total.toLocaleString("es-AR")} {hasFilters ? "resultados" : "anime en el catálogo"}
         </span>
         <span className="sh-section-header items-center">
           <span className="sh-cut" />

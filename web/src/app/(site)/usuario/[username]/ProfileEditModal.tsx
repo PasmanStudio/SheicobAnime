@@ -110,7 +110,7 @@ export default function ProfileEditModal({ currentName, currentUsername, current
 
               {/* Error */}
               {error && (
-                <p className="text-sm text-red-400 bg-red-950/40 rounded-lg px-3 py-2">
+                <p className="text-sm text-danger bg-danger-soft rounded-lg px-3 py-2">
                   {error}
                 </p>
               )}

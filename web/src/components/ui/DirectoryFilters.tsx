@@ -68,10 +68,26 @@ export default function DirectoryFilters({ currentFilters }: DirectoryFiltersPro
     [router, searchParams]
   );
 
+  // Resumen de filtros activos (sort "updated" es el default → no genera chip)
+  const activeChips: { key: string; label: string }[] = [];
+  if (currentFilters.sort && currentFilters.sort !== "updated") {
+    const l = SORT_OPTIONS.find((o) => o.value === currentFilters.sort)?.label;
+    if (l) activeChips.push({ key: "sort", label: l });
+  }
+  if (currentFilters.genre) activeChips.push({ key: "genre", label: currentFilters.genre });
+  if (currentFilters.type) {
+    activeChips.push({ key: "type", label: TYPES.find((t) => t.value === currentFilters.type)?.label ?? currentFilters.type });
+  }
+  if (currentFilters.status) {
+    activeChips.push({ key: "status", label: STATUSES.find((s) => s.value === currentFilters.status)?.label ?? currentFilters.status });
+  }
+  if (currentFilters.year) activeChips.push({ key: "year", label: currentFilters.year });
+  if (currentFilters.letter) activeChips.push({ key: "letter", label: `Letra ${currentFilters.letter}` });
+
   return (
     <div className="space-y-4">
       {/* Filter selects grid */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3">
         {/* Sort */}
         <select
           value={currentFilters.sort ?? "updated"}
@@ -132,15 +148,34 @@ export default function DirectoryFilters({ currentFilters }: DirectoryFiltersPro
           ))}
         </select>
 
-        {/* Clear button */}
-        <button
-          type="button"
-          onClick={() => router.push("/directory")}
-          className="bg-abyss-3 border border-line-2 hover:brightness-110 text-ink-1 text-sm font-semibold rounded-btn px-3 py-2 transition-all duration-fast"
-        >
-          Limpiar filtros
-        </button>
       </div>
+
+      {/* Filtros activos — chips removibles con el corte de marca */}
+      {activeChips.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="sh-label shrink-0 mr-1">Filtros</span>
+          {activeChips.map((c) => (
+            <button
+              key={c.key}
+              type="button"
+              onClick={() => updateFilter(c.key, "")}
+              aria-label={`Quitar filtro: ${c.label}`}
+              className="group inline-flex items-center gap-1.5 pl-2 pr-2 py-1 rounded-btn text-[13px] font-medium bg-[var(--accent-muted)] text-brand-bright border border-[var(--accent-border)] hover:brightness-110 transition-all duration-fast focus:outline-none focus-visible:shadow-focus"
+            >
+              <span className="sh-cut !w-[3px] !mr-0" aria-hidden />
+              {c.label}
+              <span className="opacity-70 group-hover:opacity-100" aria-hidden>✕</span>
+            </button>
+          ))}
+          <button
+            type="button"
+            onClick={() => router.push("/directory")}
+            className="ml-1 px-2.5 py-1 rounded-btn text-xs text-ink-3 hover:text-ink-1 bg-abyss-2 border border-line-1 hover:border-line-2 transition-all duration-fast"
+          >
+            Limpiar todo
+          </button>
+        </div>
+      )}
 
       {/* Letter filter — horizontally scrollable on mobile */}
       <div className="flex gap-1 overflow-x-auto pb-1 scrollbar-thin scrollbar-track-transparent scrollbar-thumb-neutral-700">

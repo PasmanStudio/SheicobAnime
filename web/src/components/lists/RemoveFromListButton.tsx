@@ -31,7 +31,7 @@ export default function RemoveFromListButton({ listId, seriesSlug }: Props) {
       onClick={handleRemove}
       disabled={loading}
       className="absolute top-1.5 right-1.5 z-10 flex items-center justify-center w-6 h-6 rounded-full
-        bg-abyss-2 border border-line-2 text-ink-2 hover:text-red-400 hover:border-red-700/50
+        bg-abyss-2 border border-line-2 text-ink-2 hover:text-danger hover:border-danger-line
         transition-colors disabled:opacity-50 text-xs backdrop-blur-sm"
       aria-label="Quitar de la lista"
       title="Quitar"

@@ -47,6 +47,14 @@
   --success: #4ADE8C;
   --warning: #FFC53D;
   --danger:  #FF5E5E;
+  /* Translúcidos (fondos/bordes): la opacidad /xx no aplica sobre colores var() en TW3,
+     así que se definen como rgba dedicados — mismo patrón que --accent-muted/--accent-border. */
+  --success-soft: rgba(74, 222, 140, 0.16);
+  --success-line: rgba(74, 222, 140, 0.45);
+  --danger-soft:  rgba(255, 94, 94, 0.14);
+  --danger-line:  rgba(255, 94, 94, 0.42);
+  --warning-soft: rgba(255, 197, 61, 0.16);
+  --warning-line: rgba(255, 197, 61, 0.45);
   --live:    #4ADE8C;     /* "En emisión" */
   --gold:    #FFC53D;     /* rankings, #1 */
   --silver:  #C7D0DC;     /* #2 */
@@ -280,7 +288,23 @@ html, body {
   100% { box-shadow: 0 0 0 0 rgba(74, 222, 140, 0); }
 }
 @media (prefers-reduced-motion: reduce) {
+  /* Congelar animaciones y volver instantáneas las transiciones en todo el sitio */
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
   .sh-live-dot { animation: none; }
+  /* Sin lift/zoom en hover (cards, botones) */
+  [class*="hover:scale"]:hover,
+  [class*="hover:-translate"]:hover,
+  .group:hover [class*="group-hover:scale"],
+  .group:hover [class*="group-hover:-translate"] {
+    transform: none !important;
+  }
 }
 
 /* ── Scrollbar oculto para rows horizontales ─────────*/
