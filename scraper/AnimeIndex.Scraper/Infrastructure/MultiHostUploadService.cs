@@ -38,7 +38,9 @@ namespace AnimeIndex.Scraper.Infrastructure;
 ///   Doodstream:EmbedBase[DOODSTREAM__EMBEDBASE]— default https://dood.wf
 ///   Player4me:ApiKey    [PLAYER4ME__APIKEY]    — sin esto, player4me se omite (TUS)
 ///   Player4me:ApiBase   [PLAYER4ME__APIBASE]   — default https://player4me.com (dashboard/API)
-///   Player4me:EmbedBase [PLAYER4ME__EMBEDBASE] — default https://player4me.online (player real; embed = {base}/#{id})
+///   Player4me:EmbedBase [PLAYER4ME__EMBEDBASE] — default https://sheicobanime.player4me.online
+///                        (SUBDOMINIO del sitio; el apex player4me.online da "player is not
+///                        recognized" al embeber. embed = {base}/#{id})
 /// </summary>
 public sealed class MultiHostUploadService
 {
@@ -93,7 +95,11 @@ public sealed class MultiHostUploadService
                 "player4me",
                 p4mKey,
                 config["Player4me:ApiBase"]?.TrimEnd('/') ?? "https://player4me.com",
-                config["Player4me:EmbedBase"]?.TrimEnd('/') ?? "https://player4me.online"));
+                // Embed por el SUBDOMINIO del sitio (no el apex): player4me reconoce el
+                // player por el Host del subdominio (player "kcxm" atado a
+                // sheicobanime.player4me.online). El apex player4me.online da "player is
+                // not recognized" al embeber. Mismo modelo que SeekStreaming (sheicobanime.seekplayer.me).
+                config["Player4me:EmbedBase"]?.TrimEnd('/') ?? "https://sheicobanime.player4me.online"));
 
         _hosts = hosts;
     }
