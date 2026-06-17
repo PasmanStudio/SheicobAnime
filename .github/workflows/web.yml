@@ -112,3 +112,16 @@ jobs:
           AUTH_DISCORD_ID: "placeholder"
           AUTH_DISCORD_SECRET: "placeholder"
           NEXTAUTH_DATABASE_URL: ""
+
+      # Sincroniza el secret de revalidación on-demand al worker (mismo valor que
+      # usa el scraper, via el secret REVALIDATE_SECRET del repo). Sin esto el
+      # endpoint /api/revalidate queda deshabilitado y el contenido se refresca
+      # por el TTL de 60s. continue-on-error: nunca debe tumbar el deploy.
+      - name: Sync worker secret (REVALIDATE_SECRET)
+        continue-on-error: true
+        run: printf '%s' "$REVALIDATE_SECRET" | npx wrangler secret put REVALIDATE_SECRET
+        working-directory: web
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          REVALIDATE_SECRET: ${{ secrets.REVALIDATE_SECRET }}
