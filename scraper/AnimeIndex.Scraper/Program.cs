@@ -53,6 +53,10 @@ if (args.Contains("--news"))
         newsBuilder.Configuration.GetSection("AnimeNews").Bind(newsSettings);
         newsBuilder.Services.AddSingleton(newsSettings);
 
+        var newsAiSettings = new AnimeIndex.Scraper.Infrastructure.AiRewrite.AiSettings();
+        newsBuilder.Configuration.GetSection("Ai").Bind(newsAiSettings);
+        newsBuilder.Services.AddSingleton(newsAiSettings);
+
         // HTTP clients
         newsBuilder.Services.AddHttpClient("news-rss", c =>
         {
@@ -62,9 +66,12 @@ if (args.Contains("--news"))
         });
         newsBuilder.Services.AddHttpClient("instagram-graph", c => c.Timeout = TimeSpan.FromSeconds(30));
         newsBuilder.Services.AddHttpClient("probe", c => c.Timeout = TimeSpan.FromSeconds(15));
+        newsBuilder.Services.AddHttpClient("gemini", c => c.Timeout = TimeSpan.FromSeconds(60));
 
         // Services
         newsBuilder.Services.AddScoped<AnimeIndex.Scraper.Infrastructure.AnimeNewsFeedService>();
+        newsBuilder.Services.AddScoped<AnimeIndex.Scraper.Infrastructure.AiRewrite.GeminiClient>();
+        newsBuilder.Services.AddScoped<AnimeIndex.Scraper.Infrastructure.AiRewrite.NewsRewriteService>();
         newsBuilder.Services.AddScoped<AnimeIndex.Scraper.Infrastructure.Instagram.AnimeNewsImageService>();
         newsBuilder.Services.AddScoped<AnimeIndex.Scraper.Infrastructure.Instagram.MetaGraphApiClient>();
         newsBuilder.Services.AddScoped<AnimeIndex.Scraper.Infrastructure.Instagram.AnimeNewsPublisherService>();
@@ -96,14 +103,26 @@ if (args.Contains("--news"))
 // Usage: dotnet run --project scraper/AnimeIndex.Scraper -- --images
 if (args.Contains("--images"))
 {
+    // If GEMINI_API_KEY is set in the local env, --images renders the fully AI-rewritten
+    // posters; otherwise it falls back to clean heuristic content. Either way no DB/IG needed.
+    var imagesAi = new AnimeIndex.Scraper.Infrastructure.AiRewrite.AiSettings
+    {
+        ApiKey = Environment.GetEnvironmentVariable("GEMINI_API_KEY")
+              ?? Environment.GetEnvironmentVariable("Ai__ApiKey") ?? string.Empty,
+    };
+
     await using var sp = new ServiceCollection()
         .AddLogging(b => b.AddSimpleConsole(o => { o.SingleLine = true; o.TimestampFormat = "HH:mm:ss "; }))
         .AddHttpClient()
+        .AddSingleton(imagesAi)
+        .AddSingleton<AnimeIndex.Scraper.Infrastructure.AiRewrite.GeminiClient>()
+        .AddSingleton<AnimeIndex.Scraper.Infrastructure.AiRewrite.NewsRewriteService>()
         .BuildServiceProvider();
 
     await AnimeIndex.Scraper.Infrastructure.Instagram.TestImageGenerator.RunAsync(
         sp.GetRequiredService<IHttpClientFactory>(),
-        sp.GetRequiredService<ILoggerFactory>());
+        sp.GetRequiredService<ILoggerFactory>(),
+        sp.GetRequiredService<AnimeIndex.Scraper.Infrastructure.AiRewrite.NewsRewriteService>());
     return;
 }
 
@@ -183,6 +202,11 @@ try
     builder.Configuration.GetSection("AnimeNews").Bind(animeNewsSettings);
     builder.Services.AddSingleton(animeNewsSettings);
 
+    // ─── AI rewrite settings (Gemini, optional) ────────────
+    var aiSettings = new AnimeIndex.Scraper.Infrastructure.AiRewrite.AiSettings();
+    builder.Configuration.GetSection("Ai").Bind(aiSettings);
+    builder.Services.AddSingleton(aiSettings);
+
     // ─── Discord settings ──────────────────────────────────
     var discordSettings = new DiscordSettings();
     builder.Configuration.GetSection("Discord").Bind(discordSettings);
@@ -261,6 +285,8 @@ try
             "User-Agent",
             "Mozilla/5.0 (compatible; SheicobAnime-NewsBot/1.0; +https://sheicobanime.sheicob.workers.dev)");
     });
+    // Gemini (AI rewrite) — free-tier generateContent endpoint
+    builder.Services.AddHttpClient("gemini", c => c.Timeout = TimeSpan.FromSeconds(60));
 
     // ─── Discord publishing services ───────────────────────
     builder.Services.AddScoped<DiscordWebhookClient>();
@@ -283,6 +309,8 @@ try
 
     // ─── Anime news RSS + Instagram news pipeline ─────────
     builder.Services.AddScoped<AnimeIndex.Scraper.Infrastructure.AnimeNewsFeedService>();
+    builder.Services.AddScoped<AnimeIndex.Scraper.Infrastructure.AiRewrite.GeminiClient>();
+    builder.Services.AddScoped<AnimeIndex.Scraper.Infrastructure.AiRewrite.NewsRewriteService>();
     builder.Services.AddScoped<AnimeIndex.Scraper.Infrastructure.Instagram.AnimeNewsImageService>();
     builder.Services.AddScoped<AnimeIndex.Scraper.Infrastructure.Instagram.AnimeNewsPublisherService>();
 

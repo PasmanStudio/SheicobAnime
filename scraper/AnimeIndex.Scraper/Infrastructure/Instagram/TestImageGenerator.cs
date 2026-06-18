@@ -1,6 +1,8 @@
 using AnimeIndex.Api.Data.Entities;
+using AnimeIndex.Scraper.Infrastructure.AiRewrite;
 using Microsoft.Extensions.Logging;
 using System.Diagnostics;
+using System.Text;
 
 namespace AnimeIndex.Scraper.Infrastructure.Instagram;
 
@@ -72,7 +74,8 @@ public static class TestImageGenerator
         ),
     ];
 
-    public static async Task RunAsync(IHttpClientFactory httpFactory, ILoggerFactory loggerFactory)
+    public static async Task RunAsync(
+        IHttpClientFactory httpFactory, ILoggerFactory loggerFactory, NewsRewriteService rewriter)
     {
         var outDir = Path.Combine(Directory.GetCurrentDirectory(), "test-output", "instagram");
         Directory.CreateDirectory(outDir);
@@ -112,9 +115,10 @@ public static class TestImageGenerator
         foreach (var (slug, title, summary, imageUrl) in NewsSamples)
         {
             var newsItem = MakeNewsItem(title, summary, imageUrl);
+            var content  = await rewriter.RewriteAsync(newsItem);
 
             var sw = Stopwatch.StartNew();
-            var slides = await newsService.GenerateCarouselSlidesAsync(newsItem);
+            var slides = await newsService.GenerateCarouselSlidesAsync(newsItem, content, []);
             sw.Stop();
             for (var i = 0; i < slides.Count; i++)
                 await File.WriteAllBytesAsync(
@@ -124,16 +128,16 @@ public static class TestImageGenerator
                 $"{slides.Sum(s => s.Length) / 1024} KB  ({sw.ElapsedMilliseconds} ms)");
 
             sw.Restart();
-            var storyBytes = await newsService.GenerateStoryAsync(newsItem);
+            var storyBytes = await newsService.GenerateStoryAsync(newsItem, content, []);
             sw.Stop();
             await File.WriteAllBytesAsync(Path.Combine(outDir, $"news-{slug}-story.jpg"), storyBytes);
             Console.WriteLine($"  [story] {storyBytes.Length / 1024} KB  ({sw.ElapsedMilliseconds} ms)");
 
             // Show the caption that would be posted (first sample only)
-            if (slug == "kudasai-cloverworks" && !string.IsNullOrWhiteSpace(summary))
+            if (slug == "kudasai-cloverworks")
             {
                 Console.WriteLine("\n  ── Caption preview ──────────────────────────");
-                foreach (var line in BuildSampleCaption(newsItem).Split('\n'))
+                foreach (var line in BuildPreviewCaption(content).Split('\n'))
                     Console.WriteLine($"  {line}");
                 Console.WriteLine("  ─────────────────────────────────────────────\n");
             }
@@ -145,12 +149,14 @@ public static class TestImageGenerator
         {
             var dbLogger  = loggerFactory.CreateLogger<AnimeIndex.Scraper.Infrastructure.AnimeNewsFeedService>();
             var feedSvc   = new RealFeedFetcher(httpFactory, dbLogger);
-            var liveItem  = await feedSvc.FetchLatestItemAsync();
+            var (liveItem, liveImages) = await feedSvc.FetchLatestItemAsync();
 
             if (liveItem is not null)
             {
+                var content = await rewriter.RewriteAsync(liveItem);
+
                 var sw = Stopwatch.StartNew();
-                var slides = await newsService.GenerateCarouselSlidesAsync(liveItem);
+                var slides = await newsService.GenerateCarouselSlidesAsync(liveItem, content, liveImages);
                 sw.Stop();
                 for (var i = 0; i < slides.Count; i++)
                     await File.WriteAllBytesAsync(Path.Combine(outDir, $"real-slide{i + 1}.jpg"), slides[i]);
@@ -159,13 +165,13 @@ public static class TestImageGenerator
                 Console.WriteLine($"  Size: {slides.Sum(s => s.Length) / 1024} KB  ({sw.ElapsedMilliseconds} ms)");
 
                 sw.Restart();
-                var storyBytes = await newsService.GenerateStoryAsync(liveItem);
+                var storyBytes = await newsService.GenerateStoryAsync(liveItem, content, liveImages);
                 sw.Stop();
                 await File.WriteAllBytesAsync(Path.Combine(outDir, "real-story.jpg"), storyBytes);
                 Console.WriteLine($"  [story] {storyBytes.Length / 1024} KB  ({sw.ElapsedMilliseconds} ms)");
 
                 Console.WriteLine("\n  ── Caption ─────────────────────────────────────");
-                foreach (var line in BuildSampleCaption(liveItem).Split('\n').Take(20))
+                foreach (var line in BuildPreviewCaption(content).Split('\n').Take(24))
                     Console.WriteLine($"  {line}");
                 Console.WriteLine("  ────────────────────────────────────────────────\n");
             }
@@ -200,16 +206,16 @@ public static class TestImageGenerator
         private static readonly System.Xml.Linq.XNamespace Media =
             "http://search.yahoo.com/mrss/";
 
-        public async Task<AnimeIndex.Api.Data.Entities.AnimeNewsItem?> FetchLatestItemAsync()
+        public async Task<(AnimeIndex.Api.Data.Entities.AnimeNewsItem? item, List<string> images)> FetchLatestItemAsync()
         {
             using var http = httpFactory.CreateClient("news-rss");
             using var resp = await http.GetAsync("https://somoskudasai.com/feed/");
-            if (!resp.IsSuccessStatusCode) return null;
+            if (!resp.IsSuccessStatusCode) return (null, []);
 
             var xml  = (await resp.Content.ReadAsStringAsync()).TrimStart('﻿', '​', '\r', '\n', ' ');
             var doc  = System.Xml.Linq.XDocument.Parse(xml);
             var item = doc.Root?.Descendants("item").FirstOrDefault();
-            if (item is null) return null;
+            if (item is null) return (null, []);
 
             var title    = item.Element("title")?.Value?.Trim() ?? "(sin título)";
             var link     = item.Element("link")?.Value?.Trim() ?? string.Empty;
@@ -220,8 +226,10 @@ public static class TestImageGenerator
                                .Select(e => (string?)e.Attribute("url"))
                                .FirstOrDefault(u => !string.IsNullOrWhiteSpace(u));
 
-            // Fetch article page for full body
+            // Fetch article page for full body + images — using the SAME extraction as production
+            // so this preview faithfully reflects what gets posted.
             string? body = null;
+            var images = new List<string>();
             if (!string.IsNullOrWhiteSpace(link))
             {
                 try
@@ -230,28 +238,19 @@ public static class TestImageGenerator
                     if (artResp.IsSuccessStatusCode)
                     {
                         var html = await artResp.Content.ReadAsStringAsync();
-                        var paragraphs = System.Text.RegularExpressions.Regex.Matches(
-                                html, @"<p[^>]*>(.*?)</p>",
-                                System.Text.RegularExpressions.RegexOptions.IgnoreCase |
-                                System.Text.RegularExpressions.RegexOptions.Singleline)
-                            .Select(m => System.Text.RegularExpressions.Regex
-                                .Replace(m.Groups[1].Value, "<[^>]+>", " ").Trim())
-                            .Select(p => System.Net.WebUtility.HtmlDecode(p))
-                            .Where(p => p.Length > 60
-                                     && !p.Contains("var ")
-                                     && !p.Contains("function(")
-                                     && !p.Contains("Math.")
-                                     && !p.TrimStart().StartsWith("/*"))
-                            .Take(5)
-                            .ToList();
-                        body = paragraphs.Count > 0 ? string.Join("\n\n", paragraphs) : null;
+                        var (ogImage, parsedBody) =
+                            AnimeIndex.Scraper.Infrastructure.AnimeNewsFeedService.ParseArticleHtml(html);
+                        body = parsedBody;
+                        if (string.IsNullOrWhiteSpace(imageUrl) && !string.IsNullOrWhiteSpace(ogImage))
+                            imageUrl = ogImage;
+                        images = AnimeIndex.Scraper.Infrastructure.AnimeNewsFeedService.ExtractArticleImages(html);
                     }
                 }
                 catch { /* best-effort */ }
             }
 
-            logger.LogDebug("Live fetch: {Title}", title);
-            return new AnimeIndex.Api.Data.Entities.AnimeNewsItem
+            logger.LogDebug("Live fetch: {Title} ({Images} imgs)", title, images.Count);
+            var newItem = new AnimeIndex.Api.Data.Entities.AnimeNewsItem
             {
                 Id           = Guid.NewGuid(),
                 SourceKey    = "kudasai",
@@ -264,6 +263,7 @@ public static class TestImageGenerator
                 FetchedAt    = DateTime.UtcNow,
                 IgPostStatus = "pending",
             };
+            return (newItem, images);
         }
     }
 
@@ -288,28 +288,24 @@ public static class TestImageGenerator
         CreatedAt     = DateTime.UtcNow
     };
 
-    // Mirrors AnimeNewsPublisherService.BuildCaption — body in the caption with alternating emojis.
-    private static readonly string[] SampleBodyEmojis = ["📌", "🎬", "✨", "🔥", "💬", "🎌"];
+    // Mirrors AnimeNewsPublisherService.BuildCaption — short editorial caption from rewritten content.
+    private static readonly string[] PreviewBaseHashtags =
+        ["anime", "animelatino", "animenoticias", "manga", "otaku", "sheicobanime"];
 
-    private static string BuildSampleCaption(AnimeIndex.Api.Data.Entities.AnimeNewsItem item)
+    private static string BuildPreviewCaption(NewsContent c)
     {
-        var sb = new System.Text.StringBuilder();
-        sb.Append("📰 ").Append(item.Title).Append("\n\n");
+        var sb = new StringBuilder();
+        sb.Append("📰 ").Append(c.Headline).Append("\n\n");
+        if (!string.IsNullOrWhiteSpace(c.Caption)) sb.Append(c.Caption).Append("\n\n");
+        sb.Append("🔔 Seguinos para más noticias de anime\n");
+        sb.Append("▶️ Mirá anime gratis · Link en la bio\n\n");
 
-        if (!string.IsNullOrWhiteSpace(item.Summary))
-        {
-            var idx = 0;
-            foreach (var p in item.Summary
-                .Split(["\n\n", "\n"], StringSplitOptions.RemoveEmptyEntries)
-                .Select(p => p.Trim()).Where(p => p.Length > 0))
-            {
-                sb.Append(SampleBodyEmojis[idx % SampleBodyEmojis.Length]).Append(' ').Append(p).Append("\n\n");
-                idx++;
-            }
-        }
-
-        sb.Append("👉 Seguí leyendo · Link en bio\n\n");
-        sb.Append("#animelatam #animenoticias #otaku #anime #animeespañol #manga #sheicobanime");
+        var tags = PreviewBaseHashtags.Concat(c.Hashtags)
+            .Select(t => t.TrimStart('#').Replace(" ", "").ToLowerInvariant())
+            .Where(t => t.Length is > 1 and < 30)
+            .Distinct().Take(14).Select(t => "#" + t);
+        sb.Append(string.Join(" ", tags));
+        sb.Append("\n\n  [contenido: ").Append(c.FromAi ? "Gemini" : "heurística (sin key)").Append(']');
         return sb.ToString();
     }
 

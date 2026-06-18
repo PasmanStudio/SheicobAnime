@@ -12,11 +12,11 @@ public class AnimeNewsSettings
     public int MaxAgeHours { get; set; } = 48;
 
     /// <summary>
-    /// Maximum key-point (headline) slides AFTER the cover in a news carousel.
-    /// Total slides = 1 (cover) + up to MaxContentSlides. Poster style favours few, punchy
-    /// slides — 2 means a 3-slide carousel. Instagram allows 10 max.
+    /// Maximum key-point (headline) slides between the cover and the closing CTA in a news
+    /// carousel. Total slides = 1 (cover) + up to MaxContentSlides + 1 (CTA). With the AI
+    /// producing 3–5 key points, 5 gives rich carousels of up to 7 slides. Instagram allows 10.
     /// </summary>
-    public int MaxContentSlides { get; set; } = 2;
+    public int MaxContentSlides { get; set; } = 5;
 
     /// <summary>
     /// RSS feeds to poll. All feeds must publish in Spanish — no English sources.

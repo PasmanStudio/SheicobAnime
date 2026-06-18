@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.Text;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
 using AnimeIndex.Api.Data;
@@ -95,6 +97,11 @@ public partial class AnimeNewsFeedService(
                 logger.LogDebug(ex, "AnimeNews: could not fetch article page for {Url}", item.ArticleUrl);
             }
         }
+
+        // Cross-feed enrichment: when the same story shows up in more than one feed,
+        // merge the bodies into one item (richer context for the rewrite) and drop the
+        // duplicate so we don't post the same news twice.
+        toInsert = MergeCrossFeedDuplicates(toInsert);
 
         // Items without an image are saved as "skipped" — Instagram posts
         // always need a photo to have visual impact.
@@ -258,8 +265,10 @@ public partial class AnimeNewsFeedService(
 
     /// <summary>
     /// Fetches the article page and extracts:
-    ///   - og:image URL (for items that had no image in RSS)
-    ///   - Full article body text from &lt;p&gt; tags (up to 2000 chars)
+    ///   - og:image URL (the clean featured image, preferred over in-body images)
+    ///   - Article body text, scoped to the article container so site chrome
+    ///     (nav menu, breadcrumb, byline, related posts, "© … derechos reservados")
+    ///     never leaks in. Up to ~8 real paragraphs.
     /// Returns (null, null) on failure.
     /// </summary>
     private static async Task<(string? imageUrl, string? body)> TryResolveArticleAsync(
@@ -269,21 +278,39 @@ public partial class AnimeNewsFeedService(
         if (!resp.IsSuccessStatusCode) return (null, null);
 
         var html = await resp.Content.ReadAsStringAsync(ct);
+        return ParseArticleHtml(html);
+    }
 
-        // og:image
+    /// <summary>
+    /// Pulls (og:image, clean body) out of an article HTML page. The body is scoped to the
+    /// article container and stripped of nav/byline/copyright/share chrome — this is the fix
+    /// for the garbage captions. Exposed <c>internal</c> so the --images test exercises the
+    /// exact same extraction as production.
+    /// </summary>
+    internal static (string? imageUrl, string? body) ParseArticleHtml(string html)
+    {
+        // og:image — the regex has two alternations (property-before-content and the reverse),
+        // so the URL is in whichever of the two capture groups matched.
         var imageMatch = OgImageRegex().Match(html);
-        var imageUrl   = imageMatch.Success ? imageMatch.Groups[1].Value : null;
+        var imageUrl   = !imageMatch.Success ? null
+            : imageMatch.Groups[1].Success ? imageMatch.Groups[1].Value
+            : imageMatch.Groups[2].Value;
 
-        // Article body: collect all <p> paragraph contents, filter ads/code/short items
+        // Narrow to the article body BEFORE extracting paragraphs (drops menus, footer, …).
+        var articleHtml = IsolateArticleHtml(html);
+
         var paragraphs = ParagraphRegex()
-            .Matches(html)
+            .Matches(articleHtml)
             .Select(m => StripHtml(m.Groups[1].Value, 600))
-            .Where(p => p is { Length: > 60 }
-                     && !p.Contains("var ")          // inline JS
+            .Where(p => p is { Length: > 60 })
+            .Select(p => CleanParagraph(p!))             // drop glued "ADS" / ad labels
+            .Where(p => p.Length > 40
+                     && !p.Contains("var ")              // inline JS
                      && !p.Contains("function(")
                      && !p.Contains("Math.")
-                     && !p.TrimStart().StartsWith("/*"))  // JS block comment
-            .Take(6)
+                     && !p.TrimStart().StartsWith("/*")   // JS block comment
+                     && !IsChromeLine(p))                 // nav/byline/copyright/share text
+            .Take(8)
             .ToList();
 
         var body = paragraphs.Count > 0
@@ -292,6 +319,110 @@ public partial class AnimeNewsFeedService(
 
         return (imageUrl, body);
     }
+
+    /// <summary>
+    /// Collects usable image URLs from an article page: the og:image first, then in-body
+    /// &lt;img&gt; sources scoped to the article container, filtering out ads/icons/avatars/logos.
+    /// Used to build image-rich carousels. <c>internal</c> so the publisher and test share it.
+    /// </summary>
+    internal static List<string> ExtractArticleImages(string html)
+    {
+        var images = new List<string>();
+
+        var og = OgImageRegex().Match(html);
+        if (og.Success)
+            images.Add(og.Groups[1].Success ? og.Groups[1].Value : og.Groups[2].Value);
+
+        var article = IsolateArticleHtml(html);
+        foreach (Match m in ImgTagRegex().Matches(article))
+        {
+            var src = BestImgSrc(m.Value);
+            if (!string.IsNullOrWhiteSpace(src) && IsUsableImage(src))
+                images.Add(System.Net.WebUtility.HtmlDecode(src));
+        }
+
+        return images
+            .Where(u => !string.IsNullOrWhiteSpace(u))
+            .Select(u => u.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(6)
+            .ToList();
+    }
+
+    /// <summary>Prefers lazy-load data-* attributes over a placeholder src.</summary>
+    private static string? BestImgSrc(string imgTag)
+    {
+        foreach (var attr in (string[])["data-src", "data-lazy-src", "data-original", "src"])
+        {
+            var m = Regex.Match(imgTag, attr + @"\s*=\s*[""']([^""']+)[""']", RegexOptions.IgnoreCase);
+            if (m.Success && !m.Groups[1].Value.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+                return m.Groups[1].Value;
+        }
+        return null;
+    }
+
+    private static readonly string[] JunkImageMarkers =
+        ["gravatar", "avatar", "/emoji", "spinner", "placeholder", "logo", "icon", "sprite",
+         "/ads/", "doubleclick", "play.google", "googlesyndication", "amazon-adsystem",
+         "1x1", "pixel", "blank.", "/lazy"];
+
+    private static bool IsUsableImage(string url)
+    {
+        if (!url.StartsWith("http", StringComparison.OrdinalIgnoreCase)) return false;
+        var u = url.ToLowerInvariant();
+        if (u.EndsWith(".svg") || u.EndsWith(".gif")) return false;     // icons / emojis
+        return !JunkImageMarkers.Any(u.Contains);
+    }
+
+    // ── Article-body isolation & chrome filtering ────────────────────────────────
+
+    // Strong, unambiguous article-body container classes (WordPress/news themes).
+    // Deliberately NO bare "<article>": on some themes that matches a related-posts card
+    // near the footer, which would isolate the WRONG region. When no strong marker is found
+    // we use the full page and let the >60 + chrome filters do the work.
+    private static readonly string[] ContentStartMarkers =
+        ["entry-content", "td-post-content", "post-content", "article-content",
+         "single-content", "article-body", "post-body", "the-content"];
+
+    // Where the body ends — everything from here on is footer/related/share/comments.
+    private static readonly string[] ContentEndMarkers =
+        ["id=\"comments", "class=\"comments", "related-posts", "related_posts", "yarpp",
+         "author-box", "post-author", "post-tags", "tags-links", "sharedaddy",
+         "jp-relatedposts", "social-share", "newsletter", "wp-block-post-comments",
+         "<footer", "id=\"footer", "class=\"footer"];
+
+    /// <summary>Trims the HTML to the article body container when one is recognizable; otherwise
+    /// returns the full page (the paragraph filters handle junk in that case).</summary>
+    private static string IsolateArticleHtml(string html)
+    {
+        var start = IndexOfAnyMarker(html, ContentStartMarkers, 0);
+        if (start < 0) return html;
+
+        var tagStart = html.LastIndexOf('<', start);
+        var body = tagStart >= 0 ? html[tagStart..] : html[start..];
+
+        // Search for the end marker a bit past the start so the container's own attributes
+        // (e.g. an "article-content" wrapper) don't immediately match.
+        var end = IndexOfAnyMarker(body, ContentEndMarkers, 80);
+        return end > 200 ? body[..end] : body;
+    }
+
+    /// <summary>Removes a leading inline ad label glued to the text (e.g. "ADS Si entrás…").</summary>
+    private static string CleanParagraph(string p) => LeadingAdRegex().Replace(p, string.Empty).TrimStart();
+
+    private static int IndexOfAnyMarker(string haystack, string[] needles, int from)
+    {
+        var best = -1;
+        foreach (var n in needles)
+        {
+            var i = haystack.IndexOf(n, Math.Min(from, haystack.Length), StringComparison.OrdinalIgnoreCase);
+            if (i >= 0 && (best < 0 || i < best)) best = i;
+        }
+        return best;
+    }
+
+    /// <summary>True for lines that are site chrome rather than article prose.</summary>
+    private static bool IsChromeLine(string p) => ChromeLineRegex().IsMatch(p);
 
     // ── Text helpers ─────────────────────────────────────────────────────────
 
@@ -327,6 +458,9 @@ public partial class AnimeNewsFeedService(
     [GeneratedRegex(@"<img[^>]+src=[""']([^""']+)[""']", RegexOptions.IgnoreCase)]
     private static partial Regex ImgSrcRegex();
 
+    [GeneratedRegex(@"<img\b[^>]*>", RegexOptions.IgnoreCase)]
+    private static partial Regex ImgTagRegex();
+
     [GeneratedRegex(@"<meta[^>]+property=[""']og:image[""'][^>]+content=[""']([^""']+)[""']|<meta[^>]+content=[""']([^""']+)[""'][^>]+property=[""']og:image[""']", RegexOptions.IgnoreCase)]
     private static partial Regex OgImageRegex();
 
@@ -339,6 +473,93 @@ public partial class AnimeNewsFeedService(
 
     [GeneratedRegex(@"\s{2,}")]
     private static partial Regex WhitespaceRegex();
+
+    // Site chrome that sometimes survives into a paragraph: copyright, breadcrumb, byline,
+    // "appeared first on", share/subscribe calls. Matched against a single cleaned line.
+    [GeneratedRegex(
+        @"©|todos los derechos|derechos reservados|aparece la entrada|apareci[oó] primero en|fue publicad[oa] (originalmente|primero)|^\s*(inicio|home)\s*[»>]|^\s*(por|escrito por|publicado por|fuente)\s*[:·]|s[ií]guenos|seguinos|suscrib[ií]te|comp[aá]rt(e|i)(lo| en| esta)",
+        RegexOptions.IgnoreCase)]
+    private static partial Regex ChromeLineRegex();
+
+    // Anything that isn't a latin letter/digit/space — used to tokenize titles after de-accenting.
+    [GeneratedRegex(@"[^a-z0-9 ]")]
+    private static partial Regex NonWordRegex();
+
+    // A leading inline ad label that got glued to a paragraph's text.
+    [GeneratedRegex(@"^\s*(ADS|ADVERTISEMENT|PUBLICIDAD)\b[\s:.\-–—]*", RegexOptions.IgnoreCase)]
+    private static partial Regex LeadingAdRegex();
+
+    // ── Cross-feed duplicate merge ───────────────────────────────────────────
+
+    /// <summary>
+    /// Collapses items that report the same story from different feeds into a single
+    /// enriched item. The kept item gains the other's body (more context for the rewrite)
+    /// and an image if it was missing one. Same-feed items are never merged.
+    /// </summary>
+    private List<RssItem> MergeCrossFeedDuplicates(List<RssItem> items)
+    {
+        var kept = new List<RssItem>();
+        foreach (var item in items)
+        {
+            var match = kept.FirstOrDefault(k =>
+                k.SourceKey != item.SourceKey && TitlesMatch(k.Title, item.Title));
+
+            if (match is null) { kept.Add(item); continue; }
+
+            if (string.IsNullOrWhiteSpace(match.ImageUrl) && !string.IsNullOrWhiteSpace(item.ImageUrl))
+                match.ImageUrl = item.ImageUrl;
+
+            if (!string.IsNullOrWhiteSpace(item.Summary))
+            {
+                var combined = string.IsNullOrWhiteSpace(match.Summary)
+                    ? item.Summary!
+                    : match.Summary + "\n\n" + item.Summary;
+                match.Summary = combined.Length > 3000 ? combined[..3000] : combined;
+            }
+
+            logger.LogDebug("AnimeNews: merged cross-feed duplicate \"{Title}\" ({A}+{B})",
+                item.Title.Length > 50 ? item.Title[..50] : item.Title, match.SourceKey, item.SourceKey);
+        }
+        return kept;
+    }
+
+    /// <summary>Two titles match when their significant words overlap heavily (Jaccard ≥ 0.5).</summary>
+    private static bool TitlesMatch(string a, string b)
+    {
+        var sa = SignificantWords(a);
+        var sb = SignificantWords(b);
+        if (sa.Count < 3 || sb.Count < 3) return false;
+
+        var intersect = sa.Count(sb.Contains);
+        var union     = sa.Count + sb.Count - intersect;
+        return union > 0 && (double)intersect / union >= 0.5;
+    }
+
+    private static readonly HashSet<string> TitleStopWords = new(StringComparer.Ordinal)
+    {
+        "para", "como", "este", "esta", "esto", "esos", "esas", "unos", "unas",
+        "desde", "hasta", "sobre", "entre", "cuando", "donde", "porque", "aunque",
+        "tras", "sera", "seran", "anime", "manga", "nuevo", "nueva", "tras",
+    };
+
+    private static HashSet<string> SignificantWords(string title)
+    {
+        var norm = RemoveDiacritics(title.ToLowerInvariant());
+        return NonWordRegex().Replace(norm, " ")
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            .Where(w => w.Length >= 4 && !TitleStopWords.Contains(w))
+            .ToHashSet(StringComparer.Ordinal);
+    }
+
+    private static string RemoveDiacritics(string text)
+    {
+        var decomposed = text.Normalize(NormalizationForm.FormD);
+        var sb = new StringBuilder(decomposed.Length);
+        foreach (var c in decomposed)
+            if (CharUnicodeInfo.GetUnicodeCategory(c) != UnicodeCategory.NonSpacingMark)
+                sb.Append(c);
+        return sb.ToString().Normalize(NormalizationForm.FormC);
+    }
 
     // ── Internal record ──────────────────────────────────────────────────────
 
