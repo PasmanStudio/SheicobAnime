@@ -1,5 +1,8 @@
+using System.Text;
 using AnimeIndex.Api.Data;
 using AnimeIndex.Api.Data.Entities;
+using AnimeIndex.Scraper.Infrastructure;
+using AnimeIndex.Scraper.Infrastructure.AiRewrite;
 using Microsoft.Extensions.Logging;
 
 namespace AnimeIndex.Scraper.Infrastructure.Instagram;
@@ -18,6 +21,8 @@ public class AnimeNewsPublisherService(
     AnimeNewsSettings newsSettings,
     MetaGraphApiClient api,
     AnimeNewsImageService imageService,
+    NewsRewriteService rewriter,
+    IHttpClientFactory httpFactory,
     ILogger<AnimeNewsPublisherService> logger)
 {
     public async Task PublishPendingAsync(
@@ -43,13 +48,30 @@ public class AnimeNewsPublisherService(
     {
         try
         {
-            // ── Feed (carousel: cover + content slides; single image if no body) ──
+            // Gather all usable article images (cover + in-body) for an image-rich carousel.
+            var images = await GatherImagesAsync(item, ct);
+
+            // Guarantee every post has a real image — never publish a text-only/flat poster.
+            // Checked BEFORE the rewrite so we don't spend a Gemini call on an unpostable item.
+            if (!await imageService.HasDecodableImageAsync(images, ct))
+            {
+                item.IgPostStatus = "skipped";
+                item.ErrorMessage = "No decodable image";
+                logger.LogWarning("AnimeNews: skipping \"{Title}\" — no usable image could be downloaded",
+                    Truncate(item.Title, 60));
+                return;
+            }
+
+            // Turn the raw item into finished, original content (AI rewrite, or clean fallback).
+            var content = await rewriter.RewriteAsync(item, ct);
+
+            // ── Feed (carousel: cover + content slides + closing CTA) ──
             string? feedMediaId = null;
             try
             {
                 var slides  = await imageService.GenerateCarouselSlidesAsync(
-                    item, newsSettings.MaxContentSlides, ct);
-                var caption = BuildCaption(item);
+                    item, content, images, newsSettings.MaxContentSlides, ct);
+                var caption = BuildCaption(content);
 
                 if (slides.Count == 1)
                 {
@@ -90,10 +112,11 @@ public class AnimeNewsPublisherService(
             string? storyMediaId = null;
             try
             {
-                var storyBytes = await imageService.GenerateStoryAsync(item, ct);
+                var storyBytes = await imageService.GenerateStoryAsync(item, content, images, ct);
                 var storyFile  = $"news-{item.SourceKey}-{item.Id.ToString("N")[..8]}-story.jpg";
                 var storyUrl    = await api.UploadImageToImgBbAsync(storyBytes, storyFile, ct);
-                var storyContainerId = await api.CreateStoryContainerAsync(storyUrl, item.ArticleUrl, ct);
+                // Link sticker points to OUR site (not the source article) — drives traffic to us.
+                var storyContainerId = await api.CreateStoryContainerAsync(storyUrl, igSettings.SiteUrl, ct);
                 await api.WaitForContainerReadyAsync(storyContainerId, ct);
                 storyMediaId = await api.PublishContainerAsync(storyContainerId, ct);
 
@@ -130,76 +153,74 @@ public class AnimeNewsPublisherService(
 
     // Instagram caption limit is 2200 characters.
     private const int IgCaptionMaxChars = 2200;
-    private const string Hashtags = "#animelatam #animenoticias #otaku #anime #animeespañol #manga #sheicobanime";
 
-    // Alternating leading emojis for body paragraphs — easy-to-scan, editorial style.
-    private static readonly string[] BodyEmojis = ["📌", "🎬", "✨", "🔥", "💬", "🎌"];
+    // Always-on base hashtags. No "ñ" (Instagram mangles "#animeespañol") and no spaces.
+    private static readonly string[] BaseHashtags =
+        ["anime", "animelatino", "animenoticias", "manga", "otaku", "sheicobanime"];
 
     /// <summary>
-    /// Builds the Instagram caption. The slides are punchy posters, so the caption carries
-    /// the actual story: title + body paragraphs (with alternating emojis) + CTA + hashtags
-    /// + handle. The body is fitted to the 2200-char limit at a sentence boundary, so it is
-    /// never cut mid-word (Instagram itself adds the "… más" expander when displaying).
+    /// Builds the Instagram caption from the already-rewritten content: a headline line, the
+    /// original editorial body (the rewrite — never the source text), a CTA, smart hashtags
+    /// and the handle. Short by design, like koryugi/kamiread — no wall of copied text.
     /// </summary>
-    private string BuildCaption(AnimeNewsItem item)
+    private string BuildCaption(NewsContent content)
     {
-        var header = "📰 " + item.Title + "\n\n";
+        var sb = new StringBuilder();
+        sb.Append("📰 ").Append(content.Headline.Trim()).Append("\n\n");
 
-        var footer = new System.Text.StringBuilder();
-        footer.Append("\n👉 Seguí leyendo · Link en bio\n\n").Append(Hashtags);
+        if (!string.IsNullOrWhiteSpace(content.Caption))
+            sb.Append(content.Caption.Trim()).Append("\n\n");
+
+        sb.Append("🔔 Seguinos para más noticias de anime\n");
+        sb.Append("▶️ Mirá anime gratis · Link en la bio\n\n");
+        sb.Append(BuildHashtags(content.Hashtags));
         if (!string.IsNullOrWhiteSpace(igSettings.Handle))
-            footer.Append("\n\n@").Append(igSettings.Handle);
-        var footerStr = footer.ToString();
+            sb.Append("\n\n@").Append(igSettings.Handle);
 
-        var budget = IgCaptionMaxChars - header.Length - footerStr.Length;
-        return header + BuildBody(item.Summary, budget) + footerStr;
+        var result = sb.ToString();
+        return result.Length <= IgCaptionMaxChars ? result : result[..IgCaptionMaxChars].TrimEnd();
     }
 
-    /// <summary>
-    /// Renders body paragraphs with alternating leading emojis, fitting within
-    /// <paramref name="budget"/> characters. If the body overflows, the last paragraph is
-    /// cut at a sentence boundary (then a word boundary) — never mid-word.
-    /// </summary>
-    private static string BuildBody(string? summary, int budget)
+    /// <summary>Merges the base hashtags with the AI's topic hashtags (deduped, sanitized).</summary>
+    private static string BuildHashtags(IReadOnlyList<string> aiTags)
     {
-        if (string.IsNullOrWhiteSpace(summary) || budget <= 0) return string.Empty;
+        var tags = BaseHashtags.Concat(aiTags)
+            .Select(t => t.TrimStart('#').Replace(" ", "").Replace("#", "").ToLowerInvariant())
+            .Where(t => t.Length is > 1 and < 30)
+            .Distinct()
+            .Take(14)
+            .Select(t => "#" + t);
+        return string.Join(" ", tags);
+    }
 
-        var paragraphs = summary
-            .Split(["\n\n", "\n"], StringSplitOptions.RemoveEmptyEntries)
-            .Select(p => p.Trim())
-            .Where(p => p.Length > 0)
-            .ToList();
+    // ── Image gathering ─────────────────────────────────────────────────────────
 
-        var sb  = new System.Text.StringBuilder();
-        var idx = 0;
-        foreach (var p in paragraphs)
+    /// <summary>
+    /// Collects every usable image for the carousel: the stored cover plus any in-body images
+    /// from the article page (best-effort re-fetch). More images ⇒ a richer, koryugi-style carousel.
+    /// </summary>
+    private async Task<IReadOnlyList<string>> GatherImagesAsync(AnimeNewsItem item, CancellationToken ct)
+    {
+        var images = new List<string>();
+        if (!string.IsNullOrWhiteSpace(item.ImageUrl)) images.Add(item.ImageUrl!);
+        if (string.IsNullOrWhiteSpace(item.ArticleUrl)) return images;
+
+        try
         {
-            var prefix = BodyEmojis[idx % BodyEmojis.Length] + " ";
-            var chunk  = prefix + p + "\n\n";
-
-            if (sb.Length + chunk.Length > budget)
+            var http = httpFactory.CreateClient("news-rss");
+            using var resp = await http.GetAsync(item.ArticleUrl, ct);
+            if (resp.IsSuccessStatusCode)
             {
-                var remaining = budget - sb.Length - prefix.Length - 1;
-                if (remaining > 40)
-                {
-                    var slice = p[..Math.Min(remaining, p.Length)].TrimEnd();
-                    var sentenceEnd = slice.LastIndexOfAny(['.', '!', '?']);
-                    if (sentenceEnd > 30)
-                        sb.Append(prefix).Append(slice[..(sentenceEnd + 1)]);
-                    else
-                    {
-                        var lastSpace = slice.LastIndexOf(' ');
-                        sb.Append(prefix).Append(lastSpace > 0 ? slice[..lastSpace] : slice).Append('…');
-                    }
-                }
-                break;
+                var html = await resp.Content.ReadAsStringAsync(ct);
+                images.AddRange(AnimeNewsFeedService.ExtractArticleImages(html));
             }
-
-            sb.Append(chunk);
-            idx++;
+        }
+        catch (Exception ex) when (ex is not TaskCanceledException { CancellationToken.IsCancellationRequested: true })
+        {
+            logger.LogDebug(ex, "AnimeNews: could not gather extra images for {Title}", Truncate(item.Title, 50));
         }
 
-        return sb.ToString().TrimEnd();
+        return images.Distinct().Take(6).ToList();
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

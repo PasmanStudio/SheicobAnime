@@ -67,6 +67,13 @@ jobs:
           Instagram__AppSecret:    ${{ secrets.INSTAGRAM_APP_SECRET }}
           Instagram__SiteUrl:      ${{ secrets.INSTAGRAM_SITE_URL }}
           Instagram__Handle:       "sheicobanime"
+          # ── IA de reescritura (Gemini, free tier) ─────────────────────────
+          # Sacá la key gratis (sin tarjeta) en https://aistudio.google.com → "Get API key"
+          # y cargala como secret GEMINI_API_KEY. Sin ella, el pipeline cae a contenido
+          # heurístico limpio (no rompe). Modelo/flags opcionales más abajo.
+          Ai__ApiKey:              ${{ secrets.GEMINI_API_KEY }}
+          # Ai__Model:             "gemini-2.0-flash"   # default
+          # Ai__UseWebSearch:      "true"               # grounding con Google Search
           # ── News settings (optional overrides) ────────────────────────────
           # AnimeNews__MaxPerRun: "1"          # default: 1
           # AnimeNews__MaxAgeHours: "48"       # default: 48
