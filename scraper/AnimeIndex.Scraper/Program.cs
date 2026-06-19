@@ -99,6 +99,64 @@ if (args.Contains("--news"))
     return;
 }
 
+// ── IMDb/TMDB linking (one-shot, dedicated daily workflow) ──
+// Usage: dotnet run --project scraper/AnimeIndex.Scraper -- --imdb
+// Resolves series→TMDB→episode IMDb ids and refreshes IMDb ratings (best-effort).
+if (args.Contains("--imdb"))
+{
+    Log.Logger = new LoggerConfiguration()
+        .WriteTo.Console(new JsonFormatter())
+        .CreateBootstrapLogger();
+
+    try
+    {
+        var imdbHost = Host.CreateApplicationBuilder(args);
+
+        imdbHost.Services.AddSerilog((_, lc) => lc
+            .ReadFrom.Configuration(imdbHost.Configuration)
+            .Enrich.FromLogContext()
+            .Enrich.WithProperty("Service", "imdb")
+            .WriteTo.Console(new JsonFormatter()));
+
+        var imdbConnStr = imdbHost.Configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(imdbConnStr))
+            imdbConnStr = imdbHost.Configuration["DATABASE_URL"];
+        if (string.IsNullOrEmpty(imdbConnStr))
+            throw new InvalidOperationException("Missing DATABASE_URL / ConnectionStrings:DefaultConnection");
+        imdbConnStr = NormalizePostgresConnectionString(imdbConnStr);
+        imdbHost.Services.AddDbContext<AppDbContext>(opts =>
+            opts.UseNpgsql(imdbConnStr, o => o.EnableRetryOnFailure(3)));
+
+        var imdbSettings = new AnimeIndex.Scraper.Infrastructure.Imdb.ImdbSettings();
+        imdbHost.Configuration.GetSection("Imdb").Bind(imdbSettings);
+        imdbHost.Services.AddSingleton(imdbSettings);
+
+        imdbHost.Services.AddHttpClient("imdb", c =>
+        {
+            c.Timeout = TimeSpan.FromSeconds(20);
+            c.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", "SheicobAnime-ImdbBot/1.0");
+        });
+        imdbHost.Services.AddScoped<AnimeIndex.Scraper.Infrastructure.Imdb.ImdbLinkResolverService>();
+
+        var imdbApp = imdbHost.Build();
+        await using var imdbScope = imdbApp.Services.CreateAsyncScope();
+        var resolver = imdbScope.ServiceProvider
+            .GetRequiredService<AnimeIndex.Scraper.Infrastructure.Imdb.ImdbLinkResolverService>();
+        using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(15)); // safety timeout
+        await resolver.RunAsync(cts.Token);
+    }
+    catch (Exception ex)
+    {
+        Log.Fatal(ex, "IMDb linking terminated unexpectedly");
+        throw;
+    }
+    finally
+    {
+        await Log.CloseAndFlushAsync();
+    }
+    return;
+}
+
 // ── Quick local image-generation test (no DB, no Hangfire, no Instagram creds) ──
 // Usage: dotnet run --project scraper/AnimeIndex.Scraper -- --images
 if (args.Contains("--images"))

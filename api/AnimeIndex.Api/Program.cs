@@ -304,6 +304,7 @@ try
     app.MapAniListEndpoints();
     app.MapMirrorEndpoints();
     app.MapProgressEndpoints();
+    app.MapEpisodeRatingEndpoints();
     app.MapAdminEndpoints();
 
     // ─── DB seeding ────────────────────────────────────────

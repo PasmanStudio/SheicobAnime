@@ -27,6 +27,14 @@ public class Series
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
 
+    // ── External IMDb/TMDB linking (resolved best-effort by the scraper) ──
+    /// <summary>Resolved TMDB TV id — the bridge used to look up per-episode IMDb ids.</summary>
+    public int? TmdbId { get; set; }
+    /// <summary>Series-level IMDb id (ttXXXX). Fallback link when an episode has no IMDb id.</summary>
+    public string? ImdbId { get; set; }
+    /// <summary>When we last attempted to resolve TMDB/IMDb ids for this series.</summary>
+    public DateTime? ImdbResolvedAt { get; set; }
+
     // Navigation
     public ICollection<Episode> Episodes { get; set; } = [];
     public ICollection<SeriesGenre> SeriesGenres { get; set; } = [];
