@@ -1,5 +1,6 @@
 using AnimeIndex.Api.Data.Entities;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 
 namespace AnimeIndex.Api.Data;
 
@@ -18,6 +19,15 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<DiscordPost> DiscordPosts => Set<DiscordPost>();
     public DbSet<TelegramPost> TelegramPosts => Set<TelegramPost>();
     public DbSet<AnimeNewsItem> AnimeNewsItems => Set<AnimeNewsItem>();
+
+    protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
+    {
+        // Recent schema changes are applied as hand-written SQL straight to Supabase, so the EF
+        // model intentionally drifts from the migrations snapshot. Don't let MigrateAsync() throw
+        // PendingModelChangesWarning at startup over that drift — it would crash the scraper jobs
+        // (news / --imdb / daily scrape) even though the real schema is already correct.
+        optionsBuilder.ConfigureWarnings(w => w.Ignore(RelationalEventId.PendingModelChangesWarning));
+    }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
