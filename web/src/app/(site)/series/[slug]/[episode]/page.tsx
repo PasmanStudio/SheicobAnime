@@ -5,6 +5,8 @@ import WatchHeartbeat from "@/components/player/WatchHeartbeat";
 import EpisodeSidebar from "@/components/player/EpisodeSidebar";
 import SectionHeader from "@/components/ui/SectionHeader";
 import MarkWatchedButton from "@/components/watchlist/MarkWatchedButton";
+import ImdbRateButton from "@/components/ui/ImdbRateButton";
+import EpisodeRatingStars from "@/components/ui/EpisodeRatingStars";
 import { ApiError, getEpisodeBySlug, getEpisodeMirrorsBySlug, getSeriesEpisodes } from "@/lib/api";
 import { siteUrl } from "@/lib/site-url";
 import type { Metadata } from "next";
@@ -187,6 +189,14 @@ export default async function EpisodePage({ params }: Readonly<Props>) {
                   </span>
                 )}
               </div>
+
+              {/* Rating: estrellas nativas (cuentan) + IMDb como prueba social */}
+              {episode.id && (
+                <div className="mt-3 flex items-center gap-x-4 gap-y-2 flex-wrap">
+                  <EpisodeRatingStars episodeId={episode.id} />
+                  <ImdbRateButton episode={episode} />
+                </div>
+              )}
             </div>
 
             <div className="flex items-center gap-2 shrink-0">

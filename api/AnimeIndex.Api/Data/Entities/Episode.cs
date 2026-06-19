@@ -12,6 +12,16 @@ public class Episode
     public bool IsPublished { get; set; }
     public DateTime CreatedAt { get; set; }
 
+    // ── IMDb linking (resolved best-effort by the scraper) ──
+    /// <summary>Episode-level IMDb id (ttXXXX) — the page where users rate this episode.</summary>
+    public string? ImdbId { get; set; }
+    /// <summary>Cached IMDb rating (0–10) from OMDb, refreshed periodically.</summary>
+    public decimal? ImdbRating { get; set; }
+    /// <summary>Cached IMDb vote count from OMDb.</summary>
+    public int? ImdbVotes { get; set; }
+    /// <summary>When the IMDb rating was last refreshed from OMDb.</summary>
+    public DateTime? ImdbCheckedAt { get; set; }
+
     // Navigation
     public Series Series { get; set; } = null!;
     public ICollection<Mirror> Mirrors { get; set; } = [];

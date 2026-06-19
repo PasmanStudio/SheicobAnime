@@ -15,7 +15,7 @@ public static class MappingConfig
         TypeAdapterConfig<Episode, EpisodeDto>.NewConfig()
             .Map(d => d.Series,
                  s => s.Series != null
-                    ? new SeriesStubDto(s.Series.Id, s.Series.Slug, s.Series.Title, s.Series.CoverUrl)
+                    ? new SeriesStubDto(s.Series.Id, s.Series.Slug, s.Series.Title, s.Series.CoverUrl, s.Series.ImdbId)
                     : null)
             .Map(d => d.Mirrors,
                  s => s.Mirrors != null

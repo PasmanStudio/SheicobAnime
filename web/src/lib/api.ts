@@ -1,6 +1,7 @@
 import type {
     Episode,
     EpisodeQueryParams,
+    EpisodeRatingStats,
     Genre,
     HealthResponse,
     Mirror,
@@ -260,6 +261,24 @@ export async function updateWatchProgress(
     method: "PUT",
     body: JSON.stringify({ positionSeconds, durationSeconds }),
   });
+}
+
+// ─── Native episode rating (our own star vote, by device id) ──────────
+
+export async function getEpisodeRating(episodeId: string): Promise<EpisodeRatingStats> {
+  return requestWithCredentials<EpisodeRatingStats>(
+    `/episodes/${encodeURIComponent(episodeId)}/rating`
+  );
+}
+
+export async function submitEpisodeRating(
+  episodeId: string,
+  rating: number
+): Promise<EpisodeRatingStats> {
+  return requestWithCredentials<EpisodeRatingStats>(
+    `/episodes/${encodeURIComponent(episodeId)}/rating`,
+    { method: "POST", body: JSON.stringify({ rating }) }
+  );
 }
 
 export async function getRecentProgress(limit = 20): Promise<RecentProgress[]> {

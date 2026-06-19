@@ -42,6 +42,9 @@ export interface Episode {
   airedAt: string | null;
   isPublished: boolean;
   createdAt: string;
+  imdbId?: string | null;
+  imdbRating?: number | null;
+  imdbVotes?: number | null;
   series?: SeriesStub;
   mirrors?: Mirror[];
 }
@@ -51,6 +54,14 @@ export interface SeriesStub {
   slug: string;
   title: string;
   coverUrl: string | null;
+  imdbId?: string | null;
+}
+
+/** Native (our own) per-episode star rating aggregate + this device's own vote. */
+export interface EpisodeRatingStats {
+  average: number;
+  count: number;
+  myRating: number | null;
 }
 
 export interface SeriesSuggest {

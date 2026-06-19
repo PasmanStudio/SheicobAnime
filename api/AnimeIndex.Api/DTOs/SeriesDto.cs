@@ -29,7 +29,8 @@ public record SeriesStubDto(
     Guid Id,
     string Slug,
     string Title,
-    string? CoverUrl);
+    string? CoverUrl,
+    string? ImdbId = null);
 
 public record SeriesSuggestDto(
     string Slug,

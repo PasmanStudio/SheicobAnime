@@ -13,6 +13,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<BlockedSlug> BlockedSlugs => Set<BlockedSlug>();
     public DbSet<ScrapeJob> ScrapeJobs => Set<ScrapeJob>();
     public DbSet<WatchProgress> WatchProgress => Set<WatchProgress>();
+    public DbSet<EpisodeRating> EpisodeRatings => Set<EpisodeRating>();
     public DbSet<InstagramPost> InstagramPosts => Set<InstagramPost>();
     public DbSet<DiscordPost> DiscordPosts => Set<DiscordPost>();
     public DbSet<TelegramPost> TelegramPosts => Set<TelegramPost>();
@@ -169,6 +170,23 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.HasOne(w => w.Episode)
                 .WithMany()
                 .HasForeignKey(w => w.EpisodeId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ─── EpisodeRating (native 1–5 star rating, by device) ──
+        modelBuilder.Entity<EpisodeRating>(e =>
+        {
+            e.ToTable("episode_ratings");
+            e.HasKey(r => new { r.DeviceId, r.EpisodeId });
+            e.Property(r => r.CreatedAt).HasDefaultValueSql("now()");
+            e.Property(r => r.UpdatedAt).HasDefaultValueSql("now()");
+            e.ToTable(t => t.HasCheckConstraint("CK_episode_ratings_rating", "rating BETWEEN 1 AND 5"));
+
+            e.HasIndex(r => r.EpisodeId).HasDatabaseName("idx_episode_ratings_episode");
+
+            e.HasOne(r => r.Episode)
+                .WithMany()
+                .HasForeignKey(r => r.EpisodeId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
 
