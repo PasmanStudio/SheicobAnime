@@ -1,32 +1,28 @@
 import type { Episode } from "@/lib/types";
 
 /**
- * Sends the user to IMDb to rate the episode. Two modes:
- *   - Exact deep-link to the episode/series title page when we already resolved an
- *     imdb_id (via the optional TMDB-backed resolver — not required for this to work).
- *   - Otherwise, an IMDb search query for "{series title} episode {n}" — no API key,
- *     no TMDB dependency, always available. Good enough to land the user on (or very
- *     near) the right title and get them rating.
+ * Deep-links the user to the EXACT episode page on IMDb (resolved server-side via OMDb,
+ * never a guess) so they can rate it with their own IMDb account. Falls back to the
+ * series page when only that was resolved. Renders nothing until a real match exists —
+ * IMDb's own free-text search is unreliable for titles with punctuation (e.g. "Steins;Gate"),
+ * so a "close enough" search link does more harm than good. The daily resolver (OMDb-backed,
+ * no TMDB) catches up the whole catalog within a few days, so this gap is temporary.
  *
  * Note: IMDb has no API to submit votes — the user always rates on imdb.com directly.
  */
 export default function ImdbRateButton({ episode }: { readonly episode: Episode }) {
-  const seriesTitle = episode.series?.title;
   const ttId = episode.imdbId ?? episode.series?.imdbId ?? null;
-  if (!ttId && !seriesTitle) return null; // nothing to search or link to
+  if (!ttId) return null;
 
   const isEpisode = Boolean(episode.imdbId);
-  const href = ttId
-    ? `https://www.imdb.com/title/${ttId}/`
-    : `https://www.imdb.com/find/?q=${encodeURIComponent(`${seriesTitle} episode ${episode.episodeNumber}`)}&s=tt`;
+  const href = `https://www.imdb.com/title/${ttId}/`;
   const rating = episode.imdbRating;
   const votes = episode.imdbVotes;
 
-  const title = ttId
-    ? rating != null
+  const title =
+    rating != null
       ? `${rating.toFixed(1)} en IMDb${votes != null ? ` · ${votes.toLocaleString("es-AR")} votos` : ""} — calificá ${isEpisode ? "este episodio" : "la serie"}`
-      : `Calificá ${isEpisode ? "este episodio" : "la serie"} en IMDb`
-    : `Buscá este episodio en IMDb y calificalo`;
+      : `Calificá ${isEpisode ? "este episodio" : "la serie"} en IMDb`;
 
   return (
     <a
