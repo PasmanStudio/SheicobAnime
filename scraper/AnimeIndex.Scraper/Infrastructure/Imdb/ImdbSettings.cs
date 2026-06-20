@@ -14,14 +14,18 @@ public class ImdbSettings
     /// <summary>OMDb API key (free, 1000/day). Empty = linking disabled entirely.</summary>
     public string OmdbApiKey { get; set; } = string.Empty;
 
-    /// <summary>Series IMDb ids to resolve (title lookup) per run.</summary>
-    public int SeriesBatch { get; set; } = 60;
+    /// <summary>
+    /// Series IMDb ids to attempt per run. Set well above the catalog size on purpose: OMDb's
+    /// free 1000 req/day quota is the real cap, and the resolver stops gracefully (without
+    /// burning a retry slot) once it hits that wall — see OmdbQuotaExceededException.
+    /// </summary>
+    public int SeriesBatch { get; set; } = 3000;
 
     /// <summary>Episodes to resolve to an exact IMDb id (+ rating) per run.</summary>
-    public int EpisodeBatch { get; set; } = 150;
+    public int EpisodeBatch { get; set; } = 3000;
 
     /// <summary>Episode ratings to refresh (re-fetch by existing imdb_id) per run.</summary>
-    public int RatingBatch { get; set; } = 150;
+    public int RatingBatch { get; set; } = 500;
 
     /// <summary>How often to refresh a cached IMDb rating.</summary>
     public int RatingRefreshDays { get; set; } = 7;

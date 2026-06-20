@@ -19,6 +19,11 @@ namespace AnimeIndex.Scraper.Infrastructure.Imdb;
 /// IMDb itself has no public API to read or write this — OMDb is a free, non-commercial-
 /// restricted read-only mirror of IMDb data. Nothing here ever submits votes; the UI deep-links
 /// users to the exact episode page to rate it themselves.
+///
+/// Batch sizes are set generously (covering the whole catalog) on purpose: OMDb's free tier
+/// (1000 req/day) is the real bottleneck, not these limits. <see cref="OmdbQuotaExceededException"/>
+/// stops a run early WITHOUT marking the untried remainder as "attempted", so they're picked up
+/// — at the front of the queue — on the next run instead of waiting out a 30-day retry cooldown.
 /// </summary>
 public class ImdbLinkResolverService(
     AppDbContext db,
@@ -50,7 +55,9 @@ public class ImdbLinkResolverService(
         var retryCutoff = DateTime.UtcNow.AddDays(-settings.RetryDays);
         var series = await db.Series
             .Where(s => s.ImdbId == null && (s.ImdbResolvedAt == null || s.ImdbResolvedAt < retryCutoff))
-            .OrderBy(s => s.ImdbResolvedAt)
+            // Never-attempted series first (HasValue==false sorts before true), then oldest retry.
+            .OrderBy(s => s.ImdbResolvedAt.HasValue)
+            .ThenBy(s => s.ImdbResolvedAt)
             .Take(settings.SeriesBatch)
             .ToListAsync(ct);
 
@@ -58,10 +65,10 @@ public class ImdbLinkResolverService(
         foreach (var s in series)
         {
             if (ct.IsCancellationRequested) break;
-            s.ImdbResolvedAt = DateTime.UtcNow; // mark attempted regardless of outcome
             try
             {
                 var imdbId = await FindSeriesImdbIdAsync(s, ct);
+                s.ImdbResolvedAt = DateTime.UtcNow; // only mark attempted on a REAL attempt
                 if (imdbId is not null)
                 {
                     s.ImdbId = imdbId;
@@ -69,13 +76,21 @@ public class ImdbLinkResolverService(
                     logger.LogDebug("Imdb: {Title} → {Imdb}", s.Title, imdbId);
                 }
             }
+            catch (OmdbQuotaExceededException)
+            {
+                logger.LogWarning(
+                    "Imdb: OMDb daily quota reached while resolving series ({Resolved} done) — stopping early, retried first next run",
+                    resolved);
+                break; // leave s.ImdbResolvedAt untouched — retried (with priority) tomorrow
+            }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
+                s.ImdbResolvedAt = DateTime.UtcNow; // genuine failure (bad data, parse error) — don't retry for 30d
                 logger.LogDebug(ex, "Imdb: series resolve failed for {Title}", s.Title);
             }
         }
 
-        if (series.Count > 0) await db.SaveChangesAsync(ct);
+        await db.SaveChangesAsync(ct);
         return resolved;
     }
 
@@ -115,7 +130,8 @@ public class ImdbLinkResolverService(
             .Where(e => e.ImdbId == null
                      && e.Series.ImdbId != null
                      && (e.ImdbCheckedAt == null || e.ImdbCheckedAt < retryCutoff))
-            .OrderBy(e => e.ImdbCheckedAt)
+            .OrderBy(e => e.ImdbCheckedAt.HasValue)
+            .ThenBy(e => e.ImdbCheckedAt)
             .Take(settings.EpisodeBatch)
             .ToListAsync(ct);
 
@@ -123,7 +139,6 @@ public class ImdbLinkResolverService(
         foreach (var e in episodes)
         {
             if (ct.IsCancellationRequested) break;
-            e.ImdbCheckedAt = DateTime.UtcNow; // mark attempted regardless of outcome
             try
             {
                 // Season=1 heuristic — correct for the single-cour seasonal anime that dominate
@@ -131,6 +146,7 @@ public class ImdbLinkResolverService(
                 // series page (handled in the frontend).
                 var json = await OmdbGetAsync(
                     $"i={Uri.EscapeDataString(e.Series.ImdbId!)}&Season=1&Episode={e.EpisodeNumber}", ct);
+                e.ImdbCheckedAt = DateTime.UtcNow; // only mark attempted on a REAL attempt
                 if (json is null) continue;
 
                 using var doc = JsonDocument.Parse(json);
@@ -144,13 +160,21 @@ public class ImdbLinkResolverService(
                     resolved++;
                 }
             }
+            catch (OmdbQuotaExceededException)
+            {
+                logger.LogWarning(
+                    "Imdb: OMDb daily quota reached while resolving episodes ({Resolved} done) — stopping early, retried first next run",
+                    resolved);
+                break; // leave e.ImdbCheckedAt untouched — retried (with priority) tomorrow
+            }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
+                e.ImdbCheckedAt = DateTime.UtcNow; // genuine failure — don't retry for 30d
                 logger.LogDebug(ex, "Imdb: episode resolve failed for series {Sid} ep {Ep}", e.SeriesId, e.EpisodeNumber);
             }
         }
 
-        if (episodes.Count > 0) await db.SaveChangesAsync(ct);
+        await db.SaveChangesAsync(ct);
         return resolved;
     }
 
@@ -169,10 +193,10 @@ public class ImdbLinkResolverService(
         foreach (var e in episodes)
         {
             if (ct.IsCancellationRequested) break;
-            e.ImdbCheckedAt = DateTime.UtcNow;
             try
             {
                 var json = await OmdbGetAsync($"i={Uri.EscapeDataString(e.ImdbId!)}", ct);
+                e.ImdbCheckedAt = DateTime.UtcNow;
                 if (json is null) continue;
 
                 using var doc = JsonDocument.Parse(json);
@@ -184,17 +208,29 @@ public class ImdbLinkResolverService(
                     updated++;
                 }
             }
+            catch (OmdbQuotaExceededException)
+            {
+                logger.LogWarning(
+                    "Imdb: OMDb daily quota reached while refreshing ratings ({Updated} done) — stopping early", updated);
+                break;
+            }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
+                e.ImdbCheckedAt = DateTime.UtcNow;
                 logger.LogDebug(ex, "Imdb: rating refresh failed for {Imdb}", e.ImdbId);
             }
         }
 
-        if (episodes.Count > 0) await db.SaveChangesAsync(ct);
+        await db.SaveChangesAsync(ct);
         return updated;
     }
 
     // ── OMDb HTTP ────────────────────────────────────────────────────────────────
+
+    /// <summary>Thrown when OMDb's daily free-tier quota is exhausted (body contains
+    /// "Request limit reached"). Callers stop the current loop without marking the
+    /// in-flight item as attempted, so it's retried — with priority — on the next run.</summary>
+    private sealed class OmdbQuotaExceededException : Exception;
 
     private async Task<string?> OmdbGetAsync(string queryWithoutKey, CancellationToken ct)
     {
@@ -202,7 +238,11 @@ public class ImdbLinkResolverService(
         var url  = $"{OmdbBase}?{queryWithoutKey}&apikey={Uri.EscapeDataString(settings.OmdbApiKey)}";
         using var resp = await http.GetAsync(url, ct);
         if (!resp.IsSuccessStatusCode) return null;
-        return await resp.Content.ReadAsStringAsync(ct);
+
+        var body = await resp.Content.ReadAsStringAsync(ct);
+        if (body.Contains("Request limit reached", StringComparison.OrdinalIgnoreCase))
+            throw new OmdbQuotaExceededException();
+        return body;
     }
 
     private static (decimal? rating, int? votes) ParseRating(JsonElement root)
