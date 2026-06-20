@@ -1,0 +1,9 @@
+name: "CodeQL config"
+
+# Excludes vendor-authored HTML/JS saved as test fixtures and dev-tool debug dumps from
+# analysis. These are third-party mirror-provider page sources (mp4upload, streamwish,
+# vidhide, etc.) kept so our resolver parsers have stable inputs to test against — they are
+# never served to end users and are not application logic, so findings inside them are noise.
+paths-ignore:
+  - "api/AnimeIndex.Api.Tests/Fixtures/Resolvers/**"
+  - "scripts/ResolverProbe/dumps/**"

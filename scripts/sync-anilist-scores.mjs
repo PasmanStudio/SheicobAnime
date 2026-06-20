@@ -36,13 +36,15 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 /** Decode HTML entities stored literally in our DB (e.g. &#039; → ', &amp; → &) */
 function decodeHtml(t) {
+  // &amp; must decode LAST — decoding it first would turn a literal "&amp;lt;" into
+  // "&lt;" and then the next replace would over-decode it again into "<".
   return t
     .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(parseInt(code, 10)))
-    .replace(/&amp;/g, '&')
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
     .replace(/&quot;/g, '"')
-    .replace(/&apos;/g, "'");
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, '&');
 }
 
 /** Same normalization as web/src/lib/anilist.ts, plus HTML entity decode */
