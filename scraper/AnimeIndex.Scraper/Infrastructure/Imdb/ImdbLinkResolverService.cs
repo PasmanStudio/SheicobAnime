@@ -122,6 +122,13 @@ public class ImdbLinkResolverService(
 
     // ── 2. Episode → exact IMDb id + rating (one OMDb call) ───────────────────────
 
+    /// <summary>
+    /// Above this episode count, the season=1 heuristic is known-futile (e.g. Naruto ep 191
+    /// has no season-1 episode 191) — every attempt would just fail and burn quota. These long
+    /// multi-season shows are excluded here; they still get the series-level fallback link.
+    /// </summary>
+    private const int MaxEpisodeCountForSeasonOneHeuristic = 30;
+
     private async Task<int> ResolveEpisodesAsync(CancellationToken ct)
     {
         var retryCutoff = DateTime.UtcNow.AddDays(-settings.RetryDays);
@@ -129,6 +136,7 @@ public class ImdbLinkResolverService(
             .Include(e => e.Series)
             .Where(e => e.ImdbId == null
                      && e.Series.ImdbId != null
+                     && (e.Series.EpisodeCount == null || e.Series.EpisodeCount <= MaxEpisodeCountForSeasonOneHeuristic)
                      && (e.ImdbCheckedAt == null || e.ImdbCheckedAt < retryCutoff))
             .OrderBy(e => e.ImdbCheckedAt.HasValue)
             .ThenBy(e => e.ImdbCheckedAt)
