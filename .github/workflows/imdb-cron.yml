@@ -1,7 +1,8 @@
 name: IMDb — link episodes & refresh ratings
 
-# Runs once a day. Resolves series -> TMDB -> per-episode IMDb ids and refreshes IMDb
-# ratings (via OMDb) in batches. Best-effort: skips gracefully if TMDB_API_KEY is missing.
+# Runs once a day. Resolves series + per-episode EXACT IMDb ids and refreshes IMDb ratings,
+# all via OMDb alone (no TMDB needed — see ImdbLinkResolverService for why). Best-effort:
+# skips gracefully if OMDB_API_KEY is missing.
 
 on:
   schedule:
@@ -43,8 +44,7 @@ jobs:
         env:
           ASPNETCORE_ENVIRONMENT: Production
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          # Free keys: TMDB → themoviedb.org/settings/api ; OMDb → omdbapi.com/apikey.aspx
-          Imdb__TmdbApiKey: ${{ secrets.TMDB_API_KEY }}
+          # Free key (1000/day, no commercial-use restriction): omdbapi.com/apikey.aspx
           Imdb__OmdbApiKey: ${{ secrets.OMDB_API_KEY }}
           # Optional tuning:
           # Imdb__SeriesBatch: "40"
