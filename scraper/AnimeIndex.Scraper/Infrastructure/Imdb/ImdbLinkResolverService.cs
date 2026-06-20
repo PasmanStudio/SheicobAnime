@@ -245,11 +245,16 @@ public class ImdbLinkResolverService(
         var http = httpFactory.CreateClient("imdb");
         var url  = $"{OmdbBase}?{queryWithoutKey}&apikey={Uri.EscapeDataString(settings.OmdbApiKey)}";
         using var resp = await http.GetAsync(url, ct);
-        if (!resp.IsSuccessStatusCode) return null;
 
+        // OMDb signals daily-quota exhaustion with HTTP 401 (NOT a 200 + error body) —
+        // read the body and check for the quota message BEFORE looking at the status code,
+        // otherwise every remaining item in the batch gets silently (and wrongly) treated
+        // as "no match" and marked attempted, burning the 30-day retry window for nothing.
         var body = await resp.Content.ReadAsStringAsync(ct);
         if (body.Contains("Request limit reached", StringComparison.OrdinalIgnoreCase))
             throw new OmdbQuotaExceededException();
+
+        if (!resp.IsSuccessStatusCode) return null;
         return body;
     }
 
