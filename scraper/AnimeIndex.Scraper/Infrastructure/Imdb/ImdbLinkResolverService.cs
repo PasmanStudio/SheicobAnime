@@ -33,6 +33,9 @@ public class ImdbLinkResolverService(
 {
     private const string OmdbBase = "https://www.omdbapi.com/";
 
+    /// <summary>How far back "currently being watched" looks — the real-demand priority signal.</summary>
+    private static readonly TimeSpan RecentActivityWindow = TimeSpan.FromDays(30);
+
     public async Task RunAsync(CancellationToken ct = default)
     {
         if (!settings.IsEnabled)
@@ -52,11 +55,21 @@ public class ImdbLinkResolverService(
 
     private async Task<int> ResolveSeriesAsync(CancellationToken ct)
     {
-        var retryCutoff = DateTime.UtcNow.AddDays(-settings.RetryDays);
+        var retryCutoff    = DateTime.UtcNow.AddDays(-settings.RetryDays);
+        var activityCutoff = DateTime.UtcNow - RecentActivityWindow;
+
+        // Series someone is ACTUALLY watching right now (real demand) — these jump the queue
+        // ahead of the catalog's long, mostly-unwatched tail.
+        var activeSlugs = db.WatchProgress
+            .Where(w => w.UpdatedAt >= activityCutoff)
+            .Select(w => w.SeriesSlug);
+
         var series = await db.Series
             .Where(s => s.ImdbId == null && (s.ImdbResolvedAt == null || s.ImdbResolvedAt < retryCutoff))
+            .OrderByDescending(s => activeSlugs.Contains(s.Slug))  // currently watched first
+            .ThenByDescending(s => s.Score ?? 0)                   // then best-rated/most popular
             // Never-attempted series first (HasValue==false sorts before true), then oldest retry.
-            .OrderBy(s => s.ImdbResolvedAt.HasValue)
+            .ThenBy(s => s.ImdbResolvedAt.HasValue)
             .ThenBy(s => s.ImdbResolvedAt)
             .Take(settings.SeriesBatch)
             .ToListAsync(ct);
@@ -131,14 +144,24 @@ public class ImdbLinkResolverService(
 
     private async Task<int> ResolveEpisodesAsync(CancellationToken ct)
     {
-        var retryCutoff = DateTime.UtcNow.AddDays(-settings.RetryDays);
+        var retryCutoff    = DateTime.UtcNow.AddDays(-settings.RetryDays);
+        var activityCutoff = DateTime.UtcNow - RecentActivityWindow;
+
+        // The episode someone is ACTUALLY watching right now — the most precise demand signal
+        // we have (watch_progress is keyed by exact episode id, not just series).
+        var activeEpisodeIds = db.WatchProgress
+            .Where(w => w.UpdatedAt >= activityCutoff)
+            .Select(w => w.EpisodeId);
+
         var episodes = await db.Episodes
             .Include(e => e.Series)
             .Where(e => e.ImdbId == null
                      && e.Series.ImdbId != null
                      && (e.Series.EpisodeCount == null || e.Series.EpisodeCount <= MaxEpisodeCountForSeasonOneHeuristic)
                      && (e.ImdbCheckedAt == null || e.ImdbCheckedAt < retryCutoff))
-            .OrderBy(e => e.ImdbCheckedAt.HasValue)
+            .OrderByDescending(e => activeEpisodeIds.Contains(e.Id))  // currently watched first
+            .ThenByDescending(e => e.Series.Score ?? 0)               // then best-rated/most popular
+            .ThenBy(e => e.ImdbCheckedAt.HasValue)
             .ThenBy(e => e.ImdbCheckedAt)
             .Take(settings.EpisodeBatch)
             .ToListAsync(ct);
