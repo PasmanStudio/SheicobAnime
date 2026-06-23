@@ -135,7 +135,7 @@ export default function ConsentBanner() {
     <div className="fixed inset-x-0 bottom-14 z-50 border-t border-line-1 bg-abyss-2 px-4 py-3 shadow-lg md:bottom-0">
       <div className="mx-auto flex max-w-container flex-col items-center justify-between gap-2.5 sm:flex-row">
         <p className="text-[12.5px] leading-relaxed text-ink-3">
-          Usamos cookies y unos pocos anuncios para bancar los servidores y que el
+          Usamos cookies y unos pocos anuncios para sostener los servidores y que el
           sitio siga gratis.{" "}
           <Link href="/privacy" className="text-brand-bright underline hover:brightness-110">
             Más info

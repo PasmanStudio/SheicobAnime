@@ -94,7 +94,7 @@ export default async function DirectoryPage({ searchParams }: Props) {
       {results.data.length === 0 ? (
         <div className="py-12 text-center text-sm">
           <p className="text-ink-2">No se encontraron resultados con esos filtros.</p>
-          <p className="mt-1 text-ink-3">Probá sacando alguno — el catálogo es grande.</p>
+          <p className="mt-1 text-ink-3">Prueba sacando alguno — el catálogo es grande.</p>
         </div>
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">

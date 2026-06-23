@@ -56,9 +56,9 @@ export default async function HistorialPage() {
   if (!session?.user?.id) {
     return (
       <div className="mx-auto max-w-2xl px-4 py-16 text-center">
-        <h1 className="sh-display mb-2 text-2xl">Iniciá sesión</h1>
+        <h1 className="sh-display mb-2 text-2xl">Inicia sesión</h1>
         <p className="mb-1 text-ink-2">Necesitás una cuenta para ver tu historial de episodios.</p>
-        <p className="mb-6 text-sm text-ink-3">Entrá con tu cuenta y retomá donde dejaste.</p>
+        <p className="mb-6 text-sm text-ink-3">Entra con tu cuenta y retomá donde dejaste.</p>
         <Link
           href="/"
           className="inline-flex items-center gap-2 rounded-btn px-5 py-2.5 font-bold text-[var(--text-on-accent)] shadow-glow transition-all duration-fast hover:brightness-110 active:scale-[0.97]"
@@ -85,7 +85,7 @@ export default async function HistorialPage() {
       {history.length === 0 ? (
         <div className="py-16 text-center text-sm">
           <p className="text-ink-2">Tu historial está vacío.</p>
-          <p className="mt-1 text-ink-3">Los episodios que marques como vistos van a aparecer acá.</p>
+          <p className="mt-1 text-ink-3">Los episodios que marques como vistos van a aparecer aquí.</p>
         </div>
       ) : (
         <div className="space-y-6">

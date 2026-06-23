@@ -147,7 +147,7 @@ export default async function TierListDetailPage({ params }: Props) {
           {list.is_public && !isOwner && (
             <ShareButtons
               url={shareUrl}
-              text={`Mirá la tier list "${list.name}" en SheicobAnime`}
+              text={`Mira la tier list "${list.name}" en SheicobAnime`}
             />
           )}
         </div>
@@ -165,7 +165,7 @@ export default async function TierListDetailPage({ params }: Props) {
             {totalEntries === 0 ? "Sin animes" : `${totalEntries} anime${totalEntries !== 1 ? "s" : ""}`}
             {isOwner && (
               <span className="ml-2 text-ink-3">
-                · Hacé click en un anime para cambiar su tier
+                · Haz click en un anime para cambiar su tier
               </span>
             )}
           </p>
@@ -179,7 +179,7 @@ export default async function TierListDetailPage({ params }: Props) {
               {list.is_public && (
                 <ShareButtons
                   url={shareUrl}
-                  text={`Mirá la tier list "${list.name}" en SheicobAnime`}
+                  text={`Mira la tier list "${list.name}" en SheicobAnime`}
                 />
               )}
             </div>
@@ -206,8 +206,8 @@ export default async function TierListDetailPage({ params }: Props) {
           <p className="text-ink-2 mb-2">Esta tier list está vacía.</p>
           {isOwner && (
             <p className="text-sm text-ink-3">
-              Usá el botón <span className="text-ink-2">Agregar anime</span> de arriba,
-              o andá a cualquier serie y usá el botón{" "}
+              Usa el botón <span className="text-ink-2">Agregar anime</span> de arriba,
+              o ve a cualquier serie y usa el botón{" "}
               <span className="text-ink-2">🏆 Tier List</span>.
             </p>
           )}

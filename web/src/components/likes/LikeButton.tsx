@@ -118,7 +118,7 @@ export default function LikeButton({ seriesSlug, seriesTitle, coverUrl }: Props)
             bg-abyss-3 border border-line-2 text-xs text-white whitespace-nowrap shadow-xl
             pointer-events-none"
         >
-          Iniciá sesión para dar like
+          Inicia sesión para dar like
           <span
             className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-[var(--bg-3)]"
             aria-hidden

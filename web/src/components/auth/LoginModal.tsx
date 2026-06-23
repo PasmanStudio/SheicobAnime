@@ -64,7 +64,7 @@ export default function LoginModal({ onClose }: LoginModalProps) {
         <div className="text-center mb-6">
           <h2 className="text-xl font-bold text-white">Iniciar sesión</h2>
           <p className="text-sm text-ink-2 mt-1.5">
-            Guardá tu progreso, listas y rankings.
+            Guarda tu progreso, listas y rankings.
           </p>
         </div>
 

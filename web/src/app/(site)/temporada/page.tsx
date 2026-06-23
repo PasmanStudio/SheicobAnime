@@ -30,7 +30,7 @@ export async function generateMetadata({ searchParams }: Props): Promise<Metadat
   const seasonLabel = SEASON_LABELS[season];
   return {
     title: `Temporada ${seasonLabel} ${year} — SheicobAnime`,
-    description: `Anime de la temporada ${seasonLabel.toLowerCase()} ${year}. Descubrí qué títulos están disponibles en SheicobAnime.`,
+    description: `Anime de la temporada ${seasonLabel.toLowerCase()} ${year}. Descubre qué títulos están disponibles en SheicobAnime.`,
   };
 }
 

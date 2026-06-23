@@ -6,7 +6,7 @@ const CAFECITO_URL = process.env.NEXT_PUBLIC_CAFECITO_URL ?? "";
 const KOFI_URL = process.env.NEXT_PUBLIC_KOFI_URL ?? "";
 
 export const metadata: Metadata = {
-  title: "Apoyanos",
+  title: "Apóyanos",
   description:
     "SheicobAnime no tiene paywall. Mantenemos la publicidad al mínimo. Si esta página es tu manera de mirar anime, bancanos con un cafecito.",
   alternates: { canonical: "/apoyanos" },
@@ -17,17 +17,17 @@ export default function ApoyanosPage() {
 
   return (
     <div className="mx-auto max-w-2xl px-4 py-12">
-      <SectionHeader size="lg" eyebrow="De fan a fan" title="Apoyanos" className="mb-6" />
+      <SectionHeader size="lg" eyebrow="De fan a fan" title="Apóyanos" className="mb-6" />
 
       <div className="sh-body space-y-4 text-[15px]">
         <p>
           SheicobAnime no tiene paywall. Mantenemos la publicidad al mínimo y nunca te
-          interrumpimos entre vos y el play: lo justo para que los servidores sigan
-          prendidos.
+          interrumpimos entre tú y el play: lo justo para que los servidores sigan
+          encendidos.
         </p>
         <p>
-          Esos servidores cuestan plata todos los meses. Si esta página es tu manera de
-          mirar anime, podés bancarla con un <strong className="text-ink-1">cafecito</strong> —
+          Esos servidores cuestan dinero todos los meses. Si esta página es tu manera de
+          mirar anime, puedes apoyarla con un <strong className="text-ink-1">cafecito</strong> —
           una vez, cuando quieras, sin suscripción. Cada aporte nos saca presión de tener
           que meter más anuncios.
         </p>

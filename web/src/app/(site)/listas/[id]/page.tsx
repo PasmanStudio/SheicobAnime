@@ -146,7 +146,7 @@ export default async function ListaDetailPage({ params }: Props) {
             <div />
           )}
           {list.is_public && !isOwner && (
-            <ShareButtons url={shareUrl} text={`Mirá la lista "${list.name}" en SheicobAnime`} />
+            <ShareButtons url={shareUrl} text={`Mira la lista "${list.name}" en SheicobAnime`} />
           )}
         </div>
 
@@ -183,7 +183,7 @@ export default async function ListaDetailPage({ params }: Props) {
               {list.views.toLocaleString("es-AR")} vistas
             </span>
           ) : isOwner ? (
-            <span className="text-xs text-ink-3">Solo vos podés verla</span>
+            <span className="text-xs text-ink-3">Solo tú puedes verla</span>
           ) : null}
 
           {/* Owner actions */}
@@ -191,7 +191,7 @@ export default async function ListaDetailPage({ params }: Props) {
             <div className="ml-auto flex items-center gap-2">
               <TogglePublicButton listId={list.id} initialIsPublic={list.is_public} />
               {list.is_public && (
-                <ShareButtons url={shareUrl} text={`Mirá la lista "${list.name}" en SheicobAnime`} />
+                <ShareButtons url={shareUrl} text={`Mira la lista "${list.name}" en SheicobAnime`} />
               )}
             </div>
           )}
@@ -217,8 +217,8 @@ export default async function ListaDetailPage({ params }: Props) {
           <p className="text-ink-2 mb-2">Esta lista está vacía.</p>
           {isOwner && (
             <p className="text-sm text-ink-3">
-              Usá el botón <span className="text-ink-2">Agregar anime</span> de arriba,
-              o andá a cualquier serie y usá el botón{" "}
+              Usa el botón <span className="text-ink-2">Agregar anime</span> de arriba,
+              o ve a cualquier serie y usa el botón{" "}
               <span className="text-ink-2">📋 Listas</span>.
             </p>
           )}

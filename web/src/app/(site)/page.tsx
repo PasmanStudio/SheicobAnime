@@ -20,9 +20,9 @@ import type { Metadata } from "next";
 export const revalidate = 120;
 
 export const metadata: Metadata = {
-  title: "SheicobAnime — Mirá anime online en español",
+  title: "SheicobAnime — Mira anime online en español",
   description:
-    "Mirá los últimos episodios de anime online, sub español. Catálogo actualizado todos los días.",
+    "Mira los últimos episodios de anime online, sub español. Catálogo actualizado todos los días.",
 };
 
 const EMPTY_PAGE: PaginatedResponse<Series> = { data: [], total: 0, page: 1, pageSize: 12 };

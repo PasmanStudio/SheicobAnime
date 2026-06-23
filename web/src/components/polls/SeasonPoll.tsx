@@ -110,7 +110,7 @@ export default function SeasonPoll() {
 
       <p className="mt-3 sh-stat text-[11px] text-ink-3">
         {poll.totalVotes} voto{poll.totalVotes !== 1 ? "s" : ""} en total
-        {voted ? " · podés cambiar tu voto tocando otra opción" : " · +10 XP por votar"}
+        {voted ? " · puedes cambiar tu voto tocando otra opción" : " · +10 XP por votar"}
       </p>
 
       {showLogin && <LoginModal onClose={() => setShowLogin(false)} />}

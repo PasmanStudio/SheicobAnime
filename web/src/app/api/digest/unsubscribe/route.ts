@@ -18,11 +18,11 @@ export async function GET(req: Request) {
       return new NextResponse("Link inválido o ya usado.", { status: 404 });
     }
   } catch {
-    return new NextResponse("Error al desuscribir — probá de nuevo.", { status: 500 });
+    return new NextResponse("Error al desuscribir — prueba de nuevo.", { status: 500 });
   }
 
   return new NextResponse(
-    "Listo, te desuscribimos del digest semanal. Podés volver a activarlo desde tu perfil.",
+    "Listo, te desuscribimos del digest semanal. Puedes volver a activarlo desde tu perfil.",
     { status: 200, headers: { "Content-Type": "text/plain; charset=utf-8" } },
   );
 }

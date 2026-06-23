@@ -250,7 +250,7 @@ export default function AddToTierModal({ tierListId, existingSlugs, onAdded }: P
 
             {/* Footer */}
             <div className="px-4 py-2.5 border-t border-line-1 text-xs text-ink-3">
-              Podés cambiar el tier de un anime haciendo click en él · <kbd className="px-1 py-0.5 rounded bg-abyss-3 text-ink-2 font-mono">Esc</kbd> para cerrar
+              Puedes cambiar el tier de un anime haciendo click en él · <kbd className="px-1 py-0.5 rounded bg-abyss-3 text-ink-2 font-mono">Esc</kbd> para cerrar
             </div>
           </div>
         </div>
