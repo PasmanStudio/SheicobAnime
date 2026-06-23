@@ -32,7 +32,7 @@ export default async function SearchPage({ searchParams }: Props) {
       <div className="mx-auto max-w-container px-4 py-16 text-center space-y-2">
         <h1 className="sh-display text-2xl">Buscar anime</h1>
         <p className="text-sm text-ink-2">Todavía no buscaste nada.</p>
-        <p className="text-sm text-ink-3">Usá la lupa de arriba para encontrar tu próxima serie.</p>
+        <p className="text-sm text-ink-3">Usa la lupa de arriba para encontrar tu próxima serie.</p>
       </div>
     );
   }
@@ -61,7 +61,7 @@ export default async function SearchPage({ searchParams }: Props) {
       {results.data.length === 0 ? (
         <EmptyState
           title={`Sin resultados para “${q}”`}
-          description="Probá con otro término o con el título en romaji."
+          description="Prueba con otro término o con el título en romaji."
           cta={{ href: "/directory", label: "Explorar el directorio" }}
         />
       ) : (

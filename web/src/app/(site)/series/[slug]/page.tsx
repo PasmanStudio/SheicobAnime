@@ -31,7 +31,7 @@ export async function generateMetadata({ params }: Pick<Props, "params">): Promi
     const series = await getSeriesBySlug(slug);
     const desc =
       series.synopsis?.slice(0, 160) ??
-      `Mirá ${series.title} online en SheicobAnime. Episodios subtitulados en español.`;
+      `Mira ${series.title} online en SheicobAnime. Episodios subtitulados en español.`;
     const canonical = `/series/${slug}`;
     return {
       title: series.title,
@@ -244,7 +244,7 @@ export default async function SeriesPage({ params, searchParams }: Props) {
           {episodesPage.data.length === 0 ? (
             <EmptyState
               title="Todavía no hay episodios"
-              description="Sumala a tu lista y te va a aparecer apenas salga el primero."
+              description="Súmala a tu lista y te va a aparecer apenas salga el primero."
               cta={{ href: "/temporada", label: "Ver la temporada" }}
             />
           ) : (

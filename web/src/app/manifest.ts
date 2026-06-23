@@ -6,7 +6,7 @@ export default function manifest(): MetadataRoute.Manifest {
   return {
     name: "SheicobAnime",
     short_name: "SheicobAnime",
-    description: "Mirá anime online en español. Catálogo actualizado todos los días.",
+    description: "Mira anime online en español. Catálogo actualizado todos los días.",
     start_url: "/",
     scope: "/",
     display: "standalone",

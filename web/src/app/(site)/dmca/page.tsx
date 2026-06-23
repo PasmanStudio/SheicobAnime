@@ -24,7 +24,7 @@ export default function DmcaPage() {
           <h2 className="text-xl font-semibold text-white mb-3">Proceso de eliminación</h2>
           <p>
             Si sos titular de derechos de autor y creés que tu contenido está siendo indexado
-            sin autorización, podés solicitar la eliminación contactándonos:
+            sin autorización, puedes solicitar la eliminación contactándonos:
           </p>
           <ul className="list-disc list-inside mt-4 space-y-2 text-ink-2">
             <li>Identificación de la obra protegida</li>

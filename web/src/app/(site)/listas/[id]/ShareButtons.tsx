@@ -15,7 +15,7 @@ export default function ShareButtons({ listId, listName }: Props) {
   const url = typeof window !== "undefined"
     ? window.location.href
     : `${siteUrl()}/listas/${listId}`;
-  const text = `Mirá mi lista "${listName}" en SheicobAnime`;
+  const text = `Mira mi lista "${listName}" en SheicobAnime`;
 
   const handleCopy = async () => {
     try {

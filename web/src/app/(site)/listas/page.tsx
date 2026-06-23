@@ -44,9 +44,9 @@ export default async function ListasPage() {
   if (!session?.user?.id) {
     return (
       <div className="mx-auto max-w-2xl px-4 py-16 text-center">
-        <h1 className="sh-display mb-2 text-2xl">Iniciá sesión</h1>
+        <h1 className="sh-display mb-2 text-2xl">Inicia sesión</h1>
         <p className="mb-1 text-ink-2">Necesitás una cuenta para crear y ver tus listas personales.</p>
-        <p className="mb-6 text-sm text-ink-3">Entrá con tu cuenta y armá tu primera lista en un minuto.</p>
+        <p className="mb-6 text-sm text-ink-3">Entra con tu cuenta y armá tu primera lista en un minuto.</p>
         <Link
           href="/"
           className="inline-flex items-center gap-2 rounded-btn px-5 py-2.5 font-bold text-[var(--text-on-accent)] shadow-glow transition-all duration-fast hover:brightness-110 active:scale-[0.97]"
@@ -71,8 +71,8 @@ export default async function ListasPage() {
       {/* Grid */}
       {lists.length === 0 ? (
         <div className="py-20 text-center text-sm">
-          <p className="text-ink-2">No tenés listas creadas todavía.</p>
-          <p className="mt-1 text-ink-3">Creá una para organizar tus animes favoritos.</p>
+          <p className="text-ink-2">No tienes listas creadas todavía.</p>
+          <p className="mt-1 text-ink-3">Crea una para organizar tus animes favoritos.</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">

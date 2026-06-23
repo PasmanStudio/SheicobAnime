@@ -41,11 +41,11 @@ export const viewport: Viewport = {
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl()),
   title: {
-    default: "SheicobAnime — Mirá anime online gratis, sub español",
+    default: "SheicobAnime — Mira anime online gratis, sub español",
     template: "%s | SheicobAnime",
   },
   description:
-    "Mirá anime online gratis y en español: episodios nuevos todos los días, sin cuenta y sin vueltas.",
+    "Mira anime online gratis y en español: episodios nuevos todos los días, sin cuenta ni complicaciones.",
   manifest: "/manifest.webmanifest",
   appleWebApp: {
     capable: true,

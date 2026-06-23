@@ -17,7 +17,7 @@ export async function generateMetadata({ params }: Pick<Props, "params">): Promi
   const name = decodeURIComponent(rawName);
   return {
     title: `Anime de ${name}`,
-    description: `Mirá series de anime de ${name} online en SheicobAnime.`,
+    description: `Mira series de anime de ${name} online en SheicobAnime.`,
   };
 }
 

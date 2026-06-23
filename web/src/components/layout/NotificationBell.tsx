@@ -88,8 +88,8 @@ export default function NotificationBell() {
           </div>
           {items.length === 0 ? (
             <div className="px-3 py-8 text-center text-sm">
-              <p className="text-ink-2">No tenés notificaciones.</p>
-              <p className="mt-1 text-ink-3">Seguí una serie y te avisamos cuando salga el próximo.</p>
+              <p className="text-ink-2">No tienes notificaciones.</p>
+              <p className="mt-1 text-ink-3">Sigue una serie y te avisamos cuando salga el próximo.</p>
             </div>
           ) : (
             <div className="max-h-[60vh] overflow-y-auto">

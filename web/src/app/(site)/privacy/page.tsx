@@ -37,7 +37,7 @@ export default function PrivacyPolicyPage() {
               y almacenado en tu navegador por hasta 2 años. Se usa únicamente para recordar el punto donde dejaste de ver
               un episodio (función &quot;Continuar viendo&quot;). No se vincula a tu identidad, correo, IP
               persistente ni a servicios de terceros. Los datos de progreso se eliminan automáticamente tras 180 días de
-              inactividad. Podés borrar esta cookie desde tu navegador en cualquier momento para reiniciar tu historial anónimo.
+              inactividad. Puedes borrar esta cookie desde tu navegador en cualquier momento para reiniciar tu historial anónimo.
             </li>
             <li><strong>Cookies de terceros:</strong> Nuestros socios publicitarios (Adsterra) y de comentarios (Disqus) pueden establecer cookies para personalizar anuncios y funcionalidades. Estas cookies se rigen por las políticas de privacidad de cada proveedor.</li>
           </ul>
@@ -47,7 +47,7 @@ export default function PrivacyPolicyPage() {
           <h2 className="text-xl font-semibold text-white mb-3">3. Publicidad</h2>
           <p>
             SheicobAnime utiliza redes publicitarias de terceros para mostrar anuncios. Estos servicios pueden recopilar
-            información sobre tu actividad de navegación para mostrar anuncios relevantes. Podés controlar la
+            información sobre tu actividad de navegación para mostrar anuncios relevantes. Puedes controlar la
             personalización de anuncios desde la configuración de tu navegador.
           </p>
           <p className="mt-2">
@@ -95,7 +95,7 @@ export default function PrivacyPolicyPage() {
 
         <section>
           <h2 className="text-xl font-semibold text-white mb-3">8. Tus derechos</h2>
-          <p>Podés:</p>
+          <p>Puedes:</p>
           <ul className="list-disc list-inside mt-2 space-y-1 text-ink-2">
             <li>Borrar tu almacenamiento local desde la configuración del navegador</li>
             <li>Bloquear cookies de terceros desde tu navegador</li>

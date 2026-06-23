@@ -69,7 +69,7 @@ export default async function RankingPage() {
         <div className="py-24 text-center text-sm">
           <p className="text-ink-2">Todavía no hay likes registrados.</p>
           <p className="mt-1 text-ink-3">
-            Visitá cualquier anime y presioná el botón ♥ para aparecer acá.
+            Visita cualquier anime y presiona el botón ♥ para aparecer aquí.
           </p>
         </div>
       ) : (

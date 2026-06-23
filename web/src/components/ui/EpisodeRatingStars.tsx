@@ -45,7 +45,7 @@ export default function EpisodeRatingStars({ episodeId }: { readonly episodeId: 
       <div
         className="flex items-center gap-0.5"
         role="radiogroup"
-        aria-label="Calificá este episodio"
+        aria-label="Califica este episodio"
         onMouseLeave={() => setHover(0)}
       >
         {[1, 2, 3, 4, 5].map((v) => (

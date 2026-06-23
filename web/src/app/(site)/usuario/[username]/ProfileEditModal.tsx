@@ -103,7 +103,7 @@ export default function ProfileEditModal({ currentName, currentUsername, current
                   defaultValue={currentBio ?? ""}
                   maxLength={300}
                   rows={3}
-                  placeholder="Contá algo sobre vos..."
+                  placeholder="Cuéntanos algo sobre ti..."
                   className="w-full bg-abyss-3 border border-line-2 rounded-lg px-3 py-2 text-sm text-white placeholder-[var(--text-3)] focus:outline-none focus:border-brand transition-colors resize-none"
                 />
               </div>

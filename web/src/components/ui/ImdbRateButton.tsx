@@ -21,8 +21,8 @@ export default function ImdbRateButton({ episode }: { readonly episode: Episode 
 
   const title =
     rating != null
-      ? `${rating.toFixed(1)} en IMDb${votes != null ? ` · ${votes.toLocaleString("es-AR")} votos` : ""} — calificá ${isEpisode ? "este episodio" : "la serie"}`
-      : `Calificá ${isEpisode ? "este episodio" : "la serie"} en IMDb`;
+      ? `${rating.toFixed(1)} en IMDb${votes != null ? ` · ${votes.toLocaleString("es-AR")} votos` : ""} — califica ${isEpisode ? "este episodio" : "la serie"}`
+      : `Califica ${isEpisode ? "este episodio" : "la serie"} en IMDb`;
 
   return (
     <a
@@ -40,7 +40,7 @@ export default function ImdbRateButton({ episode }: { readonly episode: Episode 
         </>
       )}
       <span className="font-bold">
-        Votá en <span className="text-gold">IMDb</span>
+        Vota en <span className="text-gold">IMDb</span>
       </span>
     </a>
   );

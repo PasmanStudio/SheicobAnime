@@ -32,7 +32,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
     const seriesTitle = episode.series?.title ?? "Anime";
     // SEO: title template "Ver {serie} EP {n} sub español online"
     const title = `Ver ${seriesTitle} EP ${episode.episodeNumber} sub español online`;
-    const description = `Mirá ${seriesTitle} episodio ${episode.episodeNumber}${
+    const description = `Mira ${seriesTitle} episodio ${episode.episodeNumber}${
       episode.title ? ` — ${episode.title}` : ""
     } online, subtitulado en español, gratis en SheicobAnime.`;
     const canonical = `/series/${slug}/${episode.episodeNumber}`;

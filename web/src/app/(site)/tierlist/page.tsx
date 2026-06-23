@@ -46,10 +46,10 @@ export default async function TierListPage() {
             <TierBadge key={t} tier={t} size={34} />
           ))}
         </div>
-        <h1 className="sh-display mb-2 text-2xl">Iniciá sesión</h1>
+        <h1 className="sh-display mb-2 text-2xl">Inicia sesión</h1>
         <p className="mb-1 text-ink-2">Necesitás una cuenta para crear y ver tus tier lists.</p>
         <p className="mb-6 text-sm text-ink-3">
-          Entrá con tu cuenta y armá tu primera tier list en un minuto.
+          Entra con tu cuenta y armá tu primera tier list en un minuto.
         </p>
         <Link
           href="/"
@@ -78,9 +78,9 @@ export default async function TierListPage() {
               <TierBadge key={t} tier={t} size={28} />
             ))}
           </div>
-          <p className="text-ink-2">No tenés tier lists creadas todavía.</p>
+          <p className="text-ink-2">No tienes tier lists creadas todavía.</p>
           <p className="mt-1 text-ink-3">
-            Creá una para rankear tus animes en S / A / B / C / D / F.
+            Crea una para rankear tus animes en S / A / B / C / D / F.
           </p>
         </div>
       ) : (

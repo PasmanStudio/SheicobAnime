@@ -159,7 +159,7 @@ export default function AddToListButton({ seriesSlug, seriesTitle, coverUrl }: P
             </div>
           ) : lists.length === 0 && !showNewInput ? (
             <div className="px-3 py-3 text-sm text-ink-3 text-center">
-              No tenés listas creadas.
+              No tienes listas creadas.
             </div>
           ) : (
             lists.map((list) => {

@@ -66,7 +66,7 @@ export default function DirectEpisodePlayer({ mirrors, episodeTitle }: Readonly<
       <div className="aspect-video w-full bg-abyss-1 flex items-center justify-center rounded-modal border border-line-1">
         <div className="text-sm text-ink-3 text-center px-4">
           <p>Todavía no hay enlaces disponibles para este episodio.</p>
-          <p className="mt-1">Probá de nuevo en un rato — los mirrors se cargan apenas salen.</p>
+          <p className="mt-1">Prueba de nuevo en un rato — los mirrors se cargan apenas salen.</p>
         </div>
       </div>
     );
@@ -171,7 +171,7 @@ export default function DirectEpisodePlayer({ mirrors, episodeTitle }: Readonly<
         <div className="flex items-center gap-2 border-t border-line-1 px-3 sm:px-4 py-2">
           {reportedIds.has(selected.id) ? (
             <span className="text-xs text-[var(--success)]">
-              Gracias por avisar — lo revisamos. Mientras tanto, probá otro mirror.
+              Gracias por avisar — lo revisamos. Mientras tanto, prueba otro mirror.
             </span>
           ) : (
             <button

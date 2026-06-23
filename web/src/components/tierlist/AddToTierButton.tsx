@@ -110,7 +110,7 @@ export default function AddToTierButton({ seriesSlug, seriesTitle, coverUrl }: P
             </div>
           ) : lists.length === 0 ? (
             <div className="px-3 py-4 text-sm text-ink-3 text-center">
-              No tenés tier lists.<br />
+              No tienes tier lists.<br />
               <Link href="/tierlist" className="text-brand-bright hover:text-[var(--cyan-200)] underline text-xs mt-1 inline-block">
                 Crear una →
               </Link>
