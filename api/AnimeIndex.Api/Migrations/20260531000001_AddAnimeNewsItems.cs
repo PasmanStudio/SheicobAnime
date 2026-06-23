@@ -33,6 +33,9 @@ CREATE TABLE IF NOT EXISTS anime_news_items (
 );
 CREATE INDEX IF NOT EXISTS idx_anime_news_ig_status ON anime_news_items(ig_post_status);
 CREATE INDEX IF NOT EXISTS idx_anime_news_published_at ON anime_news_items(published_at DESC);
+-- RLS default-deny like every other table (only the scraper's privileged conn writes it).
+-- Was missing originally and flagged by Supabase as ""Table publicly accessible""; enabled in prod 2026-06-22.
+ALTER TABLE anime_news_items ENABLE ROW LEVEL SECURITY;
 ");
         }
 
