@@ -1,0 +1,97 @@
+name: Importar serie
+
+# Importa UNA serie puntual desde una fuente (animeav1.com por ahora) a SheicobAnime.
+# Se dispara a mano desde la pestaña Actions: escribís el nombre, elegís la fuente, Run.
+#
+# Qué hace: busca la serie en la fuente → trae metadata + episodios + embeds (SUB) →
+# los guarda como mirrors → (opcional) los sube a tu host (SeekStreaming) → purga el cache del sitio.
+#
+# Required secrets (Settings → Secrets → Actions):
+#   DATABASE_URL              — Supabase connection string
+#   SEEKSTREAMING_API_KEY     — para subir a tu host (sin esto, solo guarda embeds)
+#   REVALIDATE_SECRET         — para purgar el cache del frontend (igual que el scraper diario)
+# Opcionales: DOODSTREAM_API_KEY, PLAYER4ME_API_KEY (réplica a hosts propios)
+
+on:
+  workflow_dispatch:
+    inputs:
+      query:
+        description: 'Nombre de la serie a buscar en la fuente (ej: Frieren)'
+        required: true
+        type: string
+      source:
+        description: 'Fuente de donde scrapear'
+        required: true
+        default: animeav1
+        type: choice
+        options:
+          - animeav1
+      slug:
+        description: 'Slug exacto (opcional) — saltea la búsqueda e importa ese (ej: sousou-no-frieren)'
+        required: false
+        type: string
+      upload:
+        description: 'Subir los videos a tu host (SeekStreaming). Si lo desmarcás, solo guarda los embeds de la fuente.'
+        required: true
+        default: true
+        type: boolean
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  import:
+    name: Importar serie
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: '9.x'
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-scraper-${{ hashFiles('scraper/**/*.csproj', 'api/AnimeIndex.Api/AnimeIndex.Api.csproj') }}
+          restore-keys: nuget-scraper-
+
+      - name: Restore
+        run: dotnet restore scraper/AnimeIndex.Scraper/AnimeIndex.Scraper.csproj
+
+      - name: Build
+        run: dotnet build scraper/AnimeIndex.Scraper/AnimeIndex.Scraper.csproj --no-restore -c Release
+
+      - name: Importar
+        # Los inputs van por env (no interpolados en el shell) para evitar inyección.
+        run: |
+          EXTRA=""
+          if [ "$IMPORT_UPLOAD" = "false" ]; then EXTRA="--no-upload"; fi
+          if [ -n "$IMPORT_SLUG" ]; then EXTRA="$EXTRA --slug $IMPORT_SLUG"; fi
+          dotnet run --project scraper/AnimeIndex.Scraper/AnimeIndex.Scraper.csproj --no-build -c Release -- \
+            --import --source "$IMPORT_SOURCE" --query "$IMPORT_QUERY" $EXTRA
+        env:
+          ASPNETCORE_ENVIRONMENT: Production
+          # Inputs (no interpolar directo en el comando)
+          IMPORT_QUERY:  ${{ inputs.query }}
+          IMPORT_SOURCE: ${{ inputs.source }}
+          IMPORT_SLUG:   ${{ inputs.slug }}
+          IMPORT_UPLOAD: ${{ inputs.upload }}
+          # DB
+          DATABASE_URL:  ${{ secrets.DATABASE_URL }}
+          # Subida a tu host (igual que el scraper diario)
+          SeekStreaming__ApiKey: ${{ secrets.SEEKSTREAMING_API_KEY }}
+          SeekStreaming__MaxParallelUploads: "20"
+          SeekStreaming__TranscodeTimeoutMinutes: "8"
+          SeekStreaming__TranscodeTimeoutCapMinutes: "12"
+          # Réplica a hosts propios con reparto de ingresos (opcional)
+          Doodstream__ApiKey: ${{ secrets.DOODSTREAM_API_KEY }}
+          Player4me__ApiKey:  ${{ secrets.PLAYER4ME_API_KEY }}
+          # Purga del cache del frontend al terminar
+          Revalidate__SiteUrl: "https://sheicobanime.sheicob.workers.dev"
+          Revalidate__Secret:  ${{ secrets.REVALIDATE_SECRET }}

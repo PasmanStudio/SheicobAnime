@@ -1,6 +1,7 @@
 using AnimeIndex.Api.Data;
 using AnimeIndex.Api.Infrastructure.Scraping;
 using AnimeIndex.Scraper.Infrastructure;
+using AnimeIndex.Scraper.Infrastructure.Importers;
 using AnimeIndex.Scraper.Infrastructure.Discord;
 using AnimeIndex.Scraper.Infrastructure.Instagram;
 using AnimeIndex.Scraper.Infrastructure.Telegram;
@@ -148,6 +149,140 @@ if (args.Contains("--imdb"))
     catch (Exception ex)
     {
         Log.Fatal(ex, "IMDb linking terminated unexpectedly");
+        throw;
+    }
+    finally
+    {
+        await Log.CloseAndFlushAsync();
+    }
+    return;
+}
+
+// ── Per-series import from a chosen source (one-shot, manual workflow) ──
+// Usage: dotnet run --project scraper/AnimeIndex.Scraper -- --import --source animeav1 --query "Frieren"
+//   optional: --slug <slug> (skip search and import that exact series)
+//             --no-upload   (only store the source embeds, don't upload to our host)
+// Backs the import-series.yml workflow_dispatch: type the series name, hit Run.
+if (args.Contains("--import"))
+{
+    Log.Logger = new LoggerConfiguration()
+        .WriteTo.Console(new JsonFormatter())
+        .CreateBootstrapLogger();
+
+    // Reads the value following a flag, e.g. ArgValue("--query") for `--query "Frieren"`.
+    static string? ArgValue(string[] a, string name)
+    {
+        var i = Array.IndexOf(a, name);
+        return i >= 0 && i + 1 < a.Length ? a[i + 1] : null;
+    }
+
+    try
+    {
+        var importHost = Host.CreateApplicationBuilder(args);
+
+        importHost.Services.AddSerilog((_, lc) => lc
+            .ReadFrom.Configuration(importHost.Configuration)
+            .Enrich.FromLogContext()
+            .Enrich.WithProperty("Service", "import")
+            .WriteTo.Console(new JsonFormatter()));
+
+        // DB (same fallback chain as the --news / --imdb one-shots)
+        var importConnStr = importHost.Configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(importConnStr))
+            importConnStr = importHost.Configuration["DATABASE_URL"];
+        if (string.IsNullOrEmpty(importConnStr))
+            throw new InvalidOperationException("Missing DATABASE_URL / ConnectionStrings:DefaultConnection");
+        importConnStr = NormalizePostgresConnectionString(importConnStr);
+        importHost.Services.AddDbContext<AppDbContext>(opts =>
+            opts.UseNpgsql(importConnStr, o => o.EnableRetryOnFailure(3)));
+
+        // Source importer(s) + orchestrator + frontend cache purge
+        importHost.Services.AddHttpClient(); // default client used by SiteRevalidationService
+        importHost.Services.AddHttpClient("animeav1", c =>
+        {
+            c.Timeout = TimeSpan.FromSeconds(30);
+            c.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36");
+            c.DefaultRequestHeaders.TryAddWithoutValidation("Accept-Language", "es-419,es;q=0.9,en;q=0.5");
+        });
+        importHost.Services.AddScoped<UpsertPipelineService>();
+        importHost.Services.AddScoped<SiteRevalidationService>();
+        importHost.Services.AddScoped<ISeriesImporter, AnimeAv1Importer>();
+        importHost.Services.AddScoped<SeriesImportService>();
+
+        // Upload chain (SeekStreaming + own hosts) — registered ONLY when an API key
+        // exists, because SeekStreamingClient throws without one. The orchestrator
+        // resolves SeekStreamingUploadService lazily and skips uploads when absent.
+        var wantsUpload = !args.Contains("--no-upload");
+        var hasSeekKey = !string.IsNullOrEmpty(importHost.Configuration["SeekStreaming:ApiKey"]);
+        if (wantsUpload && hasSeekKey)
+        {
+            importHost.Services.AddHttpClient("resolver", c =>
+            {
+                c.Timeout = TimeSpan.FromSeconds(30);
+                c.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent",
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36");
+            });
+            importHost.Services.AddHttpClient("seekstreaming", c =>
+            {
+                c.BaseAddress = new Uri("https://seekstreaming.com");
+                c.Timeout = TimeSpan.FromSeconds(30);
+            });
+            importHost.Services.AddHttpClient("seek-download", c =>
+            {
+                c.Timeout = TimeSpan.FromMinutes(90);
+                c.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent",
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36");
+            });
+            importHost.Services.AddHttpClient("seek-tus", c => c.Timeout = TimeSpan.FromMinutes(90));
+            importHost.Services.AddHttpClient("multihost", c => c.Timeout = TimeSpan.FromMinutes(90));
+
+            importHost.Services.AddSingleton<AnimeIndex.Api.Infrastructure.Resolvers.IHosterResolver, AnimeIndex.Api.Infrastructure.Resolvers.VoeResolver>();
+            importHost.Services.AddSingleton<AnimeIndex.Api.Infrastructure.Resolvers.IHosterResolver, AnimeIndex.Api.Infrastructure.Resolvers.Mp4UploadResolver>();
+            importHost.Services.AddSingleton<AnimeIndex.Api.Infrastructure.Resolvers.IHosterResolver, AnimeIndex.Api.Infrastructure.Resolvers.OkruResolver>();
+            importHost.Services.AddSingleton<AnimeIndex.Api.Infrastructure.Resolvers.IHosterResolver, AnimeIndex.Api.Infrastructure.Resolvers.StreamwishResolver>();
+            importHost.Services.AddSingleton<AnimeIndex.Api.Infrastructure.Resolvers.IHosterResolver, AnimeIndex.Api.Infrastructure.Resolvers.VidhideResolver>();
+            importHost.Services.AddSingleton<AnimeIndex.Api.Infrastructure.Resolvers.IHosterResolver, AnimeIndex.Api.Infrastructure.Resolvers.MediafireResolver>();
+            importHost.Services.AddSingleton<AnimeIndex.Api.Infrastructure.Resolvers.IHosterResolver, AnimeIndex.Api.Infrastructure.Resolvers.MixdropResolver>();
+            importHost.Services.AddSingleton<AnimeIndex.Api.Infrastructure.Resolvers.IHosterResolver, AnimeIndex.Api.Infrastructure.Resolvers.StreamtapeResolver>();
+            importHost.Services.AddSingleton<AnimeIndex.Api.Infrastructure.Resolvers.ResolverRegistry>();
+
+            importHost.Services.AddSingleton<SeekStreamingClient>();
+            importHost.Services.AddSingleton<TusVideoUploader>();
+            importHost.Services.AddScoped<MultiHostUploadService>();
+            importHost.Services.AddScoped<SeekStreamingUploadService>();
+        }
+        else if (wantsUpload)
+        {
+            Log.Warning("Upload pedido pero falta SeekStreaming:ApiKey — solo se guardarán los embeds de la fuente.");
+        }
+
+        var importApp = importHost.Build();
+        await using var importScope = importApp.Services.CreateAsyncScope();
+        var importDb = importScope.ServiceProvider.GetRequiredService<AppDbContext>();
+        await importDb.Database.MigrateAsync();
+
+        var source = ArgValue(args, "--source") ?? "animeav1";
+        var query = ArgValue(args, "--query");
+        var slug = ArgValue(args, "--slug");
+
+        var importer = importScope.ServiceProvider.GetRequiredService<SeriesImportService>();
+        using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(30)); // safety timeout
+        var summary = await importer.ImportAsync(source, query, slug, wantsUpload, cts.Token);
+
+        if (summary.Success)
+            Log.Information(
+                "✅ Import OK: {Slug} \"{Title}\" — {Eps} episodios, {Mirrors} mirrors, {Uploaded} subidos",
+                summary.Slug, summary.Title, summary.Episodes, summary.Mirrors, summary.Uploaded);
+        else
+        {
+            Log.Error("❌ Import falló: {Message}", summary.Message);
+            Environment.ExitCode = 1;
+        }
+    }
+    catch (Exception ex)
+    {
+        Log.Fatal(ex, "Import pipeline terminated unexpectedly");
         throw;
     }
     finally
