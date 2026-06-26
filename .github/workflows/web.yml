@@ -132,12 +132,17 @@ jobs:
 
       # Publica el worker (+ assets estáticos). `wrangler deploy` NO escribe en KV,
       # así que esto funciona aunque el seeding de arriba haya fallado por el límite.
+      # OPEN_NEXT_DEPLOY=true es CLAVE: OpenNext instala un hook que intercepta
+      # `wrangler deploy` y lo redirige a `opennextjs-cloudflare deploy` (que vuelve
+      # a sembrar KV → falla con el límite agotado). Ese env var le dice al hook que
+      # NO redirija, así corre el deploy plano de wrangler (sin tocar KV).
       - name: Deploy worker to Cloudflare
         run: npx wrangler deploy
         working-directory: web
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          OPEN_NEXT_DEPLOY: "true"
 
       # Sincroniza el secret de revalidación on-demand al worker (mismo valor que
       # usa el scraper, via el secret REVALIDATE_SECRET del repo). Sin esto el
