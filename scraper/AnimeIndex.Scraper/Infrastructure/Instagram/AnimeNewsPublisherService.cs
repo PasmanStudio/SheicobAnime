@@ -76,7 +76,7 @@ public class AnimeNewsPublisherService(
                 if (slides.Count == 1)
                 {
                     // No body text → single-image post (carousels require ≥ 2 items)
-                    var url         = await api.UploadImageToImgBbAsync(slides[0], SlideFileName(item, 0), ct);
+                    var url         = await api.UploadImageAsync(slides[0], SlideFileName(item, 0), ct);
                     var containerId = await api.CreateSingleImageContainerAsync(url, caption, ct);
                     await api.WaitForContainerReadyAsync(containerId, ct);
                     feedMediaId = await api.PublishContainerAsync(containerId, ct);
@@ -87,7 +87,7 @@ public class AnimeNewsPublisherService(
                     var childIds = new List<string>(slides.Count);
                     for (var i = 0; i < slides.Count; i++)
                     {
-                        var url    = await api.UploadImageToImgBbAsync(slides[i], SlideFileName(item, i), ct);
+                        var url    = await api.UploadImageAsync(slides[i], SlideFileName(item, i), ct);
                         var itemId = await api.CreateCarouselItemContainerAsync(url, ct);
                         await api.WaitForContainerReadyAsync(itemId, ct);
                         childIds.Add(itemId);
@@ -114,7 +114,7 @@ public class AnimeNewsPublisherService(
             {
                 var storyBytes = await imageService.GenerateStoryAsync(item, content, images, ct);
                 var storyFile  = $"news-{item.SourceKey}-{item.Id.ToString("N")[..8]}-story.jpg";
-                var storyUrl    = await api.UploadImageToImgBbAsync(storyBytes, storyFile, ct);
+                var storyUrl    = await api.UploadImageAsync(storyBytes, storyFile, ct);
                 // Link sticker points to OUR site (not the source article) — drives traffic to us.
                 var storyContainerId = await api.CreateStoryContainerAsync(storyUrl, igSettings.SiteUrl, ct);
                 await api.WaitForContainerReadyAsync(storyContainerId, ct);

@@ -114,7 +114,7 @@ public class InstagramPublisherService(
         {
             var imageBytes = await imageService.GenerateFeedAsync(episode.Series, episode, ct);
             var fileName   = BuildFileName(episode.Series.Slug, episode.EpisodeNumber, "single");
-            var publicUrl  = await api.UploadImageToImgBbAsync(imageBytes, fileName, ct);
+            var publicUrl  = await api.UploadImageAsync(imageBytes, fileName, ct);
 
             var items    = new List<(Series, Episode)> { (episode.Series, episode) };
             var caption  = captionGen.GenerateCarouselCaption(items);
@@ -166,7 +166,7 @@ public class InstagramPublisherService(
 
                 var imageBytes = await imageService.GenerateFeedAsync(episode.Series, episode, ct);
                 var fileName   = BuildFileName(episode.Series.Slug, episode.EpisodeNumber, "carousel");
-                var publicUrl  = await api.UploadImageToImgBbAsync(imageBytes, fileName, ct);
+                var publicUrl  = await api.UploadImageAsync(imageBytes, fileName, ct);
                 var itemId     = await api.CreateCarouselItemContainerAsync(publicUrl, ct);
 
                 // Meta requires each item container to reach FINISHED before the parent is created
@@ -231,7 +231,7 @@ public class InstagramPublisherService(
         {
             var imageBytes = await imageService.GenerateStoryAsync(episode.Series, episode, ct);
             var fileName   = BuildFileName(episode.Series.Slug, episode.EpisodeNumber, "story");
-            var publicUrl  = await api.UploadImageToImgBbAsync(imageBytes, fileName, ct);
+            var publicUrl  = await api.UploadImageAsync(imageBytes, fileName, ct);
 
             var episodeUrl = $"{settings.SiteUrl}/series/{episode.Series.Slug}/{episode.EpisodeNumber}";
             var containerId = await api.CreateStoryContainerAsync(publicUrl, episodeUrl, ct);
