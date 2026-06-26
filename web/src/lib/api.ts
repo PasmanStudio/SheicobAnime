@@ -27,15 +27,20 @@ const API_BASE_URL =
 const FETCH_TIMEOUT_MS = 12_000;
 
 // Cache de CONTENIDO que cambia con cada scrape (series/episodios/mirrors).
-// - `revalidate: 60` → piso de frescura: contenido nuevo visible en ≤1 min.
+// - `tags: ["content"]` → revalidación ON-DEMAND y mecanismo PRINCIPAL de frescura:
+//   el scraper pega a /api/revalidate al terminar un run y purga este tag →
+//   contenido nuevo al instante, sin esperar el TTL. Verificado en prod (log
+//   "✅ Revalidate: tag 'content' purgado"). Requiere el tag cache KV
+//   (NEXT_TAG_CACHE_KV en wrangler.jsonc + open-next.config.ts).
+// - `revalidate: 900` → TTL de RESPALDO (15 min), no la vía de frescura. Solo
+//   importa si la purga on-demand falla. Antes era 60s, pero cada regeneración por
+//   TTL es un write a KV: con 60s + tráfico, cada ruta regeneraba ~1440 veces/día
+//   aunque el contenido no cambiara, reventando el free tier de KV (1000 puts/día).
+//   Como la purga es instantánea, el TTL puede ser alto sin demorar episodios nuevos.
 //   (En Next, el revalidate más bajo entre página y sus fetches manda, así que
-//   esto baja la regeneración de toda la ruta a 60s sin tocar cada page.tsx.)
-// - `tags: ["content"]` → revalidación ON-DEMAND: el scraper pega a /api/revalidate
-//   al terminar un run y purga este tag → contenido nuevo al instante. Requiere el
-//   tag cache KV (NEXT_TAG_CACHE_KV en wrangler.jsonc + open-next.config.ts). Sin
-//   ese binding el tag es no-op y queda solo el TTL de 60s. Degrada con gracia.
+//   esto fija la regeneración de respaldo de toda la ruta sin tocar cada page.tsx.)
 const CONTENT_CACHE: { next: NextFetchRequestConfig } = {
-  next: { revalidate: 60, tags: ["content"] },
+  next: { revalidate: 900, tags: ["content"] },
 };
 
 // ─── Error class ─────────────────────────────────────
@@ -162,18 +167,22 @@ export async function getSeries(
 export async function searchSeries(
   params: SearchQueryParams
 ): Promise<PaginatedResponse<Series>> {
-  // Search results are dynamic — short cache so new series appear quickly.
+  // `no-store`: cada query es única (search page + el matcher por-título de
+  // /temporada) → cachearla escribe una key nueva en KV por búsqueda, con hit
+  // rate ~0 y re-write a cada TTL. Quema el free tier de KV (1000 puts/día) sin
+  // beneficio real. Se sirve siempre fresco desde el API (acción del usuario).
   return request<PaginatedResponse<Series>>(
     `/series/search${toQueryString({ ...params })}`,
-    { next: { revalidate: 60 } }
+    { cache: "no-store" }
   );
 }
 
 export async function suggestSeries(q: string): Promise<SeriesSuggest[]> {
-  // Autocomplete — always fetched client-side, revalidate irrelevant but set a short TTL.
+  // Autocomplete — `no-store`: query única por tecleo, no tiene sentido cachear
+  // (además se llama client-side, donde el data cache de Next ni aplica).
   return request<SeriesSuggest[]>(
     `/series/suggest${toQueryString({ q })}`,
-    { next: { revalidate: 30 } }
+    { cache: "no-store" }
   );
 }
 
