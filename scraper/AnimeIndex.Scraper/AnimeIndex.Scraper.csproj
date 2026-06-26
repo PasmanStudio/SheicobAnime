@@ -17,6 +17,7 @@
 
   <ItemGroup>
     <!-- Pin EF Core to same version as API project to override Hangfire.PostgreSql 9.0.1 transitive dep -->
+    <PackageReference Include="AWSSDK.S3" Version="4.0.25.3" />
     <PackageReference Include="Microsoft.EntityFrameworkCore" Version="9.0.5" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="9.0.5" />
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="9.0.4" />

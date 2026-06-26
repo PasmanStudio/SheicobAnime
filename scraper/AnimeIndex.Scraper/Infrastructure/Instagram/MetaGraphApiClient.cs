@@ -1,3 +1,6 @@
+using Amazon.Runtime;
+using Amazon.S3;
+using Amazon.S3.Model;
 using Microsoft.Extensions.Logging;
 using System.Text.Json;
 
@@ -24,10 +27,61 @@ public class MetaGraphApiClient(
     // ── Image hosting ─────────────────────────────────────────────────
 
     /// <summary>
-    /// Uploads image bytes to imgbb.com and returns the permanent public URL.
-    /// The Meta Graph API requires a publicly accessible HTTPS URL for all media.
+    /// Uploads image bytes to a public host and returns the public HTTPS URL that
+    /// the Meta Graph API will fetch. Prefers Cloudflare R2 (S3-compatible, no rate
+    /// limits); falls back to imgbb.com only when R2 is not configured.
     /// </summary>
-    public async Task<string> UploadImageToImgBbAsync(
+    public Task<string> UploadImageAsync(
+        byte[] imageBytes, string fileName, CancellationToken ct = default)
+        => settings.R2Configured
+            ? UploadImageToR2Async(imageBytes, fileName, ct)
+            : UploadImageToImgBbAsync(imageBytes, fileName, ct);
+
+    // Lazily built per scope (MetaGraphApiClient is scoped; the process is short-lived
+    // so the underlying HttpClient is reclaimed at exit).
+    private IAmazonS3? _r2;
+    private IAmazonS3 R2 => _r2 ??= new AmazonS3Client(
+        new BasicAWSCredentials(settings.R2AccessKeyId, settings.R2SecretAccessKey),
+        new AmazonS3Config
+        {
+            ServiceURL           = $"https://{settings.R2AccountId}.r2.cloudflarestorage.com",
+            AuthenticationRegion = "auto",
+            ForcePathStyle       = true,
+            // R2 rejects the AWS SDK v4 default flexible (CRC) checksums — only
+            // compute/validate a checksum when the operation actually requires it.
+            RequestChecksumCalculation = RequestChecksumCalculation.WHEN_REQUIRED,
+            ResponseChecksumValidation = ResponseChecksumValidation.WHEN_REQUIRED,
+        });
+
+    /// <summary>
+    /// Uploads image bytes to a public Cloudflare R2 bucket and returns the public
+    /// URL (R2PublicBaseUrl + "/" + key). No third-party rate limits.
+    /// </summary>
+    private async Task<string> UploadImageToR2Async(
+        byte[] imageBytes, string fileName, CancellationToken ct = default)
+    {
+        var contentType = fileName.EndsWith(".png", StringComparison.OrdinalIgnoreCase)
+            ? "image/png" : "image/jpeg";
+
+        using var ms = new MemoryStream(imageBytes);
+        await R2.PutObjectAsync(new PutObjectRequest
+        {
+            BucketName  = settings.R2Bucket,
+            Key         = fileName,
+            InputStream = ms,
+            ContentType = contentType,
+        }, ct);
+
+        var url = $"{settings.R2PublicBaseUrl.TrimEnd('/')}/{Uri.EscapeDataString(fileName)}";
+        logger.LogDebug("Uploaded {File} to R2: {Url}", fileName, url);
+        return url;
+    }
+
+    /// <summary>
+    /// LEGACY fallback: uploads image bytes to imgbb.com. The free tier rate-limits
+    /// hard under the hourly news volume — used only when R2 is not configured.
+    /// </summary>
+    private async Task<string> UploadImageToImgBbAsync(
         byte[] imageBytes, string fileName, CancellationToken ct = default)
     {
         var base64 = Convert.ToBase64String(imageBytes);
