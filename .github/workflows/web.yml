@@ -76,12 +76,17 @@ jobs:
         run: npm ci
         working-directory: web
 
-      - name: Build (OpenNext) and deploy to Cloudflare
-        run: npm run cf:deploy
+      # El deploy está separado en 3 pasos (antes era un solo `npm run cf:deploy`).
+      # Motivo: `opennextjs-cloudflare deploy` siembra el cache incremental en KV
+      # ANTES de publicar el worker, y si eso falla aborta TODO el deploy. El free
+      # tier de KV son 1000 writes/día; cuando se agota, el seeding tira
+      # `code: 10048` y el worker no se actualiza (deadlock: el fix no puede salir
+      # porque deployar también escribe en KV). Separando los pasos, el seeding es
+      # best-effort (continue-on-error) y el worker SIEMPRE se publica.
+      - name: Build (OpenNext)
+        run: npm run cf:build
         working-directory: web
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           # NEXT_PUBLIC_* values are inlined into the client bundle at build
           # time — they are public by definition, so they live here in plain
           # text rather than in repo secrets.
@@ -112,6 +117,27 @@ jobs:
           AUTH_DISCORD_ID: "placeholder"
           AUTH_DISCORD_SECRET: "placeholder"
           NEXTAUTH_DATABASE_URL: ""
+
+      # Siembra el cache incremental (ISR) en KV. BEST-EFFORT: si el cupo diario de
+      # writes de KV está agotado (code 10048) NO debe tumbar el deploy — el worker
+      # igual se publica abajo y el cache se repuebla solo en runtime cuando haya
+      # cupo. Sin esto, un límite de KV bloquea toda actualización del sitio.
+      - name: Seed KV incremental cache (best-effort)
+        continue-on-error: true
+        run: npx opennextjs-cloudflare populateCache remote
+        working-directory: web
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      # Publica el worker (+ assets estáticos). `wrangler deploy` NO escribe en KV,
+      # así que esto funciona aunque el seeding de arriba haya fallado por el límite.
+      - name: Deploy worker to Cloudflare
+        run: npx wrangler deploy
+        working-directory: web
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
       # Sincroniza el secret de revalidación on-demand al worker (mismo valor que
       # usa el scraper, via el secret REVALIDATE_SECRET del repo). Sin esto el
