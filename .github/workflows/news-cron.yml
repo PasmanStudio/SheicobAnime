@@ -63,12 +63,10 @@ jobs:
           Instagram__AccessToken:  ${{ secrets.INSTAGRAM_ACCESS_TOKEN }}
           Instagram__IgUserId:     ${{ secrets.INSTAGRAM_IG_USER_ID }}
           Instagram__ImgBbApiKey:  ${{ secrets.IMGBB_API_KEY }}
-          # ── Cloudflare R2 (host de imágenes preferido — sin rate limits) ──
-          Instagram__R2AccountId:       ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          Instagram__R2AccessKeyId:     ${{ secrets.R2_ACCESS_KEY_ID }}
-          Instagram__R2SecretAccessKey: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          Instagram__R2Bucket:          ${{ secrets.R2_IG_BUCKET }}
-          Instagram__R2PublicBaseUrl:   ${{ secrets.R2_IG_PUBLIC_BASE_URL }}
+          # ── Cloudinary (host de imágenes preferido — key-auth, sin throttle de IP) ──
+          Instagram__CloudinaryCloudName:  ${{ secrets.CLOUDINARY_CLOUD_NAME }}
+          Instagram__CloudinaryApiKey:     ${{ secrets.CLOUDINARY_API_KEY }}
+          Instagram__CloudinaryApiSecret:  ${{ secrets.CLOUDINARY_API_SECRET }}
           Instagram__AppId:        ${{ secrets.INSTAGRAM_APP_ID }}
           Instagram__AppSecret:    ${{ secrets.INSTAGRAM_APP_SECRET }}
           Instagram__SiteUrl:      ${{ secrets.INSTAGRAM_SITE_URL }}

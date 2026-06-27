@@ -76,14 +76,12 @@ jobs:
           Instagram__IgUserId:     ${{ secrets.INSTAGRAM_IG_USER_ID }}
           # imgbb.com API key — LEGACY fallback (se usa solo si R2 no está configurado)
           Instagram__ImgBbApiKey:  ${{ secrets.IMGBB_API_KEY }}
-          # ── Cloudflare R2 (host de imágenes preferido — sin rate limits) ──
-          # Crear: bucket R2 con acceso público (r2.dev o dominio propio) + un R2 API
-          # token (Access Key ID + Secret). El AccountId reusa CLOUDFLARE_ACCOUNT_ID.
-          Instagram__R2AccountId:       ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          Instagram__R2AccessKeyId:     ${{ secrets.R2_ACCESS_KEY_ID }}
-          Instagram__R2SecretAccessKey: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          Instagram__R2Bucket:          ${{ secrets.R2_IG_BUCKET }}
-          Instagram__R2PublicBaseUrl:   ${{ secrets.R2_IG_PUBLIC_BASE_URL }}
+          # ── Cloudinary (host de imágenes preferido — key-auth, sin throttle de IP
+          # como imgbb desde CI). Free tier sin tarjeta. Cargar 3 secrets del panel
+          # de Cloudinary (console.cloudinary.com → Settings → API Keys). ──
+          Instagram__CloudinaryCloudName:  ${{ secrets.CLOUDINARY_CLOUD_NAME }}
+          Instagram__CloudinaryApiKey:     ${{ secrets.CLOUDINARY_API_KEY }}
+          Instagram__CloudinaryApiSecret:  ${{ secrets.CLOUDINARY_API_SECRET }}
           # Facebook App credentials — used for monthly token re-extension
           Instagram__AppId:        ${{ secrets.INSTAGRAM_APP_ID }}
           Instagram__AppSecret:    ${{ secrets.INSTAGRAM_APP_SECRET }}

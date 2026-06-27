@@ -1,6 +1,5 @@
-using Amazon.Runtime;
-using Amazon.S3;
-using Amazon.S3.Model;
+using CloudinaryDotNet;
+using CloudinaryDotNet.Actions;
 using Microsoft.Extensions.Logging;
 using System.Text.Json;
 
@@ -28,58 +27,52 @@ public class MetaGraphApiClient(
 
     /// <summary>
     /// Uploads image bytes to a public host and returns the public HTTPS URL that
-    /// the Meta Graph API will fetch. Prefers Cloudflare R2 (S3-compatible, no rate
-    /// limits); falls back to imgbb.com only when R2 is not configured.
+    /// the Meta Graph API will fetch. Prefers Cloudinary (key-authenticated, so it
+    /// is NOT subject to the shared GitHub-Actions-IP throttle that breaks imgbb);
+    /// falls back to imgbb.com only when Cloudinary is not configured.
     /// </summary>
     public Task<string> UploadImageAsync(
         byte[] imageBytes, string fileName, CancellationToken ct = default)
-        => settings.R2Configured
-            ? UploadImageToR2Async(imageBytes, fileName, ct)
+        => settings.CloudinaryConfigured
+            ? UploadImageToCloudinaryAsync(imageBytes, fileName, ct)
             : UploadImageToImgBbAsync(imageBytes, fileName, ct);
 
-    // Lazily built per scope (MetaGraphApiClient is scoped; the process is short-lived
-    // so the underlying HttpClient is reclaimed at exit).
-    private IAmazonS3? _r2;
-    private IAmazonS3 R2 => _r2 ??= new AmazonS3Client(
-        new BasicAWSCredentials(settings.R2AccessKeyId, settings.R2SecretAccessKey),
-        new AmazonS3Config
-        {
-            ServiceURL           = $"https://{settings.R2AccountId}.r2.cloudflarestorage.com",
-            AuthenticationRegion = "auto",
-            ForcePathStyle       = true,
-            // R2 rejects the AWS SDK v4 default flexible (CRC) checksums — only
-            // compute/validate a checksum when the operation actually requires it.
-            RequestChecksumCalculation = RequestChecksumCalculation.WHEN_REQUIRED,
-            ResponseChecksumValidation = ResponseChecksumValidation.WHEN_REQUIRED,
-        });
+    // Lazily built per scope (MetaGraphApiClient is scoped; the process is short-lived).
+    private Cloudinary? _cloudinary;
+    private Cloudinary Cloudinary => _cloudinary ??= new Cloudinary(
+        new Account(settings.CloudinaryCloudName, settings.CloudinaryApiKey, settings.CloudinaryApiSecret));
 
     /// <summary>
-    /// Uploads image bytes to a public Cloudflare R2 bucket and returns the public
-    /// URL (R2PublicBaseUrl + "/" + key). No third-party rate limits.
+    /// Uploads image bytes to Cloudinary and returns the secure (HTTPS) URL.
+    /// Cloudinary authenticates by API key, so unlike imgbb it is immune to the
+    /// shared GitHub-Actions-IP rate limiting that broke the imgbb path.
     /// </summary>
-    private async Task<string> UploadImageToR2Async(
+    private async Task<string> UploadImageToCloudinaryAsync(
         byte[] imageBytes, string fileName, CancellationToken ct = default)
     {
-        var contentType = fileName.EndsWith(".png", StringComparison.OrdinalIgnoreCase)
-            ? "image/png" : "image/jpeg";
-
         using var ms = new MemoryStream(imageBytes);
-        await R2.PutObjectAsync(new PutObjectRequest
+        var result = await Cloudinary.UploadAsync(new ImageUploadParams
         {
-            BucketName  = settings.R2Bucket,
-            Key         = fileName,
-            InputStream = ms,
-            ContentType = contentType,
+            File      = new FileDescription(fileName, ms),
+            PublicId  = Path.GetFileNameWithoutExtension(fileName),
+            Folder    = string.IsNullOrWhiteSpace(settings.CloudinaryFolder) ? null : settings.CloudinaryFolder,
+            Overwrite = true,
         }, ct);
 
-        var url = $"{settings.R2PublicBaseUrl.TrimEnd('/')}/{Uri.EscapeDataString(fileName)}";
-        logger.LogDebug("Uploaded {File} to R2: {Url}", fileName, url);
+        if (result.Error is not null)
+            throw new InvalidOperationException($"Cloudinary upload failed: {result.Error.Message}");
+
+        var url = result.SecureUrl?.ToString()
+            ?? throw new InvalidOperationException("Cloudinary response missing secure_url");
+
+        logger.LogDebug("Uploaded {File} to Cloudinary: {Url}", fileName, url);
         return url;
     }
 
     /// <summary>
-    /// LEGACY fallback: uploads image bytes to imgbb.com. The free tier rate-limits
-    /// hard under the hourly news volume — used only when R2 is not configured.
+    /// LEGACY fallback: uploads image bytes to imgbb.com. imgbb throttles the
+    /// shared GitHub-Actions IP (code 100 "Rate limit reached") regardless of our
+    /// own volume — used only when Cloudinary is not configured.
     /// </summary>
     private async Task<string> UploadImageToImgBbAsync(
         byte[] imageBytes, string fileName, CancellationToken ct = default)
