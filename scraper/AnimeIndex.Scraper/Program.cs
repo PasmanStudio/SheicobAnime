@@ -319,6 +319,34 @@ if (args.Contains("--images"))
     return;
 }
 
+// ── Quick image-host upload smoke test (Cloudinary/imgbb, no DB/Hangfire) ──
+// Usage: Instagram__CloudinaryCloudName=... Instagram__CloudinaryApiKey=... \
+//        Instagram__CloudinaryApiSecret=... dotnet run --project scraper/AnimeIndex.Scraper -- --test-imagehost
+// Uploads a tiny PNG via the same UploadImageAsync the publishers use and prints the URL.
+if (args.Contains("--test-imagehost"))
+{
+    var igTest = new AnimeIndex.Scraper.Infrastructure.Instagram.InstagramSettings();
+    new ConfigurationBuilder().AddEnvironmentVariables().Build().GetSection("Instagram").Bind(igTest);
+
+    await using var sp = new ServiceCollection()
+        .AddLogging(b => b.AddSimpleConsole(o => { o.SingleLine = true; o.TimestampFormat = "HH:mm:ss "; }))
+        .AddHttpClient()
+        .AddSingleton(igTest)
+        .AddSingleton<AnimeIndex.Scraper.Infrastructure.Instagram.MetaGraphApiClient>()
+        .BuildServiceProvider();
+
+    var host = igTest.CloudinaryConfigured ? "Cloudinary" : igTest.ImgBbConfigured ? "imgbb" : "NONE (set creds)";
+    Console.WriteLine($"Image host in use: {host}");
+
+    // Minimal valid 1×1 PNG.
+    var png = Convert.FromBase64String(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==");
+    var api = sp.GetRequiredService<AnimeIndex.Scraper.Infrastructure.Instagram.MetaGraphApiClient>();
+    var url = await api.UploadImageAsync(png, $"test-imagehost-{DateTime.UtcNow:yyyyMMddHHmmss}.png");
+    Console.WriteLine($"✅ Upload OK → {url}");
+    return;
+}
+
 Log.Logger = new LoggerConfiguration()
     .WriteTo.Console(new JsonFormatter())
     .CreateBootstrapLogger();
