@@ -6,7 +6,9 @@ import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
 
-export const revalidate = 60;
+// Respaldo de fondo; la frescura la da la purga on-demand. Alto para no quemar
+// el free tier de writes de KV (antes 60s = hasta 1440 writes/día solo esta ruta).
+export const revalidate = 3600;
 
 export const metadata: Metadata = {
   title: "Ranking de Anime",

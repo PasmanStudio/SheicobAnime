@@ -1,7 +1,10 @@
 import { redirect, notFound } from "next/navigation";
 import { getEpisode, ApiError } from "@/lib/api";
 
-export const revalidate = 300;
+// Respaldo de fondo (la frescura la da la purga on-demand del scraper). Alto
+// porque hay MUCHAS variantes de esta ruta y cada regeneración por TTL es un
+// write a KV — el free tier son 1000/día. Antes 300s.
+export const revalidate = 21600;
 
 interface Props {
   params: Promise<{ id: string }>;

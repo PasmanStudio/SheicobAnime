@@ -18,7 +18,10 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { TYPE_LABELS } from "@/lib/labels";
 
-export const revalidate = 300;
+// Respaldo de fondo (la frescura la da la purga on-demand del scraper, que
+// invalida también el cache de página). Alto porque hay una variante por serie y
+// cada regeneración por TTL es un write a KV — el free tier son 1000/día. Antes 300s.
+export const revalidate = 21600;
 
 interface Props {
   params: Promise<{ slug: string }>;
