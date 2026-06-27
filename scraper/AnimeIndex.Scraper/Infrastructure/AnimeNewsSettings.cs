@@ -26,13 +26,18 @@ public class AnimeNewsSettings
     /// </summary>
     public List<NewsFeedConfig> Feeds { get; set; } =
     [
-        // SomosKudasai — principal sitio de noticias anime en español (LATAM)
-        // WordPress → RSS con media:content images 1280×720
-        new() { Key = "kudasai", Url = "https://somoskudasai.com/feed/" },
+        // SomosKudasai — principal sitio de noticias anime en español (LATAM).
+        // OJO: el feed se mudó de /feed/ (ahora 404) a /rss (jun 2026). Mismo
+        // RSS 2.0 con media:content 1280×720.
+        new() { Key = "kudasai", Url = "https://somoskudasai.com/rss" },
 
         // Anmosugoi — sitio mexicano de anime/manga (LATAM), español.
         // RSS sin imágenes → la portada se resuelve vía og:image de la página del artículo.
         new() { Key = "anmosugoi", Url = "https://anmosugoi.com/feed/" },
+
+        // MangaLatam — noticias de anime/manga (LATAM), español. Blogspot RSS 2.0;
+        // la portada se resuelve vía og:image del artículo.
+        new() { Key = "mangalatam", Url = "https://www.mangalatam.com/feeds/posts/default?alt=rss" },
     ];
 
     public bool IsEnabled => Feeds.Count > 0;
