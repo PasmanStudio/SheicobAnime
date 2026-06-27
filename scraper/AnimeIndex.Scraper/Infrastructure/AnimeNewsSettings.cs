@@ -27,9 +27,10 @@ public class AnimeNewsSettings
     public List<NewsFeedConfig> Feeds { get; set; } =
     [
         // SomosKudasai — principal sitio de noticias anime en español (LATAM).
-        // OJO: el feed se mudó de /feed/ (ahora 404) a /rss (jun 2026). Mismo
-        // RSS 2.0 con media:content 1280×720.
-        new() { Key = "kudasai", Url = "https://somoskudasai.com/rss" },
+        // URL canónica del feed = /noticias/feed/ (200 directo). OJO: /feed/ da 404
+        // y /rss hace 301 a http:// (downgrade HTTPS→HTTP que .NET NO sigue por
+        // seguridad → fallaba desde CI). RSS 2.0 con media:content 1280×720.
+        new() { Key = "kudasai", Url = "https://somoskudasai.com/noticias/feed/" },
 
         // Anmosugoi — sitio mexicano de anime/manga (LATAM), español.
         // RSS sin imágenes → la portada se resuelve vía og:image de la página del artículo.
