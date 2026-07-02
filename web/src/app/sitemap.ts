@@ -42,12 +42,14 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     // API unavailable at build time — skip series
   }
 
-  // ── Recent episode pages (last 500) ───────────────────────────────────────
-  // Covers newly published episodes that need quick indexing.
-  // Episodes older than this appear via series → episode links anyway.
+  // ── Recent episode pages ──────────────────────────────────────────────────
+  // Señal de frescura: los episodios de la semana con lastmod exacto.
+  // La API clampa days a 7 y pageSize a 100 — pedir más no trae más.
+  // El catálogo COMPLETO de episodios vive en /sitemap-episodes/{n}.xml
+  // (listados en robots.txt), no acá.
   let episodePages: MetadataRoute.Sitemap = [];
   try {
-    const episodes = await getRecentEpisodes({ pageSize: 500 });
+    const episodes = await getRecentEpisodes({ days: 7, pageSize: 100 });
     episodePages = episodes
       .filter((ep) => ep.series?.slug)
       .map((ep) => ({
