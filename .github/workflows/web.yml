@@ -13,6 +13,9 @@ on:
     paths:
       - 'web/**'
       - '.github/workflows/web.yml'
+  # Disparo manual: re-deployar cuando cambia una Repository Variable
+  # (NEXT_PUBLIC_*) sin necesidad de un commit en web/**.
+  workflow_dispatch:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
