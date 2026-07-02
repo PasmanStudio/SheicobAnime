@@ -16,8 +16,46 @@ public static class EpisodeEndpoints
         var group = app.MapGroup("/episodes").WithTags("Episodes");
 
         group.MapGet("/recent", GetRecentEpisodes);
+        group.MapGet("/sitemap", GetEpisodeSitemap);
         group.MapGet("/{id:guid}", GetEpisode);
         group.MapGet("/{id:guid}/mirrors", GetEpisodeMirrors);
+    }
+
+    // Sitemap de episodios: TODO el catálogo publicado, paginado y liviano
+    // (slug + número + fecha). /recent no sirve para esto — clampa a 7 días.
+    // Cache 1h: solo lo piden los crawlers vía /sitemap-episodes/{n}.xml del web.
+    private static async Task<IResult> GetEpisodeSitemap(
+        AppDbContext db,
+        ICacheService cache,
+        int? page,
+        int? pageSize,
+        CancellationToken ct = default)
+    {
+        var actualPage = Math.Max(page ?? 1, 1);
+        var actualPageSize = Math.Clamp(pageSize ?? 10_000, 1, 10_000);
+
+        var cacheKey = $"episodes:sitemap:{actualPage}:{actualPageSize}";
+        var cached = await cache.GetAsync<PaginatedResponse<EpisodeSitemapDto>>(cacheKey, ct);
+        if (cached is not null) return Results.Ok(cached);
+
+        var query = db.Episodes
+            .AsNoTracking()
+            .Where(e => e.IsPublished);
+
+        var total = await query.CountAsync(ct);
+        var items = await query
+            // Orden estable entre páginas: los episodios nuevos se agregan al final,
+            // así los chunks ya indexados no cambian de contenido.
+            .OrderBy(e => e.CreatedAt).ThenBy(e => e.Id)
+            .Skip((actualPage - 1) * actualPageSize)
+            .Take(actualPageSize)
+            .Select(e => new EpisodeSitemapDto(e.Series.Slug, e.EpisodeNumber, e.CreatedAt))
+            .ToListAsync(ct);
+
+        var response = new PaginatedResponse<EpisodeSitemapDto>(
+            [.. items], total, actualPage, actualPageSize);
+        await cache.SetAsync(cacheKey, response, TimeSpan.FromHours(1), ct);
+        return Results.Ok(response);
     }
 
     private static async Task<IResult> GetRecentEpisodes(

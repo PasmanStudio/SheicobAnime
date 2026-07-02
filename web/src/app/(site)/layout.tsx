@@ -65,6 +65,16 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     site: "@sheicobanime",
   },
+  // Meta tag de verificación de Google Search Console. workers.dev no permite
+  // verificación por DNS (la zona es de Cloudflare), así que la property se
+  // crea como "Prefijo de URL" y se verifica con este tag.
+  ...(process.env.NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION
+    ? {
+        verification: {
+          google: process.env.NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION,
+        },
+      }
+    : {}),
 };
 
 export default function RootLayout({
