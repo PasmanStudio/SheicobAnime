@@ -525,6 +525,7 @@ try
     // ─── Instagram publishing services ────────────────────
     builder.Services.AddScoped<MetaGraphApiClient>();
     builder.Services.AddScoped<InstagramImageService>();
+    builder.Services.AddScoped<InstagramVideoService>();
     builder.Services.AddScoped<CaptionGeneratorService>();
     builder.Services.AddScoped<InstagramPublisherService>();
 
