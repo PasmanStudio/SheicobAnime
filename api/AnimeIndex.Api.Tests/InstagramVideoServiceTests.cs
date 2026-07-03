@@ -44,4 +44,52 @@ public class InstagramVideoServiceTests
         Assert.Contains("\"C:\\temp dir\\card.png\"", args);
         Assert.Contains("\"C:\\temp dir\\reel.mp4\"", args);
     }
+
+    [Fact]
+    public void BuildFfmpegArguments_WithMusic_MixesTrackInsteadOfSilence()
+    {
+        var args = InstagramVideoService.BuildFfmpegArguments(
+            "in.png", "out.mp4", 12, musicPath: "music.mp3", musicStartSeconds: 5);
+
+        // El track reemplaza a la pista silenciosa
+        Assert.DoesNotContain("anullsrc", args);
+        Assert.Contains("-ss 5 -t 12 -i \"music.mp3\"", args);
+        // Fade-in, fade-out al cierre (12 - 1.5 = 10.5) y nivel social estándar
+        Assert.Contains("afade=t=in:st=0:d=0.8", args);
+        Assert.Contains("afade=t=out:st=10.5:d=1.5", args);
+        Assert.Contains("loudnorm=I=-16", args);
+        Assert.Contains("-map [a]", args);
+    }
+}
+
+public class ReelMusicServiceTests
+{
+    [Theory]
+    [InlineData(new[] { "Acción", "Shounen" }, "epic")]
+    [InlineData(new[] { "Comedia" }, "upbeat")]
+    [InlineData(new[] { "Romance", "Drama" }, "emotional")]
+    [InlineData(new[] { "Horror", "Mystery" }, "dark")]
+    [InlineData(new[] { "Slice of Life" }, "chill")]
+    // dark gana sobre epic cuando conviven (el terror define el tono)
+    [InlineData(new[] { "Acción", "Horror" }, "dark")]
+    [InlineData(new string[0], "chill")]
+    public void HeuristicMood_MapsGenres(string[] genres, string expected)
+        => Assert.Equal(expected, ReelMusicService.HeuristicMood(genres));
+
+    [Fact]
+    public void PickTrack_IsDeterministicPerSeriesAndRespectsMood()
+    {
+        var first  = ReelMusicService.PickTrack("one-piece", "epic");
+        var second = ReelMusicService.PickTrack("one-piece", "epic");
+
+        Assert.Equal(first, second);       // misma serie → mismo track siempre
+        Assert.Equal("epic", first.Mood);  // respeta el mood pedido
+    }
+
+    [Fact]
+    public void Library_EveryMoodHasAtLeastOneTrack()
+    {
+        foreach (var mood in new[] { "epic", "dark", "upbeat", "chill", "emotional" })
+            Assert.Contains(ReelMusicService.Library, t => t.Mood == mood);
+    }
 }

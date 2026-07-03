@@ -46,6 +46,11 @@ public class InstagramSettings
     // de video aceptan máximo 60 s — mantener ≤60 para reusar el mismo MP4).
     public int ReelDurationSeconds { get; set; } = 12;
 
+    // Música del Reel: Gemini clasifica la serie en un mood y se mezcla un track
+    // CC BY (Kevin MacLeod) con atribución en el caption. Sin Gemini usa una
+    // heurística por géneros. Apagar con Instagram__ReelMusicEnabled=false.
+    public bool ReelMusicEnabled { get; set; } = true;
+
     // Facebook App credentials — used ONLY for monthly token re-extension
     public string AppId { get; set; } = string.Empty;
     public string AppSecret { get; set; } = string.Empty;

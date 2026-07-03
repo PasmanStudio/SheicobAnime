@@ -38,6 +38,7 @@ public class InstagramPublisherService(
     MetaGraphApiClient api,
     InstagramImageService imageService,
     InstagramVideoService videoService,
+    ReelMusicService musicService,
     CaptionGeneratorService captionGen,
     ILogger<InstagramPublisherService> logger)
 {
@@ -164,13 +165,23 @@ public class InstagramPublisherService(
         try
         {
             var frameBytes = await imageService.GenerateStoryAsync(episode.Series, episode, ct);
-            var videoBytes = await videoService.GenerateMotionCardAsync(frameBytes, ct);
+
+            // Música por IA (mood de la serie → track CC BY). null = reel silencioso.
+            var music = settings.ReelMusicEnabled
+                ? await musicService.SelectAndDownloadAsync(episode.Series, ct)
+                : null;
+
+            var videoBytes = await videoService.GenerateMotionCardAsync(
+                frameBytes, music?.Mp3, music?.Track.StartSeconds ?? 0, ct);
 
             var fileName = $"{episode.Series.Slug}-ep{episode.EpisodeNumber}-reel-{DateTime.UtcNow:yyyyMMddHHmmss}.mp4";
             var videoUrl = await api.UploadVideoAsync(videoBytes, fileName, ct);
 
             var items   = new List<(Series, Episode)> { (episode.Series, episode) };
             var caption = captionGen.GenerateCarouselCaption(items);
+            // CC BY 4.0 exige atribución — última línea del caption
+            if (music is not null)
+                caption = $"{caption}\n\n{music.Value.Track.Attribution}";
 
             var containerId = await api.CreateReelContainerAsync(videoUrl, caption, shareToFeed: true, ct);
             await api.WaitForContainerReadyAsync(containerId, ct, VideoProcessingTimeout);
