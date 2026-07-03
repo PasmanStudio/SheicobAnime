@@ -526,6 +526,7 @@ try
     builder.Services.AddScoped<MetaGraphApiClient>();
     builder.Services.AddScoped<InstagramImageService>();
     builder.Services.AddScoped<InstagramVideoService>();
+    builder.Services.AddScoped<ReelMusicService>();
     builder.Services.AddScoped<CaptionGeneratorService>();
     builder.Services.AddScoped<InstagramPublisherService>();
 

@@ -33,20 +33,32 @@ public class InstagramVideoService(
 
     /// <summary>
     /// Renders the motion-card MP4 for a 1080×1920 card image and returns the bytes.
+    /// Con <paramref name="musicMp3"/> mezcla el track (fade in/out + loudnorm);
+    /// sin música, pista AAC silenciosa.
     /// </summary>
     public async Task<byte[]> GenerateMotionCardAsync(
-        byte[] cardImageBytes, CancellationToken ct = default)
+        byte[] cardImageBytes,
+        byte[]? musicMp3 = null,
+        int musicStartSeconds = 0,
+        CancellationToken ct = default)
     {
         var workDir = Path.Combine(Path.GetTempPath(), $"ig-reel-{Guid.NewGuid():N}");
         Directory.CreateDirectory(workDir);
         var inputPath = Path.Combine(workDir, "card.png");
         var outputPath = Path.Combine(workDir, "reel.mp4");
+        string? musicPath = null;
 
         try
         {
             await File.WriteAllBytesAsync(inputPath, cardImageBytes, ct);
+            if (musicMp3 is not null)
+            {
+                musicPath = Path.Combine(workDir, "music.mp3");
+                await File.WriteAllBytesAsync(musicPath, musicMp3, ct);
+            }
 
-            var args = BuildFfmpegArguments(inputPath, outputPath, settings.ReelDurationSeconds);
+            var args = BuildFfmpegArguments(
+                inputPath, outputPath, settings.ReelDurationSeconds, musicPath, musicStartSeconds);
             await RunFfmpegAsync(args, ct);
 
             var bytes = await File.ReadAllBytesAsync(outputPath, ct);
@@ -62,29 +74,54 @@ public class InstagramVideoService(
 
     /// <summary>
     /// Público + static para poder testear la construcción de argumentos sin ffmpeg.
+    /// Con <paramref name="musicPath"/> el track entra como segundo input (desde
+    /// <paramref name="musicStartSeconds"/>) con fade in/out y loudnorm; sin
+    /// música, pista silenciosa (anullsrc).
     /// </summary>
-    public static string BuildFfmpegArguments(string inputPath, string outputPath, int durationSeconds)
+    public static string BuildFfmpegArguments(
+        string inputPath, string outputPath, int durationSeconds,
+        string? musicPath = null, int musicStartSeconds = 0)
     {
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
         var frames = durationSeconds * Fps;
         // El paso de zoom por frame para llegar a MaxZoom justo al final del clip
         var zoomStep = (MaxZoom - 1.0) / frames;
 
         // zoompan tiembla con inputs chicos: se pre-escala 2× (lanczos) y el
         // filtro recorta la ventana 1080×1920. fade-in de 0.6s al arranque.
-        var filter =
+        var videoFilter =
             $"[0:v]scale={OutWidth * 2}:{OutHeight * 2}:flags=lanczos," +
-            $"zoompan=z='min(1+on*{zoomStep.ToString("0.00000000", System.Globalization.CultureInfo.InvariantCulture)},{MaxZoom.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture)})'" +
+            $"zoompan=z='min(1+on*{zoomStep.ToString("0.00000000", inv)},{MaxZoom.ToString("0.00", inv)})'" +
             $":d={frames}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s={OutWidth}x{OutHeight}:fps={Fps}," +
             "fade=t=in:st=0:d=0.6,format=yuv420p[v]";
+
+        string audioInput, filter, audioMap;
+        if (musicPath is not null)
+        {
+            // Track real: fade-in corto, fade-out al cierre, loudnorm al nivel
+            // estándar de social media (-16 LUFS)
+            var fadeOutStart = Math.Max(0, durationSeconds - 1.5).ToString("0.0#", inv);
+            audioInput = $"-ss {musicStartSeconds} -t {durationSeconds} -i \"{musicPath}\"";
+            filter = videoFilter + ";" +
+                $"[1:a]afade=t=in:st=0:d=0.8,afade=t=out:st={fadeOutStart}:d=1.5," +
+                "loudnorm=I=-16:TP=-1.5:LRA=11[a]";
+            audioMap = "-map [a]";
+        }
+        else
+        {
+            // Pista de audio silenciosa: algunos clientes de IG tratan mal los
+            // videos sin stream de audio, y una pista muda no tiene copyright.
+            audioInput = $"-f lavfi -t {durationSeconds} -i anullsrc=channel_layout=stereo:sample_rate=44100";
+            filter = videoFilter;
+            audioMap = "-map 1:a";
+        }
 
         return string.Join(' ',
             "-y",
             $"-i \"{inputPath}\"",
-            // Pista de audio silenciosa: algunos clientes de IG tratan mal los
-            // videos sin stream de audio, y una pista muda no tiene copyright.
-            $"-f lavfi -t {durationSeconds} -i anullsrc=channel_layout=stereo:sample_rate=44100",
+            audioInput,
             $"-filter_complex \"{filter}\"",
-            "-map [v] -map 1:a",
+            $"-map [v] {audioMap}",
             $"-t {durationSeconds} -r {Fps}",
             // closed GOP + keyframe cada 2s, como piden las specs de Reels
             "-c:v libx264 -profile:v high -preset medium -flags +cgop -g 60 -sc_threshold 0",
