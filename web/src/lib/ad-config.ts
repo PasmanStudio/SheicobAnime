@@ -62,10 +62,10 @@ export interface AdPlacementConfig {
 export const ADSTERRA_NATIVE = {
   scriptSrc:
     process.env.NEXT_PUBLIC_ADSTERRA_NATIVE_SCRIPT ||
-    "https://pl29138492.profitablecpmratenetwork.com/7ee40e5de8cc821cc6ce096252393fd4/invoke.js",
+    "https://pl30177589.effectivecpmnetwork.com/fff9b8d7f1888f68ae69ce1f0634afaf/invoke.js",
   containerHash:
     process.env.NEXT_PUBLIC_ADSTERRA_NATIVE_HASH ||
-    "7ee40e5de8cc821cc6ce096252393fd4",
+    "fff9b8d7f1888f68ae69ce1f0634afaf",
 } as const;
 
 /** Formato móvil estándar: 320×100 en flujo. */
