@@ -33,6 +33,19 @@ public class InstagramSettings
     // Max episodes per carousel (Instagram limit: 10). Episodes beyond this are skipped until tomorrow.
     public int MaxCarouselItems { get; set; } = 10;
 
+    // ── Reels (motion cards) ────────────────────────────────────────────
+    // Publica un Reel por corrida (tarjeta animada con ffmpeg del episodio más
+    // nuevo) además del carrusel/post de imagen. Apagar con Instagram__ReelsEnabled=false.
+    public bool ReelsEnabled { get; set; } = true;
+
+    // Ruta del binario de ffmpeg (default: "ffmpeg" en PATH — preinstalado en
+    // ubuntu-latest). Sin ffmpeg el publisher degrada a imagen sin fallar.
+    public string FfmpegPath { get; set; } = "ffmpeg";
+
+    // Duración del Reel en segundos (specs de la API: 3 s a 15 min; las stories
+    // de video aceptan máximo 60 s — mantener ≤60 para reusar el mismo MP4).
+    public int ReelDurationSeconds { get; set; } = 12;
+
     // Facebook App credentials — used ONLY for monthly token re-extension
     public string AppId { get; set; } = string.Empty;
     public string AppSecret { get; set; } = string.Empty;

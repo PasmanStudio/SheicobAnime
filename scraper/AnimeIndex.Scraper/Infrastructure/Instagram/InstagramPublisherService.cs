@@ -23,6 +23,12 @@ namespace AnimeIndex.Scraper.Infrastructure.Instagram;
 ///   Instagram carousels require ≥ 2 items, so 1 episode is posted as a
 ///   regular single-image feed post instead.
 ///
+/// Reel + story de video (jul 2026):
+///   Además del feed, cada corrida publica UN Reel (motion card de 12 s
+///   generada con ffmpeg — zoom Ken Burns sobre la tarjeta de story) del
+///   episodio más nuevo, con share_to_feed. La story reusa el mismo MP4
+///   (video story + link sticker); sin ffmpeg degrada a story de imagen.
+///
 /// Called as best-effort from ScrapeOrchestratorJob — exceptions never
 /// propagate to the scrape job status.
 /// </summary>
@@ -31,9 +37,13 @@ public class InstagramPublisherService(
     InstagramSettings settings,
     MetaGraphApiClient api,
     InstagramImageService imageService,
+    InstagramVideoService videoService,
     CaptionGeneratorService captionGen,
     ILogger<InstagramPublisherService> logger)
 {
+    // Meta procesa video asíncrono y puede tardar varios minutos
+    private static readonly TimeSpan VideoProcessingTimeout = TimeSpan.FromMinutes(6);
+
     public async Task PublishNewEpisodesAsync(CancellationToken ct = default)
     {
         if (!settings.IsConfigured)
@@ -78,6 +88,38 @@ public class InstagramPublisherService(
                 await PublishCarouselAsync(episodes, ct);
         }
 
+        // ── Reel (one per run — most recent new episode) ──────────────────
+        // Motion card animada con ffmpeg. share_to_feed=true la muestra también
+        // en el feed — los Reels alcanzan gente que NO sigue la cuenta.
+        Guid? reelEpisodeId = null;
+        string? reelVideoUrl = null;
+        if (settings.ReelsEnabled)
+        {
+            var alreadyReelPosted = await db.InstagramPosts
+                .Where(p => p.PostType == "reel"
+                         && (p.Status == "published" || p.Status == "skipped"))
+                .Select(p => p.EpisodeId)
+                .Distinct()
+                .ToListAsync(ct);
+
+            var reelEpisode = episodes.FirstOrDefault(e => !alreadyReelPosted.Contains(e.Id))
+                ?? await db.Episodes
+                    .Include(e => e.Series)
+                    .Where(e => e.IsPublished
+                             && e.CreatedAt >= since
+                             && !alreadyReelPosted.Contains(e.Id))
+                    .OrderByDescending(e => e.CreatedAt)
+                    .FirstOrDefaultAsync(ct);
+
+            if (reelEpisode is not null)
+            {
+                reelVideoUrl = await PublishReelAsync(reelEpisode, ct);
+                if (reelVideoUrl is not null) reelEpisodeId = reelEpisode.Id;
+            }
+            else
+                logger.LogInformation("No new episodes to post to Instagram today (reel)");
+        }
+
         // ── Story (one per run — most recent new episode) ─────────────────
         var alreadyStoryPosted = await db.InstagramPosts
             .Where(p => p.PostType == "story"
@@ -98,9 +140,75 @@ public class InstagramPublisherService(
                 .FirstOrDefaultAsync(ct);
 
         if (storyEpisode is not null)
-            await PublishStoryAsync(storyEpisode, ct);
+        {
+            // Si el reel de este mismo episodio ya subió su MP4, la story lo reusa
+            // (video story con link sticker) — un solo render y un solo upload.
+            var storyVideoUrl = storyEpisode.Id == reelEpisodeId ? reelVideoUrl : null;
+            await PublishStoryAsync(storyEpisode, storyVideoUrl, ct);
+        }
         else
             logger.LogInformation("No new episodes to post to Instagram today (story)");
+    }
+
+    // ── Reel (motion card MP4, share_to_feed) ────────────────────────
+
+    /// <summary>
+    /// Publishes the animated motion-card Reel. Returns the hosted video URL on
+    /// success (para que la story lo reuse), or null if it failed/was skipped.
+    /// </summary>
+    private async Task<string?> PublishReelAsync(Episode episode, CancellationToken ct)
+    {
+        var record = CreateRecord(episode, "reel");
+        db.InstagramPosts.Add(record);
+
+        try
+        {
+            var frameBytes = await imageService.GenerateStoryAsync(episode.Series, episode, ct);
+            var videoBytes = await videoService.GenerateMotionCardAsync(frameBytes, ct);
+
+            var fileName = $"{episode.Series.Slug}-ep{episode.EpisodeNumber}-reel-{DateTime.UtcNow:yyyyMMddHHmmss}.mp4";
+            var videoUrl = await api.UploadVideoAsync(videoBytes, fileName, ct);
+
+            var items   = new List<(Series, Episode)> { (episode.Series, episode) };
+            var caption = captionGen.GenerateCarouselCaption(items);
+
+            var containerId = await api.CreateReelContainerAsync(videoUrl, caption, shareToFeed: true, ct);
+            await api.WaitForContainerReadyAsync(containerId, ct, VideoProcessingTimeout);
+            var mediaId = await api.PublishContainerAsync(containerId, ct);
+
+            record.Status      = "published";
+            record.IgMediaId   = mediaId;
+            record.Caption     = caption;
+            record.PublishedAt = DateTime.UtcNow;
+
+            logger.LogInformation("Published reel for {Series} ep {Ep} → {MediaId}",
+                episode.Series.Title, episode.EpisodeNumber, mediaId);
+
+            var comment = captionGen.GenerateEpisodeLinksComment(items);
+            await PostFirstCommentAsync(mediaId, comment, ct);
+
+            return videoUrl;
+        }
+        catch (FfmpegNotAvailableException ex)
+        {
+            // Entorno sin ffmpeg (dev local): no es un error del episodio — se
+            // marca skipped para no reintentar y el resto del flujo sigue igual.
+            record.Status       = "skipped";
+            record.ErrorMessage = ex.Message[..Math.Min(ex.Message.Length, 500)];
+            logger.LogWarning("Reel skipped — {Reason}", ex.Message);
+            return null;
+        }
+        catch (Exception ex)
+        {
+            record.Status       = "failed";
+            record.ErrorMessage = ex.Message[..Math.Min(ex.Message.Length, 500)];
+            logger.LogError(ex, "Failed to publish reel for episode {EpisodeId}", episode.Id);
+            return null;
+        }
+        finally
+        {
+            await db.SaveChangesAsync(CancellationToken.None);
+        }
     }
 
     // ── Single image post (1 episode) ────────────────────────────────
@@ -222,20 +330,33 @@ public class InstagramPublisherService(
 
     // ── Story post (1 episode, 1080×1920 with link sticker) ─────────────
 
-    private async Task PublishStoryAsync(Episode episode, CancellationToken ct)
+    /// <param name="videoUrl">MP4 ya hosteado (el del reel) — si viene, la story
+    /// es de video; si es null, imagen estática como siempre.</param>
+    private async Task PublishStoryAsync(Episode episode, string? videoUrl, CancellationToken ct)
     {
         var record = CreateRecord(episode, "story");
         db.InstagramPosts.Add(record);
 
         try
         {
-            var imageBytes = await imageService.GenerateStoryAsync(episode.Series, episode, ct);
-            var fileName   = BuildFileName(episode.Series.Slug, episode.EpisodeNumber, "story");
-            var publicUrl  = await api.UploadImageAsync(imageBytes, fileName, ct);
-
             var episodeUrl = $"{settings.SiteUrl}/series/{episode.Series.Slug}/{episode.EpisodeNumber}";
-            var containerId = await api.CreateStoryContainerAsync(publicUrl, episodeUrl, ct);
-            await api.WaitForContainerReadyAsync(containerId, ct);
+
+            string containerId;
+            if (videoUrl is not null)
+            {
+                containerId = await api.CreateVideoStoryContainerAsync(videoUrl, episodeUrl, ct);
+                await api.WaitForContainerReadyAsync(containerId, ct, VideoProcessingTimeout);
+            }
+            else
+            {
+                var imageBytes = await imageService.GenerateStoryAsync(episode.Series, episode, ct);
+                var fileName   = BuildFileName(episode.Series.Slug, episode.EpisodeNumber, "story");
+                var publicUrl  = await api.UploadImageAsync(imageBytes, fileName, ct);
+
+                containerId = await api.CreateStoryContainerAsync(publicUrl, episodeUrl, ct);
+                await api.WaitForContainerReadyAsync(containerId, ct);
+            }
+
             var mediaId = await api.PublishContainerAsync(containerId, ct);
 
             record.Status      = "published";
