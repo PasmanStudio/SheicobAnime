@@ -22,10 +22,10 @@ export default function AdsterraGlobalAds() {
 
     const popunderSrc =
       process.env.NEXT_PUBLIC_ADSTERRA_POPUNDER_SCRIPT ||
-      "https://pl29138490.profitablecpmratenetwork.com/3d/1b/5b/3d1b5b04f03946a5ecb8410c8025f660.js";
+      "https://pl30177588.effectivecpmnetwork.com/0a/ea/04/0aea04f111b2db47fb6efa3187c83d3f.js";
     const socialBarSrc =
       process.env.NEXT_PUBLIC_ADSTERRA_SOCIALBAR_SCRIPT ||
-      "https://pl29138491.profitablecpmratenetwork.com/81/0e/8b/810e8b5ee34d29a8061284101b4768c6.js";
+      "https://pl30177590.effectivecpmnetwork.com/30/10/83/301083467256706100b8c92c52f55990.js";
 
     const isTouchDevice =
       window.matchMedia("(pointer: coarse)").matches || window.innerWidth < 768;
