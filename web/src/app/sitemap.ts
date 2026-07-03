@@ -2,7 +2,10 @@ import type { MetadataRoute } from "next";
 import { getSeries, getGenres, getRecentEpisodes } from "@/lib/api";
 import { siteUrl as getSiteUrl } from "@/lib/site-url";
 
-export const dynamic = "force-dynamic";
+// ISR en vez de force-dynamic: generar el sitemap pagina TODO el catálogo
+// contra Render (~23s en frío) y Googlebot abortaba el fetch ("No se ha
+// podido obtener" en Search Console). Cacheado 1h se sirve al instante.
+export const revalidate = 3600;
 
 // Fetch up to this many series per API page. The Next.js fetch cache means
 // subsequent sitemap hits re-use cached responses (revalidate: 300 on the API).

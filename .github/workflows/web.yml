@@ -104,10 +104,13 @@ jobs:
           # Web Push (opcional): clave pública VAPID — la privada es secret de
           # los crons de notificaciones, nunca del build
           NEXT_PUBLIC_VAPID_PUBLIC_KEY: ${{ secrets.VAPID_PUBLIC_KEY }}
-          NEXT_PUBLIC_ADSTERRA_NATIVE_HASH: "7ee40e5de8cc821cc6ce096252393fd4"
-          NEXT_PUBLIC_ADSTERRA_NATIVE_SCRIPT: "https://pl29138492.profitablecpmratenetwork.com/7ee40e5de8cc821cc6ce096252393fd4/invoke.js"
-          NEXT_PUBLIC_ADSTERRA_SOCIALBAR_SCRIPT: "https://pl29138491.profitablecpmratenetwork.com/81/0e/8b/810e8b5ee34d29a8061284101b4768c6.js"
-          NEXT_PUBLIC_ADSTERRA_POPUNDER_SCRIPT: "https://pl29138490.profitablecpmratenetwork.com/3d/1b/5b/3d1b5b04f03946a5ecb8410c8025f660.js"
+          # Códigos del sitio sheicobanime.sheicob.workers.dev en Adsterra (id 5889819).
+          # Los viejos (pl291384xx.profitablecpmratenetwork.com) eran del website
+          # sheicobanime.vercel.app (muerto) — Adsterra no contaba esas impresiones.
+          NEXT_PUBLIC_ADSTERRA_NATIVE_HASH: "fff9b8d7f1888f68ae69ce1f0634afaf"
+          NEXT_PUBLIC_ADSTERRA_NATIVE_SCRIPT: "https://pl30177589.effectivecpmnetwork.com/fff9b8d7f1888f68ae69ce1f0634afaf/invoke.js"
+          NEXT_PUBLIC_ADSTERRA_SOCIALBAR_SCRIPT: "https://pl30177590.effectivecpmnetwork.com/30/10/83/301083467256706100b8c92c52f55990.js"
+          NEXT_PUBLIC_ADSTERRA_POPUNDER_SCRIPT: "https://pl30177588.effectivecpmnetwork.com/0a/ea/04/0aea04f111b2db47fb6efa3187c83d3f.js"
           # Analytics + donaciones — definir como Repository Variables en
           # Settings → Secrets and variables → Actions → Variables (vacías = off).
           NEXT_PUBLIC_CF_ANALYTICS_TOKEN: ${{ vars.NEXT_PUBLIC_CF_ANALYTICS_TOKEN }}
