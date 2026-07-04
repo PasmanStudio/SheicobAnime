@@ -124,22 +124,21 @@ public class AnimeNewsPublisherService(
     public static int HeuristicNewsScore(string text)
     {
         var t = text.ToLowerInvariant();
-        var score = 0;
 
         // Anuncios grandes / lanzamientos
-        foreach (var k in new[] { "estreno", "estrena", "tráiler", "trailer", "temporada", "película",
-                                  "pelicula", "confirmado", "confirma", "anuncia", "live-action", "adaptación", "adaptacion" })
-            if (t.Contains(k)) score += 3;
+        var score = new[] { "estreno", "estrena", "tráiler", "trailer", "temporada", "película",
+                             "pelicula", "confirmado", "confirma", "anuncia", "live-action", "adaptación", "adaptacion" }
+            .Count(t.Contains) * 3;
         // Noticias de peso (luto / polémicas fuertes)
-        foreach (var k in new[] { "fallec", "muere", "murió", "homenaje", "demanda", "cancel" })
-            if (t.Contains(k)) score += 3;
+        score += new[] { "fallec", "muere", "murió", "homenaje", "demanda", "cancel" }
+            .Count(t.Contains) * 3;
         // Franquicias enormes: empujón extra
-        foreach (var k in new[] { "one piece", "naruto", "dragon ball", "jujutsu", "chainsaw", "attack on titan",
-                                  "shingeki", "demon slayer", "kimetsu", "ghibli", "evangelion" })
-            if (t.Contains(k)) score += 2;
+        score += new[] { "one piece", "naruto", "dragon ball", "jujutsu", "chainsaw", "attack on titan",
+                          "shingeki", "demon slayer", "kimetsu", "ghibli", "evangelion" }
+            .Count(t.Contains) * 2;
         // Menores
-        foreach (var k in new[] { "colaboración", "colaboracion", "evento", "figura", "manga" })
-            if (t.Contains(k)) score += 1;
+        score += new[] { "colaboración", "colaboracion", "evento", "figura", "manga" }
+            .Count(t.Contains);
 
         return score;
     }

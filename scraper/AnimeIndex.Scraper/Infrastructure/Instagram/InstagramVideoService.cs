@@ -46,10 +46,13 @@ public class InstagramVideoService(
         int musicStartSeconds = 0,
         CancellationToken ct = default)
     {
-        var workDir = Path.Combine(Path.GetTempPath(), $"ig-reel-{Guid.NewGuid():N}");
+        // Path.Join en vez de Path.Combine: los segmentos son siempre relativos
+        // (nombre de archivo fijo / Guid) pero Combine resetea silenciosamente
+        // si CodeQL no puede probarlo — Join concatena sin ese riesgo.
+        var workDir = Path.Join(Path.GetTempPath(), $"ig-reel-{Guid.NewGuid():N}");
         Directory.CreateDirectory(workDir);
-        var inputPath = Path.Combine(workDir, "card.png");
-        var outputPath = Path.Combine(workDir, "reel.mp4");
+        var inputPath = Path.Join(workDir, "card.png");
+        var outputPath = Path.Join(workDir, "reel.mp4");
         string? overlayPath = null;
         string? musicPath = null;
 
@@ -58,12 +61,12 @@ public class InstagramVideoService(
             await File.WriteAllBytesAsync(inputPath, cardImageBytes, ct);
             if (overlayPng is not null)
             {
-                overlayPath = Path.Combine(workDir, "overlay.png");
+                overlayPath = Path.Join(workDir, "overlay.png");
                 await File.WriteAllBytesAsync(overlayPath, overlayPng, ct);
             }
             if (musicMp3 is not null)
             {
-                musicPath = Path.Combine(workDir, "music.mp3");
+                musicPath = Path.Join(workDir, "music.mp3");
                 await File.WriteAllBytesAsync(musicPath, musicMp3, ct);
             }
 
@@ -78,7 +81,11 @@ public class InstagramVideoService(
         }
         finally
         {
-            try { Directory.Delete(workDir, recursive: true); } catch { /* best-effort */ }
+            // Limpieza best-effort del temp dir — solo los fallos esperables de
+            // I/O quedan silenciados; cualquier otra cosa (p. ej. un bug) se ve.
+            try { Directory.Delete(workDir, recursive: true); }
+            catch (IOException) { /* archivo en uso — se limpia solo con el temp cleaner del runner */ }
+            catch (UnauthorizedAccessException) { /* permisos — mismo caso, best-effort */ }
         }
     }
 
@@ -209,7 +216,9 @@ public class InstagramVideoService(
             }
             catch (OperationCanceledException)
             {
-                try { process.Kill(entireProcessTree: true); } catch { /* ya murió */ }
+                try { process.Kill(entireProcessTree: true); }
+                catch (InvalidOperationException) { /* ya salió solo */ }
+                catch (System.ComponentModel.Win32Exception) { /* falló el kill nativo — best-effort */ }
                 throw new InvalidOperationException("ffmpeg no terminó dentro de los 3 minutos");
             }
 

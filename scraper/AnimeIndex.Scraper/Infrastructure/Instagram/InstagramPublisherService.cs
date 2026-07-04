@@ -172,7 +172,7 @@ public class InstagramPublisherService(
             {
                 (background, overlay) = await imageService.GenerateStoryLayersAsync(episode.Series, episode, ct);
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 logger.LogWarning(ex, "Layered render failed — falling back to flat card");
                 background = await imageService.GenerateStoryAsync(episode.Series, episode, ct);
@@ -223,7 +223,7 @@ public class InstagramPublisherService(
             logger.LogWarning("Reel skipped — {Reason}", ex.Message);
             return null;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             record.Status       = "failed";
             record.ErrorMessage = ex.Message[..Math.Min(ex.Message.Length, 500)];

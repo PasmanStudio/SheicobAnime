@@ -167,7 +167,7 @@ public class ReelMusicService(
                         logger.LogInformation("Biblioteca musical propia: {Count} track(s) en Cloudinary {Folder}",
                             _customLibrary.Count, MusicFolder);
                 }
-                catch (Exception ex)
+                catch (Exception ex) when (ex is not OperationCanceledException)
                 {
                     logger.LogWarning(ex, "No se pudo listar la música propia en Cloudinary — uso biblioteca CC");
                 }
@@ -242,7 +242,7 @@ public class ReelMusicService(
             var mp3 = await http.GetByteArrayAsync(track.Url, ct);
             return (track, mp3);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             logger.LogWarning(ex, "Music selection/download failed for {Series} — reel goes silent", series.Title);
             return null;
@@ -288,7 +288,7 @@ public class ReelMusicService(
             var mp3 = await http.GetByteArrayAsync(track.Url, ct);
             return (track, mp3);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             logger.LogWarning(ex, "News music selection/download failed — reel goes silent");
             return null;
@@ -323,7 +323,7 @@ public class ReelMusicService(
                 if (mood is not null && ValidMoods.Contains(mood))
                     return (mood, string.IsNullOrWhiteSpace(style) ? FallbackStyleFor(mood) : style!);
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 logger.LogDebug(ex, "Gemini news music classification failed — using heuristic");
             }
@@ -392,7 +392,7 @@ public class ReelMusicService(
             }, ct);
             logger.LogInformation("Track Suno sembrado en biblioteca: {Folder}/{Name}", MusicFolder, name);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             logger.LogDebug(ex, "No se pudo sembrar el track en Cloudinary — sigue igual");
         }
@@ -442,7 +442,7 @@ public class ReelMusicService(
 
             logger.LogDebug("Gemini returned unknown mood '{Mood}' — using heuristic", mood);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             logger.LogDebug(ex, "Gemini mood classification failed — using heuristic");
         }
