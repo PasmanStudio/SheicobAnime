@@ -130,10 +130,14 @@ public partial class AnimeNewsFeedService(
     }
 
     /// <summary>
-    /// Returns pending items that have an image (up to MaxPerRun), ordered by publish date desc.
+    /// Returns pending items that have an image, ordered by publish date desc.
     /// Items without images are permanently skipped and never returned here.
+    /// <paramref name="take"/> overrides MaxPerRun — el publisher pide un pool
+    /// más grande cuando el Reel del día está disponible, para elegir la
+    /// noticia más relevante (no la más nueva) y procesarla primero.
     /// </summary>
-    public async Task<List<AnimeNewsItem>> GetPendingItemsAsync(CancellationToken ct = default)
+    public async Task<List<AnimeNewsItem>> GetPendingItemsAsync(
+        CancellationToken ct = default, int? take = null)
     {
         var cutoff = DateTime.UtcNow.AddHours(-settings.MaxAgeHours);
         return await db.AnimeNewsItems
@@ -141,7 +145,7 @@ public partial class AnimeNewsFeedService(
                      && n.PublishedAt >= cutoff
                      && n.ImageUrl != null)
             .OrderByDescending(n => n.PublishedAt)
-            .Take(settings.MaxPerRun)
+            .Take(take ?? settings.MaxPerRun)
             .ToListAsync(ct);
     }
 

@@ -39,8 +39,18 @@ public class InstagramSettings
     public bool ReelsEnabled { get; set; } = false;
 
     // Reel de NOTICIAS: máx. uno cada 24 h (motion card animada + música por IA
-    // del primer item publicable del día). Apagar con Instagram__NewsReelEnabled=false.
+    // de la noticia más relevante del día). Apagar con Instagram__NewsReelEnabled=false.
     public bool NewsReelEnabled { get; set; } = true;
+
+    // ── Suno (música generada FRESCA por reel, vía sunoapi.org — tercero) ──
+    // Con la key configurada, cada reel de noticias genera un track instrumental
+    // nuevo (mood + estilo por IA). Sin key o si falla → biblioteca Cloudinary/CC.
+    // Los tracks generados se siembran en Cloudinary ({folder}/music) como fallback.
+    public string SunoApiKey { get; set; } = string.Empty;
+    public string SunoApiUrl { get; set; } = "https://api.sunoapi.org";
+    public string SunoModel { get; set; } = "V4_5";
+
+    public bool SunoConfigured => !string.IsNullOrWhiteSpace(SunoApiKey);
 
     // Ruta del binario de ffmpeg (default: "ffmpeg" en PATH — preinstalado en
     // ubuntu-latest). Sin ffmpeg el publisher degrada a imagen sin fallar.

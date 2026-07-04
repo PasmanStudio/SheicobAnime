@@ -171,4 +171,35 @@ public class ReelMusicServiceTests
         var pick = ReelMusicService.PickTrack("one-piece", "epic", custom);
         Assert.Equal("epic-suno-1", pick.Title);
     }
+
+    [Fact]
+    public void FallbackStyleFor_RotatesByDayAndIsInstrumental()
+    {
+        // Días distintos → estilos distintos (ni el fallback suena siempre igual)
+        var day1 = ReelMusicService.FallbackStyleFor("epic", daySeed: 1);
+        var day2 = ReelMusicService.FallbackStyleFor("epic", daySeed: 2);
+        Assert.NotEqual(day1, day2);
+
+        // Todos los estilos de todos los moods piden instrumental (sin voz)
+        foreach (var mood in new[] { "epic", "dark", "upbeat", "chill", "emotional" })
+            for (var d = 0; d < 3; d++)
+                Assert.Contains("instrumental", ReelMusicService.FallbackStyleFor(mood, d));
+    }
+}
+
+public class NewsRelevanceTests
+{
+    [Fact]
+    public void HeuristicNewsScore_RanksBigNewsAboveMinorOnes()
+    {
+        var estreno   = AnimeNewsPublisherService.HeuristicNewsScore(
+            "Confirmado: la película de Jujutsu Kaisen tiene fecha de estreno y tráiler");
+        var figura    = AnimeNewsPublisherService.HeuristicNewsScore(
+            "Nueva figura coleccionable de un personaje secundario");
+        var fallecido = AnimeNewsPublisherService.HeuristicNewsScore(
+            "Fallece reconocido animador del estudio");
+
+        Assert.True(estreno > figura, $"estreno ({estreno}) debería superar a figura ({figura})");
+        Assert.True(fallecido > figura, $"luto ({fallecido}) debería superar a figura ({figura})");
+    }
 }

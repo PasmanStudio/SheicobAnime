@@ -71,6 +71,10 @@ jobs:
           Instagram__AppSecret:    ${{ secrets.INSTAGRAM_APP_SECRET }}
           Instagram__SiteUrl:      ${{ secrets.INSTAGRAM_SITE_URL }}
           Instagram__Handle:       "sheicobanime"
+          # ── Suno vía sunoapi.org (tercero) — música FRESCA por reel ────────
+          # Key en https://sunoapi.org/api-key → secret SUNO_API_KEY. Sin ella,
+          # el reel usa la biblioteca de Cloudinary/CC (fallback, no rompe).
+          Instagram__SunoApiKey:   ${{ secrets.SUNO_API_KEY }}
           # ── IA de reescritura (Gemini, free tier) ─────────────────────────
           # Sacá la key gratis (sin tarjeta) en https://aistudio.google.com → "Get API key"
           # y cargala como secret GEMINI_API_KEY. Sin ella, el pipeline cae a contenido

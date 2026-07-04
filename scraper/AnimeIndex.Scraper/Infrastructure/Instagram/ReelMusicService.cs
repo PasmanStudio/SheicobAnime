@@ -35,6 +35,7 @@ public record ReelTrack(
 public class ReelMusicService(
     IHttpClientFactory httpClientFactory,
     InstagramSettings settings,
+    SunoMusicGenerator suno,
     GeminiClient gemini,
     AiSettings aiSettings,
     ILogger<ReelMusicService> logger)
@@ -197,18 +198,35 @@ public class ReelMusicService(
     }
 
     /// <summary>
-    /// Variante para NOTICIAS: clasifica el mood por titular/resumen (Gemini con
-    /// fallback heurístico por palabras clave) y descarga el track. El
-    /// <paramref name="dedupKey"/> (p. ej. el RssGuid) fija el track determinístico.
-    /// Devuelve null si algo falla — el reel sale silencioso.
+    /// Variante para NOTICIAS. Prioridad:
+    ///   1. Suno (sunoapi.org): track instrumental FRESCO — mood + estilo únicos
+    ///      por noticia (nunca se repite). El track generado se siembra en la
+    ///      biblioteca de Cloudinary como fallback futuro.
+    ///   2. Biblioteca (Cloudinary propia → CC) por mood, determinística.
+    /// Devuelve null si todo falla — el reel sale silencioso.
     /// </summary>
     public async Task<(ReelTrack Track, byte[] Mp3)?> SelectAndDownloadForNewsAsync(
         string headline, string? summary, string dedupKey, CancellationToken ct = default)
     {
         try
         {
+            var (mood, style) = await ClassifyNewsMusicAsync(headline, summary, ct);
+
+            // ── 1. Suno fresco ──
+            if (settings.SunoConfigured)
+            {
+                var title = $"{mood}-suno-{DateTime.UtcNow:yyyyMMdd-HHmm}";
+                var fresh = await suno.GenerateInstrumentalAsync(style, title, ct);
+                if (fresh is not null)
+                {
+                    await SeedLibraryAsync(title, fresh, ct);
+                    return (new ReelTrack(title, "suno://fresh", mood, 0, OwnMusicAttribution), fresh);
+                }
+                logger.LogInformation("Suno no disponible esta corrida — uso biblioteca ({Mood})", mood);
+            }
+
+            // ── 2. Biblioteca ──
             var library = await GetLibraryAsync(ct);
-            var mood = await ClassifyNewsMoodAsync(headline, summary, ct);
             var track = PickTrack(dedupKey, mood, library);
             logger.LogInformation("News reel music: mood={Mood} → {Track} (\"{Headline}\")",
                 mood, track.Title, headline.Length > 60 ? headline[..60] : headline);
@@ -224,30 +242,107 @@ public class ReelMusicService(
         }
     }
 
-    private async Task<string> ClassifyNewsMoodAsync(string headline, string? summary, CancellationToken ct)
+    /// <summary>
+    /// Mood + estilo musical para la noticia. Gemini devuelve ambos (el estilo
+    /// es un prompt en inglés para Suno, distinto por noticia → variedad real);
+    /// sin API key: heurística por keywords + estilo rotativo por día.
+    /// </summary>
+    private async Task<(string Mood, string Style)> ClassifyNewsMusicAsync(
+        string headline, string? summary, CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(aiSettings.ApiKey))
-            return HeuristicNewsMood($"{headline} {summary}");
+        if (!string.IsNullOrWhiteSpace(aiSettings.ApiKey))
+        {
+            try
+            {
+                var response = await gemini.GenerateAsync(
+                    "Sos un music supervisor de un noticiero de anime. Para la noticia dada: " +
+                    "(1) clasificá UN mood: epic (estrenos/anuncios grandes), dark (cancelaciones/polémicas), " +
+                    "upbeat (eventos/colaboraciones/curiosidades), emotional (fallecimientos/homenajes), chill (notas suaves); " +
+                    "(2) escribí un prompt de estilo para generar música INSTRUMENTAL acorde, en inglés, " +
+                    "máx 150 caracteres, creativo y específico (género, instrumentación, energía — evitá lo genérico). " +
+                    "Respondé SOLO un JSON: {\"mood\":\"epic|dark|upbeat|chill|emotional\",\"style\":\"...\"}",
+                    $"Titular: {headline}\nResumen: {summary}",
+                    useWebSearch: false, ct);
 
+                using var doc = JsonDocument.Parse(response);
+                var mood = doc.RootElement.GetProperty("mood").GetString()?.Trim().ToLowerInvariant();
+                var style = doc.RootElement.TryGetProperty("style", out var st) ? st.GetString()?.Trim() : null;
+                if (mood is not null && ValidMoods.Contains(mood))
+                    return (mood, string.IsNullOrWhiteSpace(style) ? FallbackStyleFor(mood) : style!);
+            }
+            catch (Exception ex)
+            {
+                logger.LogDebug(ex, "Gemini news music classification failed — using heuristic");
+            }
+        }
+
+        var heuristicMood = HeuristicNewsMood($"{headline} {summary}");
+        return (heuristicMood, FallbackStyleFor(heuristicMood));
+    }
+
+    /// <summary>
+    /// Estilo de respaldo cuando Gemini no está: 3 variantes por mood, rotadas
+    /// por día del año para que ni el fallback suene siempre igual. Público para tests.
+    /// </summary>
+    public static string FallbackStyleFor(string mood, int? daySeed = null)
+    {
+        string[] variants = mood switch
+        {
+            "epic" =>
+            [
+                "epic orchestral hybrid trailer, taiko drums, electric guitar, rising intensity, instrumental",
+                "heroic anime opening theme, symphonic rock, soaring strings, triumphant brass, instrumental",
+                "battle score, cinematic percussion, staccato strings, urgent and powerful, instrumental",
+            ],
+            "dark" =>
+            [
+                "dark ambient tension, low strings, distant taiko, ominous drones, instrumental",
+                "suspense underscore, pulsing synth bass, eerie textures, slow build, instrumental",
+                "noir orchestral, dissonant strings, sparse piano, brooding atmosphere, instrumental",
+            ],
+            "upbeat" =>
+            [
+                "upbeat j-pop instrumental, bright synths, funky bass, playful energy",
+                "quirky electro swing, brass stabs, bouncy rhythm, fun and energetic, instrumental",
+                "future bass, cheerful plucks, claps, colorful and optimistic, instrumental",
+            ],
+            "emotional" =>
+            [
+                "emotional piano ballad, warm strings, gentle swells, bittersweet, instrumental",
+                "melancholic acoustic guitar and cello, intimate, heartfelt, instrumental",
+                "cinematic farewell theme, soft piano, choir pads, moving and respectful, instrumental",
+            ],
+            _ =>
+            [
+                "lofi chill hop, warm piano, vinyl texture, cozy and relaxed, instrumental",
+                "dreamy ambient pop, soft pads, mellow guitar, calm evening mood, instrumental",
+                "acoustic slice-of-life theme, ukulele, light percussion, gentle, instrumental",
+            ],
+        };
+        var day = daySeed ?? DateTime.UtcNow.DayOfYear;
+        return variants[day % variants.Length];
+    }
+
+    /// <summary>Siembra el track generado en la biblioteca de Cloudinary (best-effort).</summary>
+    private async Task SeedLibraryAsync(string name, byte[] mp3, CancellationToken ct)
+    {
+        if (!settings.CloudinaryConfigured) return;
         try
         {
-            var response = await gemini.GenerateAsync(
-                "Sos un music supervisor de un noticiero de anime. Clasificá la noticia en UN mood musical " +
-                "para el video: epic (estrenos/anuncios grandes), dark (cancelaciones/polémicas), " +
-                "upbeat (eventos/colaboraciones/curiosidades), emotional (fallecimientos/despedidas/homenajes), " +
-                "chill (notas suaves). Respondé SOLO un JSON: {\"mood\":\"epic|dark|upbeat|chill|emotional\"}",
-                $"Titular: {headline}\nResumen: {summary}",
-                useWebSearch: false, ct);
-
-            using var doc = JsonDocument.Parse(response);
-            var mood = doc.RootElement.GetProperty("mood").GetString()?.Trim().ToLowerInvariant();
-            if (mood is not null && ValidMoods.Contains(mood)) return mood;
+            using var ms = new MemoryStream(mp3);
+            await CloudinaryClient.UploadAsync(new VideoUploadParams
+            {
+                File      = new FileDescription($"{name}.mp3", ms),
+                PublicId  = name,
+                Folder    = MusicFolder,
+                Overwrite = true,
+            }, ct);
+            logger.LogInformation("Track Suno sembrado en biblioteca: {Folder}/{Name}", MusicFolder, name);
         }
         catch (Exception ex)
         {
-            logger.LogDebug(ex, "Gemini news mood classification failed — using heuristic");
+            logger.LogDebug(ex, "No se pudo sembrar el track en Cloudinary — sigue igual");
         }
-        return HeuristicNewsMood($"{headline} {summary}");
     }
 
     /// <summary>Mood por palabras clave del titular cuando no hay IA. Público para tests.</summary>

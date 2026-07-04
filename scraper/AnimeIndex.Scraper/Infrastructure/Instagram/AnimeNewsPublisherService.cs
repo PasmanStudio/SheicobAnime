@@ -28,12 +28,17 @@ public class AnimeNewsPublisherService(
     InstagramVideoService videoService,
     ReelMusicService musicService,
     NewsRewriteService rewriter,
+    GeminiClient gemini,
+    AiSettings aiSettings,
     IHttpClientFactory httpFactory,
     ILogger<AnimeNewsPublisherService> logger)
 {
     // Meta procesa video asíncrono y puede tardar varios minutos
     private static readonly TimeSpan VideoProcessingTimeout = TimeSpan.FromMinutes(6);
 
+    /// <param name="items">Pool de candidatos pendientes (puede ser mayor a
+    /// MaxPerRun — acá se capa). Si el Reel del día está disponible, la noticia
+    /// MÁS RELEVANTE del pool (IA/heurística) se procesa primero y se lo lleva.</param>
     public async Task PublishPendingAsync(
         IReadOnlyList<AnimeNewsItem> items, CancellationToken ct = default)
     {
@@ -44,13 +49,99 @@ public class AnimeNewsPublisherService(
         }
         if (items.Count == 0) return;
 
-        logger.LogInformation("AnimeNews: publishing {Count} news item(s) to Instagram", items.Count);
+        var batch = await SelectBatchAsync(items, ct);
+        logger.LogInformation("AnimeNews: publishing {Count} news item(s) to Instagram ({Pool} candidatas)",
+            batch.Count, items.Count);
 
-        foreach (var item in items)
+        foreach (var item in batch)
         {
             if (ct.IsCancellationRequested) break;
             await PublishItemAsync(item, ct);
         }
+    }
+
+    // ── Selección del batch (la más relevante primero si hay reel del día) ────
+
+    private async Task<IReadOnlyList<AnimeNewsItem>> SelectBatchAsync(
+        IReadOnlyList<AnimeNewsItem> items, CancellationToken ct)
+    {
+        if (items.Count <= 1 || !igSettings.NewsReelEnabled)
+            return items.Take(newsSettings.MaxPerRun).ToList();
+
+        bool reelAvailable;
+        try
+        {
+            reelAvailable = !await db.AnimeNewsItems.AnyAsync(
+                n => n.IgReelMediaId != null && n.IgPostedAt >= DateTime.UtcNow.AddHours(-24), ct);
+        }
+        catch { reelAvailable = false; }
+
+        if (!reelAvailable)
+            return items.Take(newsSettings.MaxPerRun).ToList();
+
+        var best = await PickMostRelevantAsync(items, ct);
+        logger.LogInformation("AnimeNews: noticia del día para el reel → \"{Title}\"", Truncate(best.Title, 80));
+
+        return items
+            .OrderByDescending(i => ReferenceEquals(i, best) ? 1 : 0)
+            .ThenByDescending(i => i.PublishedAt)
+            .Take(newsSettings.MaxPerRun)
+            .ToList();
+    }
+
+    /// <summary>Gemini elige la noticia más relevante del pool; fallback heurístico por keywords.</summary>
+    private async Task<AnimeNewsItem> PickMostRelevantAsync(
+        IReadOnlyList<AnimeNewsItem> items, CancellationToken ct)
+    {
+        if (!string.IsNullOrWhiteSpace(aiSettings.ApiKey))
+        {
+            try
+            {
+                var list = string.Join("\n", items.Select((n, i) =>
+                    $"{i}: {n.Title}" + (string.IsNullOrWhiteSpace(n.Summary) ? "" : $" — {Truncate(n.Summary!, 120)}")));
+                var response = await gemini.GenerateAsync(
+                    "Sos el editor jefe de un medio de anime en español para LATAM. De la lista, elegí LA noticia " +
+                    "más relevante/viral para el video destacado del día (estrenos grandes, anuncios bomba, " +
+                    "fallecimientos de figuras, polémicas fuertes pesan más que curiosidades menores). " +
+                    "Respondé SOLO un JSON: {\"index\": <número de la lista>}",
+                    list, useWebSearch: false, ct);
+
+                using var doc = System.Text.Json.JsonDocument.Parse(response);
+                var idx = doc.RootElement.GetProperty("index").GetInt32();
+                if (idx >= 0 && idx < items.Count) return items[idx];
+            }
+            catch (Exception ex)
+            {
+                logger.LogDebug(ex, "Gemini relevance ranking failed — using heuristic");
+            }
+        }
+
+        // Heurística: mayor score gana; empate → la más nueva (orden de entrada)
+        return items.OrderByDescending(n => HeuristicNewsScore($"{n.Title} {n.Summary}")).First();
+    }
+
+    /// <summary>Score de relevancia por keywords cuando no hay IA. Público para tests.</summary>
+    public static int HeuristicNewsScore(string text)
+    {
+        var t = text.ToLowerInvariant();
+        var score = 0;
+
+        // Anuncios grandes / lanzamientos
+        foreach (var k in new[] { "estreno", "estrena", "tráiler", "trailer", "temporada", "película",
+                                  "pelicula", "confirmado", "confirma", "anuncia", "live-action", "adaptación", "adaptacion" })
+            if (t.Contains(k)) score += 3;
+        // Noticias de peso (luto / polémicas fuertes)
+        foreach (var k in new[] { "fallec", "muere", "murió", "homenaje", "demanda", "cancel" })
+            if (t.Contains(k)) score += 3;
+        // Franquicias enormes: empujón extra
+        foreach (var k in new[] { "one piece", "naruto", "dragon ball", "jujutsu", "chainsaw", "attack on titan",
+                                  "shingeki", "demon slayer", "kimetsu", "ghibli", "evangelion" })
+            if (t.Contains(k)) score += 2;
+        // Menores
+        foreach (var k in new[] { "colaboración", "colaboracion", "evento", "figura", "manga" })
+            if (t.Contains(k)) score += 1;
+
+        return score;
     }
 
     private async Task PublishItemAsync(AnimeNewsItem item, CancellationToken ct)
