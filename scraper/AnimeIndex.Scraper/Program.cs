@@ -77,6 +77,7 @@ if (args.Contains("--news"))
         newsBuilder.Services.AddScoped<AnimeIndex.Scraper.Infrastructure.Instagram.MetaGraphApiClient>();
         // Reel diario de noticias: motion card (ffmpeg) + música por mood (IA)
         newsBuilder.Services.AddScoped<AnimeIndex.Scraper.Infrastructure.Instagram.InstagramVideoService>();
+        newsBuilder.Services.AddScoped<AnimeIndex.Scraper.Infrastructure.Instagram.SunoMusicGenerator>();
         newsBuilder.Services.AddScoped<AnimeIndex.Scraper.Infrastructure.Instagram.ReelMusicService>();
         newsBuilder.Services.AddScoped<AnimeIndex.Scraper.Infrastructure.Instagram.AnimeNewsPublisherService>();
         newsBuilder.Services.AddScoped<AnimeIndex.Scraper.Jobs.AnimeNewsJob>();
@@ -374,6 +375,7 @@ if (args.Contains("--upload-music"))
         .AddSingleton(igMusic)
         .AddSingleton(new AnimeIndex.Scraper.Infrastructure.AiRewrite.AiSettings())
         .AddSingleton<AnimeIndex.Scraper.Infrastructure.AiRewrite.GeminiClient>()
+        .AddSingleton<AnimeIndex.Scraper.Infrastructure.Instagram.SunoMusicGenerator>()
         .AddSingleton<AnimeIndex.Scraper.Infrastructure.Instagram.ReelMusicService>()
         .BuildServiceProvider();
 
@@ -581,6 +583,7 @@ try
     builder.Services.AddScoped<MetaGraphApiClient>();
     builder.Services.AddScoped<InstagramImageService>();
     builder.Services.AddScoped<InstagramVideoService>();
+    builder.Services.AddScoped<SunoMusicGenerator>();
     builder.Services.AddScoped<ReelMusicService>();
     builder.Services.AddScoped<CaptionGeneratorService>();
     builder.Services.AddScoped<InstagramPublisherService>();

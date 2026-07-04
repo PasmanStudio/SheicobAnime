@@ -33,18 +33,21 @@ public class AnimeNewsJob(
         var newItems = await feedService.FetchAndUpsertAsync(ct);
         logger.LogInformation("AnimeNewsJob: {Count} new items fetched from feeds", newItems.Count);
 
-        // Step 2: get pending items (includes both newly fetched and any from previous runs that failed)
-        var pendingItems = await feedService.GetPendingItemsAsync(ct);
+        // Step 2: get pending candidates. Se pide un pool más grande que MaxPerRun:
+        // cuando el Reel del día está disponible, el publisher elige la noticia
+        // MÁS RELEVANTE del pool (IA/heurística) en vez de la más nueva, y el
+        // resto queda pendiente para las corridas siguientes.
+        var candidates = await feedService.GetPendingItemsAsync(ct, take: Math.Max(settings.MaxPerRun, 10));
 
-        if (pendingItems.Count == 0)
+        if (candidates.Count == 0)
         {
             logger.LogInformation("AnimeNewsJob: no pending items to publish");
             return;
         }
 
-        // Step 3: publish to Instagram
-        await publisher.PublishPendingAsync(pendingItems, ct);
+        // Step 3: publish to Instagram (el publisher capa el batch a MaxPerRun)
+        await publisher.PublishPendingAsync(candidates, ct);
 
-        logger.LogInformation("AnimeNewsJob: done — published {Count} item(s)", pendingItems.Count);
+        logger.LogInformation("AnimeNewsJob: done");
     }
 }
