@@ -1,5 +1,6 @@
 using AnimeIndex.Api.Data;
 using AnimeIndex.Api.Data.Entities;
+using AnimeIndex.Scraper.Infrastructure.AiRewrite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
@@ -40,6 +41,8 @@ public class InstagramPublisherService(
     InstagramVideoService videoService,
     ReelMusicService musicService,
     CaptionGeneratorService captionGen,
+    GeminiClient gemini,
+    AiSettings aiSettings,
     ILogger<InstagramPublisherService> logger)
 {
     // Meta procesa video asíncrono y puede tardar varios minutos
@@ -75,6 +78,12 @@ public class InstagramPublisherService(
             .OrderByDescending(e => e.CreatedAt)
             .Take(settings.MaxCarouselItems)
             .ToListAsync(ct);
+
+        // El "héroe" del batch (IA/heurística) encabeza todo: primera slide del
+        // carrusel (= portada), story y reel. Antes era simplemente el episodio
+        // más nuevo — un estreno grande (ep. 1 de una franquicia top) quedaba
+        // enterrado en la slide 5 detrás de lo último que scrapeó.
+        episodes = await OrderByHeroAsync(episodes, ct);
 
         if (episodes.Count == 0)
             logger.LogInformation("No new episodes to post to Instagram today (feed)");
@@ -151,6 +160,77 @@ public class InstagramPublisherService(
             logger.LogInformation("No new episodes to post to Instagram today (story)");
     }
 
+    // ── Héroe del batch (el episodio que merece la portada) ──────────
+
+    /// <summary>
+    /// Reordena el batch para que el episodio MÁS promocionable vaya primero
+    /// (portada del carrusel + story + reel). Gemini elige como editor; sin
+    /// API key o ante error, heurística: estrenos (ep. 1) y series top pesan más.
+    /// </summary>
+    private async Task<List<Episode>> OrderByHeroAsync(List<Episode> episodes, CancellationToken ct)
+    {
+        if (episodes.Count <= 1) return episodes;
+
+        Episode? hero = null;
+        if (!string.IsNullOrWhiteSpace(aiSettings.ApiKey))
+        {
+            try
+            {
+                var list = string.Join("\n", episodes.Select((e, i) =>
+                {
+                    var genres = string.Join(", ", e.Series.SeriesGenres
+                        .Select(sg => sg.Genre?.Name)
+                        .Where(g => !string.IsNullOrWhiteSpace(g)));
+                    return $"{i}: {e.Series.Title} — Episodio {e.EpisodeNumber}" +
+                           (e.Series.Score is { } s ? $" — score {s}" : "") +
+                           (genres.Length > 0 ? $" — {genres}" : "");
+                }));
+                var response = await gemini.GenerateAsync(
+                    "Sos el community manager de un sitio de anime para LATAM. De la lista de episodios " +
+                    "recién subidos, elegí EL más promocionable para la portada del post del día: estrenos " +
+                    "(episodio 1) de series esperadas, franquicias grandes y series con score alto pesan más " +
+                    "que un episodio intermedio de una serie de relleno. " +
+                    "Respondé SOLO un JSON: {\"index\": <número de la lista>}",
+                    list, useWebSearch: false, ct);
+
+                using var doc = System.Text.Json.JsonDocument.Parse(response);
+                var idx = doc.RootElement.GetProperty("index").GetInt32();
+                if (idx >= 0 && idx < episodes.Count) hero = episodes[idx];
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                logger.LogDebug(ex, "Gemini hero-episode ranking failed — using heuristic");
+            }
+        }
+
+        hero ??= episodes.OrderByDescending(e => HeuristicEpisodeScore(e.Series, e)).First();
+
+        if (!ReferenceEquals(hero, episodes[0]))
+            logger.LogInformation("Hero episode del batch: {Series} ep {Ep} (antes iba {First})",
+                hero.Series.Title, hero.EpisodeNumber, episodes[0].Series.Title);
+
+        return [hero, .. episodes.Where(e => !ReferenceEquals(e, hero))];
+    }
+
+    /// <summary>Score de promocionabilidad sin IA. Público para tests.</summary>
+    public static int HeuristicEpisodeScore(Series series, Episode episode)
+    {
+        var score = 0;
+
+        // Estreno de temporada = el evento a anunciar con bombos y platillos
+        if (episode.EpisodeNumber == 1) score += 5;
+        else if (episode.EpisodeNumber <= 3) score += 2;
+
+        // Series bien puntuadas venden más
+        if (series.Score >= 8m) score += 3;
+        else if (series.Score >= 7m) score += 1;
+
+        // Películas/especiales son eventos por sí mismos
+        if (series.Type is "movie") score += 3;
+
+        return score;
+    }
+
     // ── Reel (motion card MP4, share_to_feed) ────────────────────────
 
     /// <summary>
@@ -197,7 +277,7 @@ public class InstagramPublisherService(
             if (music?.Track.Attribution is { } attribution)
                 caption = $"{caption}\n\n{attribution}";
 
-            var containerId = await api.CreateReelContainerAsync(videoUrl, caption, shareToFeed: true, ct);
+            var containerId = await api.CreateReelContainerAsync(videoUrl, caption, shareToFeed: true, ct: ct);
             await api.WaitForContainerReadyAsync(containerId, ct, VideoProcessingTimeout);
             var mediaId = await api.PublishContainerAsync(containerId, ct);
 

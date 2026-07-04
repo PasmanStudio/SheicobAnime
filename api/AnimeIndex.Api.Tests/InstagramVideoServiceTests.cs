@@ -92,6 +92,42 @@ public class InstagramVideoServiceTests
         Assert.Contains("-map [a]", args);
         Assert.DoesNotContain("anullsrc", args);
     }
+
+    [Fact]
+    public void BuildSlideshowArguments_ChainsCrossfadesWithCorrectOffsets()
+    {
+        var args = InstagramVideoService.BuildSlideshowArguments(
+            ["s0.jpg", "s1.jpg", "s2.jpg"], "out.mp4");
+
+        // Escena k arranca en k·(4−0.6): 3.4 y 6.8; duración total 3·4 − 2·0.6 = 10.8
+        Assert.Contains("xfade=transition=fade:duration=0.6:offset=3.4", args);
+        Assert.Contains("offset=6.8[vx]", args);
+        Assert.Contains("-t 10.8", args);
+        // Zoom alternado: slide 0 acerca, slide 1 aleja
+        Assert.Contains("[0:v]", args);
+        Assert.Contains("min(1+on*", args);
+        Assert.Contains("max(1.08-on*", args);
+        // Sin música → pista silenciosa como input 3 (después de las 3 slides)
+        Assert.Contains("anullsrc", args);
+        Assert.Contains("-map 3:a", args);
+        // Specs de Reels intactas
+        Assert.Contains("-movflags +faststart", args);
+        Assert.Contains("format=yuv420p", args);
+    }
+
+    [Fact]
+    public void BuildSlideshowArguments_WithMusic_UsesTrackAtCorrectIndex()
+    {
+        var args = InstagramVideoService.BuildSlideshowArguments(
+            ["s0.jpg", "s1.jpg"], "out.mp4", musicPath: "music.mp3", musicStartSeconds: 5);
+
+        Assert.DoesNotContain("anullsrc", args);
+        // 2 slides → música es el input 2; total 2·4 − 0.6 = 7.4
+        Assert.Contains("[2:a]afade", args);
+        Assert.Contains("-ss 5 -t 7.4 -i \"music.mp3\"", args);
+        // Fade-out arranca en 7.4 − 1.5 = 5.9
+        Assert.Contains("afade=t=out:st=5.9", args);
+    }
 }
 
 public class ReelMusicServiceTests
@@ -246,6 +282,39 @@ public class AnimeNewsFeedSanitizeXmlTests
 
         Assert.Equal("<title>Naruto &amp; Sasuke vs Boruto &amp; Kawaki</title>", result);
         System.Xml.Linq.XDocument.Parse(result); // no debe tirar
+    }
+}
+
+public class HeroEpisodeTests
+{
+    private static AnimeIndex.Api.Data.Entities.Series MakeSeries(decimal? score = null, string type = "tv") =>
+        new() { Slug = "x", Title = "X", Score = score, Type = type };
+
+    private static AnimeIndex.Api.Data.Entities.Episode MakeEpisode(short number) =>
+        new() { EpisodeNumber = number };
+
+    [Fact]
+    public void HeuristicEpisodeScore_PremiereOfTopSeriesBeatsMidSeasonFiller()
+    {
+        // Estreno (ep. 1) de serie top — el caso "Mushoku Tensei 3" del usuario
+        var premiere = InstagramPublisherService.HeuristicEpisodeScore(
+            MakeSeries(score: 8.5m), MakeEpisode(1));
+        // Episodio intermedio de una serie mediocre
+        var filler = InstagramPublisherService.HeuristicEpisodeScore(
+            MakeSeries(score: 6.2m), MakeEpisode(11));
+
+        Assert.True(premiere > filler, $"estreno ({premiere}) debe superar al relleno ({filler})");
+    }
+
+    [Fact]
+    public void HeuristicEpisodeScore_MovieOutranksRegularEpisode()
+    {
+        var movie   = InstagramPublisherService.HeuristicEpisodeScore(
+            MakeSeries(score: 7.5m, type: "movie"), MakeEpisode(1));
+        var regular = InstagramPublisherService.HeuristicEpisodeScore(
+            MakeSeries(score: 7.5m), MakeEpisode(8));
+
+        Assert.True(movie > regular);
     }
 }
 
