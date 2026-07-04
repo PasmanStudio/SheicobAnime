@@ -510,6 +510,31 @@ public partial class AnimeNewsFeedService(
     [GeneratedRegex(@"&(?!amp;|lt;|gt;|quot;|apos;|#\d+;|#x[0-9a-fA-F]+;)")]
     private static partial Regex UnescapedAmpersand();
 
+    // Embed clásico + lazy-embed de kudasai (el id vive en el thumbnail /vi/{id}/)
+    // + youtu.be + watch?v=. NO matchea links de canal (youtube.com/c/...).
+    [GeneratedRegex(
+        @"youtube(?:-nocookie)?\.com/embed/([A-Za-z0-9_-]{6,15})" +
+        @"|youtube\.com/vi/([A-Za-z0-9_-]{6,15})" +
+        @"|youtu\.be/([A-Za-z0-9_-]{6,15})" +
+        @"|youtube\.com/watch\?v=([A-Za-z0-9_-]{6,15})",
+        RegexOptions.IgnoreCase)]
+    private static partial Regex YouTubeVideoRegex();
+
+    /// <summary>
+    /// Primer tráiler de YouTube embebido en el artículo (los estudios los
+    /// publican para difusión y las noticias de anime los embeben casi siempre).
+    /// Devuelve la URL watch canónica o null. Público para tests.
+    /// </summary>
+    public static string? ExtractArticleVideoUrl(string html)
+    {
+        var m = YouTubeVideoRegex().Match(html);
+        if (!m.Success) return null;
+
+        var id = m.Groups.Cast<System.Text.RegularExpressions.Group>()
+            .Skip(1).FirstOrDefault(g => g.Success)?.Value;
+        return id is null ? null : $"https://www.youtube.com/watch?v={id}";
+    }
+
     // ── Cross-feed duplicate merge ───────────────────────────────────────────
 
     /// <summary>
