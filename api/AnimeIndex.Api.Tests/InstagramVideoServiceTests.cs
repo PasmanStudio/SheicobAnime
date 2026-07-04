@@ -128,6 +128,65 @@ public class InstagramVideoServiceTests
         // Fade-out arranca en 7.4 − 1.5 = 5.9
         Assert.Contains("afade=t=out:st=5.9", args);
     }
+
+    [Fact]
+    public void BuildTrailerReelArguments_MutesTrailerAndOverlaysBrandText()
+    {
+        var args = InstagramVideoService.BuildTrailerReelArguments(
+            "trailer.mp4", "bg.jpg", "overlay.png", "out.mp4", 18);
+
+        // El tráiler entra salteando el arranque (logos/negro) y NUNCA su audio:
+        // el único mapeo de audio es la pista propia (input 3)
+        Assert.Contains("-ss 1.5 -i \"trailer.mp4\"", args);
+        Assert.DoesNotContain("[1:a]", args);
+        Assert.Contains("-map 3:a", args);
+        // Banda de video capada y congelada si el clip es corto
+        Assert.Contains("crop=1080:'min(ih,900)'", args);
+        Assert.Contains("tpad=stop_mode=clone", args);
+        // Fondo + tráiler + overlay de texto con el slide-up de marca
+        Assert.Contains("overlay=x='(W-w)/2':y=240", args);
+        Assert.Contains("fade=t=in:st=0.5:d=0.8:alpha=1", args);
+        // Specs de Reels intactas
+        Assert.Contains("-movflags +faststart", args);
+        Assert.Contains("format=yuv420p", args);
+        Assert.Contains("-t 18", args);
+    }
+
+    [Fact]
+    public void BuildTrailerReelArguments_WithMusic_MapsOwnTrackOnly()
+    {
+        var args = InstagramVideoService.BuildTrailerReelArguments(
+            "t.mp4", "bg.jpg", "ov.png", "out.mp4", 18, musicPath: "music.mp3");
+
+        Assert.DoesNotContain("anullsrc", args);
+        Assert.Contains("[3:a]afade", args);
+        Assert.Contains("-map [a]", args);
+        // Fade-out en 18 − 1.5 = 16.5
+        Assert.Contains("afade=t=out:st=16.5", args);
+    }
+}
+
+public class ArticleVideoExtractionTests
+{
+    [Theory]
+    // Embed clásico de WordPress
+    [InlineData("<iframe src=\"https://www.youtube.com/embed/jXtG_lcR9P4?rel=0\"></iframe>", "jXtG_lcR9P4")]
+    // Lazy-embed de kudasai: el id vive en el thumbnail /vi/{id}/
+    [InlineData("<img src=\"https://img.youtube.com/vi/jXtG_lcR9P4?showinfo=0/hqdefault.jpg\">", "jXtG_lcR9P4")]
+    [InlineData("Mirá el tráiler: https://youtu.be/dQw4w9WgXcQ acá", "dQw4w9WgXcQ")]
+    [InlineData("<a href=\"https://www.youtube.com/watch?v=abc123XYZ_-\">tráiler</a>", "abc123XYZ_-")]
+    public void ExtractArticleVideoUrl_FindsTrailer(string html, string expectedId)
+        => Assert.Equal($"https://www.youtube.com/watch?v={expectedId}",
+            AnimeNewsFeedService.ExtractArticleVideoUrl(html));
+
+    [Fact]
+    public void ExtractArticleVideoUrl_IgnoresChannelLinksAndReturnsNullWithoutVideo()
+    {
+        // El link al canal de la fuente NO es un tráiler
+        Assert.Null(AnimeNewsFeedService.ExtractArticleVideoUrl(
+            "<a href=\"https://youtube.com/c/kudasai\">nuestro canal</a>"));
+        Assert.Null(AnimeNewsFeedService.ExtractArticleVideoUrl("<p>sin video</p>"));
+    }
 }
 
 public class ReelMusicServiceTests

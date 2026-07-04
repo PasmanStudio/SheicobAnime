@@ -89,6 +89,32 @@ public class AnimeNewsImageService(
     }
 
     /// <summary>
+    /// Capas para el Reel "tráiler + titular": fondo abismo SIN foto (el video
+    /// es el protagonista — glow + scrim para que el texto respire) y el mismo
+    /// overlay de texto de marca. El tráiler va como banda central encima del
+    /// fondo, el texto encima de todo.
+    /// </summary>
+    public (byte[] Background, byte[] OverlayPng) GenerateVideoReelLayers(NewsContent content)
+    {
+        const int width = 1080, height = 1920;
+
+        using var bgSurface = SKSurface.Create(new SKImageInfo(width, height));
+        var bg = bgSurface.Canvas;
+        bg.Clear(SKColors.Black);
+        DrawBackground(bg, width, height);
+        DrawCenterGlow(bg, width, height);
+        DrawBottomScrim(bg, width, height);
+
+        using var ovSurface = SKSurface.Create(
+            new SKImageInfo(width, height, SKColorType.Rgba8888, SKAlphaType.Premul));
+        var ov = ovSurface.Canvas;
+        ov.Clear(SKColors.Transparent);
+        DrawCoverText(ov, content, width, height, swipeHint: false);
+
+        return (Encode(bgSurface), EncodePng(ovSurface));
+    }
+
+    /// <summary>
     /// Capas separadas del cover 9:16 para el Reel de noticias (motion graphics):
     /// fondo (abismo + foto + scrim, JPEG) y overlay (titular/lede/kicker/logo
     /// sobre transparente, PNG con alpha). ffmpeg las anima por separado — Ken

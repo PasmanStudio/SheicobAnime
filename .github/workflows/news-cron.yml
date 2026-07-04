@@ -48,6 +48,13 @@ jobs:
       - name: Install ffmpeg
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
 
+      # yt-dlp para el reel "tráiler + titular" (baja el PV embebido en el
+      # artículo). pipx viene preinstalado en el runner y trae la versión
+      # actual (la de apt queda vieja y YouTube la rompe). Best-effort: si
+      # YouTube bloquea la IP del runner, el reel cae al slideshow de imágenes.
+      - name: Install yt-dlp
+        run: pipx install yt-dlp && yt-dlp --version
+
       - name: Cache NuGet packages
         uses: actions/cache@v4
         with:

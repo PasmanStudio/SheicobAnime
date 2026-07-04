@@ -28,6 +28,7 @@ public class AnimeNewsPublisherService(
     AnimeNewsImageService imageService,
     InstagramVideoService videoService,
     ReelMusicService musicService,
+    TrailerDownloadService trailerService,
     NewsRewriteService rewriter,
     GeminiClient gemini,
     AiSettings aiSettings,
@@ -148,8 +149,8 @@ public class AnimeNewsPublisherService(
     {
         try
         {
-            // Gather all usable article images (cover + in-body) for an image-rich carousel.
-            var images = await GatherImagesAsync(item, ct);
+            // Gather all usable article media (cover + in-body images + trailer).
+            var (images, trailerUrl) = await GatherMediaAsync(item, ct);
 
             // Guarantee every post has a real image — never publish a text-only/flat poster.
             // Checked BEFORE the rewrite so we don't spend a Gemini call on an unpostable item.
@@ -177,7 +178,7 @@ public class AnimeNewsPublisherService(
                     var reelRecently = await db.AnimeNewsItems.AnyAsync(
                         n => n.IgReelMediaId != null && n.IgPostedAt >= DateTime.UtcNow.AddHours(-24), ct);
                     if (!reelRecently)
-                        reelMediaId = await PublishReelAsync(item, content, images, ct);
+                        reelMediaId = await PublishReelAsync(item, content, images, trailerUrl, ct);
                 }
                 catch (Exception ex) when (ex is not TaskCanceledException { CancellationToken.IsCancellationRequested: true })
                 {
@@ -282,32 +283,68 @@ public class AnimeNewsPublisherService(
     /// miniatura del feed. Best-effort — un fallo acá degrada al carrusel.
     /// </summary>
     private async Task<string?> PublishReelAsync(
-        AnimeNewsItem item, NewsContent content, IReadOnlyList<string> images, CancellationToken ct)
+        AnimeNewsItem item, NewsContent content, IReadOnlyList<string> images,
+        string? trailerUrl, CancellationToken ct)
     {
         try
         {
             var music = await musicService.SelectAndDownloadForNewsAsync(
                 content.Headline, content.Lede, item.RssGuid, ct);
 
-            // Slideshow 9:16 (cover + hasta 3 puntos clave + CTA). Si el render
-            // multi-slide falla, cae al motion-card de capas de siempre.
-            byte[] videoBytes;
+            // Cadena de formatos, de mejor a más simple:
+            //   1. Tráiler + titular (si el artículo embebe un PV y se pudo bajar)
+            //   2. Slideshow de escenas (cover + puntos clave + CTA)
+            //   3. Motion-card de capas (tarjeta única)
+            byte[]? videoBytes = null;
             byte[] coverJpeg;
-            try
+
+            if (igSettings.TrailerReelEnabled && trailerUrl is not null)
             {
-                var slides = await imageService.GenerateReelSlidesAsync(
-                    item, content, images, maxKeyPoints: 3, ct);
-                coverJpeg  = slides[0];
-                videoBytes = await videoService.GenerateSlideshowAsync(
-                    slides, music?.Mp3, music?.Track.StartSeconds ?? 0, ct);
+                var clipPath = await trailerService.DownloadAsync(trailerUrl, ct);
+                if (clipPath is not null)
+                {
+                    try
+                    {
+                        var (bg, overlay) = imageService.GenerateVideoReelLayers(content);
+                        videoBytes = await videoService.GenerateTrailerReelAsync(
+                            clipPath, bg, overlay, music?.Mp3, music?.Track.StartSeconds ?? 0, ct);
+                        logger.LogInformation("AnimeNews: reel con TRÁILER para \"{Title}\" ({Url})",
+                            Truncate(item.Title, 60), trailerUrl);
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException and not FfmpegNotAvailableException)
+                    {
+                        logger.LogWarning(ex, "Trailer reel render failed — falling back to slideshow");
+                    }
+                    finally
+                    {
+                        TrailerDownloadService.CleanUp(clipPath);
+                    }
+                }
             }
-            catch (Exception ex) when (ex is not OperationCanceledException and not FfmpegNotAvailableException)
+
+            if (videoBytes is null)
             {
-                logger.LogWarning(ex, "Slideshow render failed — falling back to single motion card");
-                var (background, overlay) = await imageService.GenerateStoryLayersAsync(item, content, images, ct);
-                coverJpeg  = await imageService.GenerateStoryAsync(item, content, images, ct);
-                videoBytes = await videoService.GenerateMotionCardAsync(
-                    background, overlay, music?.Mp3, music?.Track.StartSeconds ?? 0, ct);
+                try
+                {
+                    var slides = await imageService.GenerateReelSlidesAsync(
+                        item, content, images, maxKeyPoints: 3, ct);
+                    coverJpeg  = slides[0];
+                    videoBytes = await videoService.GenerateSlideshowAsync(
+                        slides, music?.Mp3, music?.Track.StartSeconds ?? 0, ct);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException and not FfmpegNotAvailableException)
+                {
+                    logger.LogWarning(ex, "Slideshow render failed — falling back to single motion card");
+                    var (background, overlay) = await imageService.GenerateStoryLayersAsync(item, content, images, ct);
+                    coverJpeg  = await imageService.GenerateStoryAsync(item, content, images, ct);
+                    videoBytes = await videoService.GenerateMotionCardAsync(
+                        background, overlay, music?.Mp3, music?.Track.StartSeconds ?? 0, ct);
+                }
+            }
+            else
+            {
+                // El cover del reel de tráiler es la tarjeta editorial con la foto
+                coverJpeg = await imageService.GenerateStoryAsync(item, content, images, ct);
             }
 
             var baseName = $"news-{item.SourceKey}-{item.Id.ToString("N")[..8]}";
@@ -397,14 +434,18 @@ public class AnimeNewsPublisherService(
     // ── Image gathering ─────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Collects every usable image for the carousel: the stored cover plus any in-body images
-    /// from the article page (best-effort re-fetch). More images ⇒ a richer, koryugi-style carousel.
+    /// Collects every usable media for the item: the stored cover plus any in-body
+    /// images from the article page (best-effort re-fetch), AND the first embedded
+    /// YouTube trailer if any — el reel lo usa de fondo cuando existe.
     /// </summary>
-    private async Task<IReadOnlyList<string>> GatherImagesAsync(AnimeNewsItem item, CancellationToken ct)
+    private async Task<(IReadOnlyList<string> Images, string? TrailerUrl)> GatherMediaAsync(
+        AnimeNewsItem item, CancellationToken ct)
     {
         var images = new List<string>();
+        string? trailerUrl = null;
         if (!string.IsNullOrWhiteSpace(item.ImageUrl)) images.Add(item.ImageUrl!);
-        if (string.IsNullOrWhiteSpace(item.ArticleUrl)) return images;
+        if (string.IsNullOrWhiteSpace(item.ArticleUrl))
+            return (images, null);
 
         try
         {
@@ -414,14 +455,15 @@ public class AnimeNewsPublisherService(
             {
                 var html = await resp.Content.ReadAsStringAsync(ct);
                 images.AddRange(AnimeNewsFeedService.ExtractArticleImages(html));
+                trailerUrl = AnimeNewsFeedService.ExtractArticleVideoUrl(html);
             }
         }
         catch (Exception ex) when (ex is not TaskCanceledException { CancellationToken.IsCancellationRequested: true })
         {
-            logger.LogDebug(ex, "AnimeNews: could not gather extra images for {Title}", Truncate(item.Title, 50));
+            logger.LogDebug(ex, "AnimeNews: could not gather extra media for {Title}", Truncate(item.Title, 50));
         }
 
-        return images.Distinct().Take(6).ToList();
+        return (images.Distinct().Take(6).ToList(), trailerUrl);
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

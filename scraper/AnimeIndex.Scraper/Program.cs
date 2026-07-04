@@ -79,6 +79,7 @@ if (args.Contains("--news"))
         newsBuilder.Services.AddScoped<AnimeIndex.Scraper.Infrastructure.Instagram.InstagramVideoService>();
         newsBuilder.Services.AddScoped<AnimeIndex.Scraper.Infrastructure.Instagram.SunoMusicGenerator>();
         newsBuilder.Services.AddScoped<AnimeIndex.Scraper.Infrastructure.Instagram.ReelMusicService>();
+        newsBuilder.Services.AddScoped<AnimeIndex.Scraper.Infrastructure.Instagram.TrailerDownloadService>();
         newsBuilder.Services.AddScoped<AnimeIndex.Scraper.Infrastructure.Instagram.AnimeNewsPublisherService>();
         newsBuilder.Services.AddScoped<AnimeIndex.Scraper.Jobs.AnimeNewsJob>();
 
@@ -593,6 +594,7 @@ try
     builder.Services.AddScoped<AnimeIndex.Scraper.Infrastructure.AiRewrite.GeminiClient>();
     builder.Services.AddScoped<AnimeIndex.Scraper.Infrastructure.AiRewrite.NewsRewriteService>();
     builder.Services.AddScoped<AnimeIndex.Scraper.Infrastructure.Instagram.AnimeNewsImageService>();
+    builder.Services.AddScoped<AnimeIndex.Scraper.Infrastructure.Instagram.TrailerDownloadService>();
     builder.Services.AddScoped<AnimeIndex.Scraper.Infrastructure.Instagram.AnimeNewsPublisherService>();
 
     // ─── Scraper services ─────────────────────────────────

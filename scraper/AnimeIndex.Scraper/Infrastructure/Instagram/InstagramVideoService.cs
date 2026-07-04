@@ -97,6 +97,117 @@ public class InstagramVideoService(
     }
 
     /// <summary>
+    /// Renders el Reel "tráiler + titular": el PV muteado como banda central
+    /// sobre el fondo abismo, con el overlay de texto de marca entrando con
+    /// fade/slide y nuestra música. El formato de las cuentas grandes de
+    /// noticias de anime.
+    /// </summary>
+    public async Task<byte[]> GenerateTrailerReelAsync(
+        string trailerPath,
+        byte[] backgroundJpeg,
+        byte[] overlayPng,
+        byte[]? musicMp3 = null,
+        int musicStartSeconds = 0,
+        CancellationToken ct = default)
+    {
+        var workDir = Path.Join(Path.GetTempPath(), $"ig-reel-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(workDir);
+        var bgPath = Path.Join(workDir, "bg.jpg");
+        var overlayPath = Path.Join(workDir, "overlay.png");
+        var outputPath = Path.Join(workDir, "reel.mp4");
+        string? musicPath = null;
+
+        try
+        {
+            await File.WriteAllBytesAsync(bgPath, backgroundJpeg, ct);
+            await File.WriteAllBytesAsync(overlayPath, overlayPng, ct);
+            if (musicMp3 is not null)
+            {
+                musicPath = Path.Join(workDir, "music.mp3");
+                await File.WriteAllBytesAsync(musicPath, musicMp3, ct);
+            }
+
+            var args = BuildTrailerReelArguments(
+                trailerPath, bgPath, overlayPath, outputPath,
+                settings.TrailerClipSeconds, musicPath, musicStartSeconds);
+            await RunFfmpegAsync(args, ct);
+
+            var bytes = await File.ReadAllBytesAsync(outputPath, ct);
+            logger.LogInformation("Generated trailer reel: {Seconds}s, {Mb:F1} MB",
+                settings.TrailerClipSeconds, bytes.Length / 1024.0 / 1024.0);
+            return bytes;
+        }
+        finally
+        {
+            try { Directory.Delete(workDir, recursive: true); }
+            catch (IOException) { /* best-effort */ }
+            catch (UnauthorizedAccessException) { /* best-effort */ }
+        }
+    }
+
+    /// <summary>
+    /// Público + static para poder testear sin ffmpeg. Inputs: 0 = fondo (imagen
+    /// loopeada), 1 = tráiler (MUTEADO — nunca se mapea su audio), 2 = overlay
+    /// de texto, 3 = música/anullsrc. El tráiler entra desde el segundo 1.5
+    /// (saltea logos/negro inicial), escalado a 1080 de ancho, banda centrada en
+    /// y=240; si es más corto que el reel, congela el último frame (tpad).
+    /// </summary>
+    public static string BuildTrailerReelArguments(
+        string trailerPath, string backgroundPath, string overlayPath, string outputPath,
+        int durationSeconds, string? musicPath = null, int musicStartSeconds = 0)
+    {
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+        var durArg = durationSeconds.ToString(inv);
+
+        var filter =
+            // Tráiler: 1080 de ancho, banda capada a 900px de alto (por si es
+            // vertical), congelado al final si el clip es corto
+            "[1:v]scale=1080:-2,setsar=1,fps=30," +
+            "crop=1080:'min(ih,900)':0:'(ih-min(ih,900))/2'," +
+            $"tpad=stop_mode=clone:stop_duration={durArg}[tr];" +
+            // Fondo abismo + tráiler como banda superior-central
+            "[0:v][tr]overlay=x='(W-w)/2':y=240[base];" +
+            // Overlay de texto de marca: mismo slide-up + fade del motion-card
+            "[2:v]format=rgba,fade=t=in:st=0.5:d=0.8:alpha=1[ov];" +
+            "[base][ov]overlay=x=0:y='pow(1-min(1,max(0,(t-0.5)/0.9)),3)*80'," +
+            "fade=t=in:st=0:d=0.4,format=yuv420p[v]";
+
+        string audioInput, fullFilter, audioMap;
+        if (musicPath is not null)
+        {
+            var fadeOutStart = Math.Max(0, durationSeconds - 1.5).ToString("0.0#", inv);
+            audioInput = $"-ss {musicStartSeconds} -t {durArg} -i \"{musicPath}\"";
+            fullFilter = filter + ";" +
+                $"[3:a]afade=t=in:st=0:d=0.8,afade=t=out:st={fadeOutStart}:d=1.5," +
+                "loudnorm=I=-16:TP=-1.5:LRA=11[a]";
+            audioMap = "-map [a]";
+        }
+        else
+        {
+            audioInput = $"-f lavfi -t {durArg} -i anullsrc=channel_layout=stereo:sample_rate=44100";
+            fullFilter = filter;
+            audioMap = "-map 3:a";
+        }
+
+        return string.Join(' ',
+            "-y",
+            $"-loop 1 -framerate {Fps} -t {durArg} -i \"{backgroundPath}\"",
+            // -ss antes de -i: seek rápido; el tráiler entra sin su audio
+            $"-ss 1.5 -i \"{trailerPath}\"",
+            $"-loop 1 -framerate {Fps} -t {durArg} -i \"{overlayPath}\"",
+            audioInput,
+            $"-filter_complex \"{fullFilter}\"",
+            $"-map [v] {audioMap}",
+            $"-t {durArg} -r {Fps}",
+            "-c:v libx264 -profile:v high -preset medium -flags +cgop -g 60 -sc_threshold 0",
+            "-b:v 6M -maxrate 8M -bufsize 12M",
+            "-c:a aac -b:a 128k -ar 44100",
+            "-movflags +faststart",
+            "-shortest",
+            $"\"{outputPath}\"");
+    }
+
+    /// <summary>
     /// Renders a multi-slide Reel (slideshow): cada slide 9:16 con Ken Burns
     /// alternado (in/out) y crossfade entre escenas, más música/pista muda.
     /// Con 1 sola slide degrada al motion-card simple.

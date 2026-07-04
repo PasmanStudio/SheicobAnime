@@ -42,6 +42,19 @@ public class InstagramSettings
     // de la noticia más relevante del día). Apagar con Instagram__NewsReelEnabled=false.
     public bool NewsReelEnabled { get; set; } = true;
 
+    // ── Reel "tráiler + titular" ────────────────────────────────────────
+    // Si el artículo embebe un tráiler/PV de YouTube, el reel lo usa de fondo
+    // (muteado, con nuestra música) en vez del slideshow de imágenes — el
+    // formato de las cuentas grandes de noticias de anime. Sin tráiler o si
+    // yt-dlp falla (IP bloqueada, video region-locked), cae al slideshow.
+    public bool TrailerReelEnabled { get; set; } = true;
+
+    // Binario de yt-dlp (el workflow lo instala con pipx; en dev local puede faltar).
+    public string YtDlpPath { get; set; } = "yt-dlp";
+
+    // Duración del reel de tráiler en segundos (≤60 por si se reusa como story).
+    public int TrailerClipSeconds { get; set; } = 18;
+
     // ── Suno (música generada FRESCA por reel, vía sunoapi.org — tercero) ──
     // Con la key configurada, cada reel de noticias genera un track instrumental
     // nuevo (mood + estilo por IA). Sin key o si falla → biblioteca Cloudinary/CC.
