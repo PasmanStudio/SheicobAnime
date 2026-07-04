@@ -10,13 +10,14 @@ namespace AnimeIndex.Scraper.Infrastructure.Instagram;
 
 /// <summary>
 /// Publishes pending anime news items to Instagram as:
-///   • A single feed post (1080×1080)
-///   • A story (1080×1920)
-///   • Máx. UN Reel de noticias por día (motion card animada + música por IA,
-///     share_to_feed) — el primer item publicable del día lo gana; dedup por
-///     ig_reel_media_id en las últimas 24 h.
+///   • Máx. UN Reel de noticias por día (slideshow: cover + puntos clave + CTA,
+///     con música por IA y share_to_feed) — la noticia MÁS RELEVANTE del pool
+///     lo gana (dedup por ig_reel_media_id en las últimas 24 h). La noticia del
+///     reel NO publica además el carrusel: sería la misma noticia dos veces en
+///     el feed. Si el reel falla, el carrusel actúa de respaldo.
+///   • A single feed post / carousel (1080×1080) para el resto.
+///   • A story (1080×1920) siempre.
 ///
-/// One item = one feed post + one story (published in sequence).
 /// Errors are caught per-item so a failure on one doesn't block the rest.
 /// </summary>
 public class AnimeNewsPublisherService(
@@ -164,8 +165,30 @@ public class AnimeNewsPublisherService(
             // Turn the raw item into finished, original content (AI rewrite, or clean fallback).
             var content = await rewriter.RewriteAsync(item, ct);
 
+            // ── Reel diario PRIMERO (máx 1 por 24 h) ──────────────────────
+            // Si esta noticia gana el reel, NO se publica además el carrusel:
+            // el reel (share_to_feed=true) ya la muestra en el feed con las
+            // mismas slides animadas — dos posts de la misma noticia es spam.
+            string? reelMediaId = null;
+            if (igSettings.NewsReelEnabled)
+            {
+                try
+                {
+                    var reelRecently = await db.AnimeNewsItems.AnyAsync(
+                        n => n.IgReelMediaId != null && n.IgPostedAt >= DateTime.UtcNow.AddHours(-24), ct);
+                    if (!reelRecently)
+                        reelMediaId = await PublishReelAsync(item, content, images, ct);
+                }
+                catch (Exception ex) when (ex is not TaskCanceledException { CancellationToken.IsCancellationRequested: true })
+                {
+                    logger.LogWarning(ex, "AnimeNews: reel dedup check failed — skipping reel this run");
+                }
+            }
+
             // ── Feed (carousel: cover + content slides + closing CTA) ──
+            // Solo si el reel NO salió — si falló, el carrusel es el respaldo.
             string? feedMediaId = null;
+            if (reelMediaId is null)
             try
             {
                 var slides  = await imageService.GenerateCarouselSlidesAsync(
@@ -229,23 +252,6 @@ public class AnimeNewsPublisherService(
                     "AnimeNews: failed to publish story for {Title}", Truncate(item.Title, 60));
             }
 
-            // ── Reel diario (máx 1 por 24 h — el primer item publicable lo gana) ──
-            string? reelMediaId = null;
-            if (igSettings.NewsReelEnabled)
-            {
-                try
-                {
-                    var reelRecently = await db.AnimeNewsItems.AnyAsync(
-                        n => n.IgReelMediaId != null && n.IgPostedAt >= DateTime.UtcNow.AddHours(-24), ct);
-                    if (!reelRecently)
-                        reelMediaId = await PublishReelAsync(item, content, images, ct);
-                }
-                catch (Exception ex) when (ex is not TaskCanceledException { CancellationToken.IsCancellationRequested: true })
-                {
-                    logger.LogWarning(ex, "AnimeNews: reel dedup check failed — skipping reel this run");
-                }
-            }
-
             // Mark as published (even if only one of the formats succeeded)
             var anyPublished = feedMediaId is not null || storyMediaId is not null || reelMediaId is not null;
             item.IgPostStatus    = anyPublished ? "published" : "failed";
@@ -266,27 +272,54 @@ public class AnimeNewsPublisherService(
         }
     }
 
-    // ── Reel de noticias (motion card + música por IA) ───────────────────────
+    // ── Reel de noticias (slideshow + música por IA) ─────────────────────────
 
     /// <summary>
-    /// Publishes the animated news Reel: fondo con Ken Burns + titular entrando
-    /// con slide/fade + track según el mood de la noticia. Best-effort — un
-    /// fallo acá nunca afecta el feed/story ya publicados.
+    /// Publishes the news Reel as a SLIDESHOW: cover + puntos clave + CTA (las
+    /// mismas escenas editoriales del carrusel, en 9:16) con Ken Burns alternado,
+    /// crossfades y track según el mood. El cover 9:16 va como cover_url del
+    /// reel — sin él, IG usaba el primer frame (negro por el fade-in) como
+    /// miniatura del feed. Best-effort — un fallo acá degrada al carrusel.
     /// </summary>
     private async Task<string?> PublishReelAsync(
         AnimeNewsItem item, NewsContent content, IReadOnlyList<string> images, CancellationToken ct)
     {
         try
         {
-            var (background, overlay) = await imageService.GenerateStoryLayersAsync(item, content, images, ct);
             var music = await musicService.SelectAndDownloadForNewsAsync(
                 content.Headline, content.Lede, item.RssGuid, ct);
 
-            var videoBytes = await videoService.GenerateMotionCardAsync(
-                background, overlay, music?.Mp3, music?.Track.StartSeconds ?? 0, ct);
+            // Slideshow 9:16 (cover + hasta 3 puntos clave + CTA). Si el render
+            // multi-slide falla, cae al motion-card de capas de siempre.
+            byte[] videoBytes;
+            byte[] coverJpeg;
+            try
+            {
+                var slides = await imageService.GenerateReelSlidesAsync(
+                    item, content, images, maxKeyPoints: 3, ct);
+                coverJpeg  = slides[0];
+                videoBytes = await videoService.GenerateSlideshowAsync(
+                    slides, music?.Mp3, music?.Track.StartSeconds ?? 0, ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException and not FfmpegNotAvailableException)
+            {
+                logger.LogWarning(ex, "Slideshow render failed — falling back to single motion card");
+                var (background, overlay) = await imageService.GenerateStoryLayersAsync(item, content, images, ct);
+                coverJpeg  = await imageService.GenerateStoryAsync(item, content, images, ct);
+                videoBytes = await videoService.GenerateMotionCardAsync(
+                    background, overlay, music?.Mp3, music?.Track.StartSeconds ?? 0, ct);
+            }
 
-            var fileName = $"news-{item.SourceKey}-{item.Id.ToString("N")[..8]}-reel.mp4";
-            var videoUrl = await api.UploadVideoAsync(videoBytes, fileName, ct);
+            var baseName = $"news-{item.SourceKey}-{item.Id.ToString("N")[..8]}";
+            var videoUrl = await api.UploadVideoAsync(videoBytes, $"{baseName}-reel.mp4", ct);
+
+            // Cover best-effort: si el upload falla, el reel sale igual (sin miniatura linda)
+            string? coverUrl = null;
+            try { coverUrl = await api.UploadImageAsync(coverJpeg, $"{baseName}-reel-cover.jpg", ct); }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                logger.LogWarning(ex, "Reel cover upload failed — publishing without cover_url");
+            }
 
             var caption = BuildCaption(content);
             if (music?.Track.Attribution is { } attribution)
@@ -297,7 +330,7 @@ public class AnimeNewsPublisherService(
                 caption = $"{caption}\n\n{attribution}";
             }
 
-            var containerId = await api.CreateReelContainerAsync(videoUrl, caption, shareToFeed: true, ct);
+            var containerId = await api.CreateReelContainerAsync(videoUrl, caption, shareToFeed: true, coverUrl, ct);
             await api.WaitForContainerReadyAsync(containerId, ct, VideoProcessingTimeout);
             var mediaId = await api.PublishContainerAsync(containerId, ct);
 

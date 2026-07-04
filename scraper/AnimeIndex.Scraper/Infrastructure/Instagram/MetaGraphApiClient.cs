@@ -141,7 +141,8 @@ public class MetaGraphApiClient(
     /// WaitForContainerReadyAsync using a generous timeout (~5 min).
     /// </summary>
     public async Task<string> CreateReelContainerAsync(
-        string videoUrl, string? caption, bool shareToFeed = true, CancellationToken ct = default)
+        string videoUrl, string? caption, bool shareToFeed = true,
+        string? coverUrl = null, CancellationToken ct = default)
     {
         var fields = new Dictionary<string, string>
         {
@@ -152,6 +153,11 @@ public class MetaGraphApiClient(
         };
         if (!string.IsNullOrWhiteSpace(caption))
             fields["caption"] = caption;
+        // Sin cover, IG usa el primer frame — que en nuestros reels es NEGRO
+        // (el video abre con fade-in desde negro) → la miniatura del feed salía
+        // negra. El cover es la tarjeta 9:16 (JPEG ≤8MB según specs).
+        if (!string.IsNullOrWhiteSpace(coverUrl))
+            fields["cover_url"] = coverUrl;
 
         using var form = new FormUrlEncodedContent(fields);
         var resp = await Http.PostAsync($"{BaseUrl}/{settings.IgUserId}/media", form, ct);

@@ -31,6 +31,13 @@ public class InstagramVideoService(
     // Zoom final del paneo (10% de acercamiento a lo largo del clip)
     private const double MaxZoom = 1.10;
 
+    // ── Slideshow (reel multi-slide) ──
+    // Cada slide se ve ~4s con crossfade de 0.6s entre escenas → 5 slides ≈ 17.6s.
+    private const double SlideSeconds = 4.0;
+    private const double CrossfadeSeconds = 0.6;
+    // Zoom por slide más sutil que el single-card: alterna in/out entre escenas.
+    private const double SlideMaxZoom = 1.08;
+
     /// <summary>
     /// Renders the motion-card MP4 (1080×1920) and returns the bytes.
     /// Con <paramref name="overlayPng"/> anima en capas: Ken Burns en el fondo
@@ -87,6 +94,140 @@ public class InstagramVideoService(
             catch (IOException) { /* archivo en uso — se limpia solo con el temp cleaner del runner */ }
             catch (UnauthorizedAccessException) { /* permisos — mismo caso, best-effort */ }
         }
+    }
+
+    /// <summary>
+    /// Renders a multi-slide Reel (slideshow): cada slide 9:16 con Ken Burns
+    /// alternado (in/out) y crossfade entre escenas, más música/pista muda.
+    /// Con 1 sola slide degrada al motion-card simple.
+    /// </summary>
+    public async Task<byte[]> GenerateSlideshowAsync(
+        IReadOnlyList<byte[]> slides,
+        byte[]? musicMp3 = null,
+        int musicStartSeconds = 0,
+        CancellationToken ct = default)
+    {
+        if (slides.Count == 0) throw new ArgumentException("Slideshow requiere al menos 1 slide", nameof(slides));
+        if (slides.Count == 1)
+            return await GenerateMotionCardAsync(slides[0], null, musicMp3, musicStartSeconds, ct);
+
+        var workDir = Path.Join(Path.GetTempPath(), $"ig-reel-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(workDir);
+        var outputPath = Path.Join(workDir, "reel.mp4");
+        string? musicPath = null;
+
+        try
+        {
+            var slidePaths = new List<string>(slides.Count);
+            for (var i = 0; i < slides.Count; i++)
+            {
+                var p = Path.Join(workDir, $"slide-{i}.jpg");
+                await File.WriteAllBytesAsync(p, slides[i], ct);
+                slidePaths.Add(p);
+            }
+            if (musicMp3 is not null)
+            {
+                musicPath = Path.Join(workDir, "music.mp3");
+                await File.WriteAllBytesAsync(musicPath, musicMp3, ct);
+            }
+
+            var args = BuildSlideshowArguments(slidePaths, outputPath, musicPath, musicStartSeconds);
+            await RunFfmpegAsync(args, ct);
+
+            var bytes = await File.ReadAllBytesAsync(outputPath, ct);
+            logger.LogInformation("Generated slideshow reel: {Slides} slides, {Mb:F1} MB",
+                slides.Count, bytes.Length / 1024.0 / 1024.0);
+            return bytes;
+        }
+        finally
+        {
+            try { Directory.Delete(workDir, recursive: true); }
+            catch (IOException) { /* best-effort */ }
+            catch (UnauthorizedAccessException) { /* best-effort */ }
+        }
+    }
+
+    /// <summary>
+    /// Público + static para poder testear sin ffmpeg. Inputs: 0..n-1 = slides
+    /// (loopeadas), n = audio. Cada slide lleva zoompan (zoom-in en pares,
+    /// zoom-out en impares) y las escenas se unen con xfade: la escena k arranca
+    /// en offset k·(S−F). Duración total = n·S − (n−1)·F.
+    /// </summary>
+    public static string BuildSlideshowArguments(
+        IReadOnlyList<string> slidePaths, string outputPath,
+        string? musicPath = null, int musicStartSeconds = 0)
+    {
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+        var n = slidePaths.Count;
+        var totalSeconds = n * SlideSeconds - (n - 1) * CrossfadeSeconds;
+        var slideFrames = (int)(SlideSeconds * Fps);
+        var zoomStep = (SlideMaxZoom - 1.0) / slideFrames;
+
+        var inputs = new List<string>();
+        var filters = new List<string>();
+
+        // zoompan sobre imagen fija: input de UN frame (sin -loop) y d = frames
+        // del clip — mismo patrón que el single-card. +6 frames (0.2s) de colchón
+        // porque xfade exige que cada clip cubra offset+duración exactos.
+        var clipFrames = slideFrames + 6;
+
+        for (var i = 0; i < n; i++)
+        {
+            inputs.Add($"-i \"{slidePaths[i]}\"");
+
+            // Zoom alternado para que el slideshow "respire": in, out, in, out…
+            var zoomExpr = i % 2 == 0
+                ? $"min(1+on*{zoomStep.ToString("0.00000000", inv)},{SlideMaxZoom.ToString("0.00", inv)})"
+                : $"max({SlideMaxZoom.ToString("0.00", inv)}-on*{zoomStep.ToString("0.00000000", inv)},1.0)";
+
+            filters.Add(
+                $"[{i}:v]scale={OutWidth * 2}:{OutHeight * 2}:flags=lanczos," +
+                $"zoompan=z='{zoomExpr}':d={clipFrames}" +
+                $":x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s={OutWidth}x{OutHeight}:fps={Fps}[v{i}]");
+        }
+
+        // Cadena de crossfades: [v0][v1]→[x1], [x1][v2]→[x2], …
+        var prev = "[v0]";
+        for (var k = 1; k < n; k++)
+        {
+            var offset = (k * (SlideSeconds - CrossfadeSeconds)).ToString("0.0#", inv);
+            var label = k == n - 1 ? "[vx]" : $"[x{k}]";
+            filters.Add($"{prev}[v{k}]xfade=transition=fade:duration={CrossfadeSeconds.ToString("0.0#", inv)}:offset={offset}{label}");
+            prev = label;
+        }
+        filters.Add("[vx]format=yuv420p[v]");
+
+        var audioIdx = n;
+        var durArg = totalSeconds.ToString("0.0#", inv);
+        string audioInput, audioFilter, audioMap;
+        if (musicPath is not null)
+        {
+            var fadeOutStart = Math.Max(0, totalSeconds - 1.5).ToString("0.0#", inv);
+            audioInput = $"-ss {musicStartSeconds} -t {durArg} -i \"{musicPath}\"";
+            audioFilter = $";[{audioIdx}:a]afade=t=in:st=0:d=0.8,afade=t=out:st={fadeOutStart}:d=1.5," +
+                          "loudnorm=I=-16:TP=-1.5:LRA=11[a]";
+            audioMap = "-map [a]";
+        }
+        else
+        {
+            audioInput = $"-f lavfi -t {durArg} -i anullsrc=channel_layout=stereo:sample_rate=44100";
+            audioFilter = "";
+            audioMap = $"-map {audioIdx}:a";
+        }
+
+        return string.Join(' ',
+            "-y",
+            string.Join(' ', inputs),
+            audioInput,
+            $"-filter_complex \"{string.Join(';', filters)}{audioFilter}\"",
+            $"-map [v] {audioMap}",
+            $"-t {durArg} -r {Fps}",
+            "-c:v libx264 -profile:v high -preset medium -flags +cgop -g 60 -sc_threshold 0",
+            "-b:v 6M -maxrate 8M -bufsize 12M",
+            "-c:a aac -b:a 128k -ar 44100",
+            "-movflags +faststart",
+            "-shortest",
+            $"\"{outputPath}\"");
     }
 
     /// <summary>
