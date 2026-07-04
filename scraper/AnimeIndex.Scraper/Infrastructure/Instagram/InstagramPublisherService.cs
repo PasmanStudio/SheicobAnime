@@ -179,9 +179,10 @@ public class InstagramPublisherService(
 
             var items   = new List<(Series, Episode)> { (episode.Series, episode) };
             var caption = captionGen.GenerateCarouselCaption(items);
-            // CC BY 4.0 exige atribución — última línea del caption
-            if (music is not null)
-                caption = $"{caption}\n\n{music.Value.Track.Attribution}";
+            // Última línea del caption: atribución CC BY (obligatoria) o el
+            // sello "música original" de los tracks propios
+            if (music?.Track.Attribution is { } attribution)
+                caption = $"{caption}\n\n{attribution}";
 
             var containerId = await api.CreateReelContainerAsync(videoUrl, caption, shareToFeed: true, ct);
             await api.WaitForContainerReadyAsync(containerId, ct, VideoProcessingTimeout);

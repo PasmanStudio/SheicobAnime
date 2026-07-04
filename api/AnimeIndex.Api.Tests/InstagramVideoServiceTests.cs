@@ -92,4 +92,42 @@ public class ReelMusicServiceTests
         foreach (var mood in new[] { "epic", "dark", "upbeat", "chill", "emotional" })
             Assert.Contains(ReelMusicService.Library, t => t.Mood == mood);
     }
+
+    [Fact]
+    public void Library_CcTracksCarryRequiredAttribution()
+        => Assert.All(ReelMusicService.Library,
+            t => Assert.Contains("CC BY 4.0", t.Attribution));
+
+    [Theory]
+    // Convención {mood}-{n} desde el public id de Cloudinary
+    [InlineData("ig/music/epic-1", "epic")]
+    [InlineData("ig/music/dark-taiko", "dark")]
+    // Mood desconocido → chill (no rompe, suena neutro)
+    [InlineData("ig/music/rocanrol-1", "chill")]
+    public void ParseTrackFromPublicId_ReadsMoodFromName(string publicId, string expectedMood)
+    {
+        var track = ReelMusicService.ParseTrackFromPublicId(publicId, "https://res.cloudinary.com/x/a.mp3");
+
+        Assert.NotNull(track);
+        Assert.Equal(expectedMood, track.Mood);
+        // Track propio → sello de marca, no CC
+        Assert.Equal(ReelMusicService.OwnMusicAttribution, track.Attribution);
+    }
+
+    [Fact]
+    public void ParseTrackFromPublicId_NullUrlReturnsNull()
+        => Assert.Null(ReelMusicService.ParseTrackFromPublicId("ig/music/epic-1", null));
+
+    [Fact]
+    public void PickTrack_UsesCustomLibraryWhenProvided()
+    {
+        var custom = new[]
+        {
+            new ReelTrack("epic-suno-1", "https://cdn/x.mp3", "epic"),
+            new ReelTrack("chill-suno-1", "https://cdn/y.mp3", "chill"),
+        };
+
+        var pick = ReelMusicService.PickTrack("one-piece", "epic", custom);
+        Assert.Equal("epic-suno-1", pick.Title);
+    }
 }

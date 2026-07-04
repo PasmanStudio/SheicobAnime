@@ -347,6 +347,58 @@ if (args.Contains("--test-imagehost"))
     return;
 }
 
+// ── Subir música propia para los Reels (Cloudinary, sin DB/Hangfire) ──
+// Usage: Instagram__CloudinaryCloudName=... Instagram__CloudinaryApiKey=... \
+//        Instagram__CloudinaryApiSecret=... dotnet run --project scraper/AnimeIndex.Scraper -- --upload-music ./musica
+// Los archivos deben llamarse {mood}-{n}.mp3 (epic-1.mp3, dark-2.mp3, chill-lofi.mp3…).
+// Moods: epic | dark | upbeat | chill | emotional. El publisher los usa
+// automáticamente en la próxima corrida (prioridad sobre la biblioteca CC).
+if (args.Contains("--upload-music"))
+{
+    var folderArg = args.SkipWhile(a => a != "--upload-music").Skip(1).FirstOrDefault();
+    if (folderArg is null || !Directory.Exists(folderArg))
+    {
+        Console.WriteLine("❌ Uso: --upload-music <carpeta con {mood}-{n}.mp3>");
+        return;
+    }
+
+    var igMusic = new AnimeIndex.Scraper.Infrastructure.Instagram.InstagramSettings();
+    new ConfigurationBuilder().AddEnvironmentVariables().Build().GetSection("Instagram").Bind(igMusic);
+
+    await using var musicSp = new ServiceCollection()
+        .AddLogging(b => b.AddSimpleConsole(o => { o.SingleLine = true; o.TimestampFormat = "HH:mm:ss "; }))
+        .AddHttpClient()
+        .AddSingleton(igMusic)
+        .AddSingleton(new AnimeIndex.Scraper.Infrastructure.AiRewrite.AiSettings())
+        .AddSingleton<AnimeIndex.Scraper.Infrastructure.AiRewrite.GeminiClient>()
+        .AddSingleton<AnimeIndex.Scraper.Infrastructure.Instagram.ReelMusicService>()
+        .BuildServiceProvider();
+
+    var musicSvc = musicSp.GetRequiredService<AnimeIndex.Scraper.Infrastructure.Instagram.ReelMusicService>();
+    var audioFiles = Directory.EnumerateFiles(folderArg)
+        .Where(f => new[] { ".mp3", ".m4a", ".wav", ".ogg" }.Contains(Path.GetExtension(f).ToLowerInvariant()))
+        .OrderBy(f => f)
+        .ToList();
+    Console.WriteLine($"Subiendo {audioFiles.Count} track(s) a Cloudinary → {musicSvc.MusicFolder}/ …");
+
+    var ok = 0;
+    foreach (var file in audioFiles)
+    {
+        try
+        {
+            var trackUrl = await musicSvc.UploadTrackAsync(file);
+            Console.WriteLine($"  ✅ {Path.GetFileName(file)} → {trackUrl}");
+            ok++;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"  ❌ {Path.GetFileName(file)}: {ex.Message}");
+        }
+    }
+    Console.WriteLine($"Listo: {ok}/{audioFiles.Count}. El próximo Reel ya usa esta biblioteca.");
+    return;
+}
+
 Log.Logger = new LoggerConfiguration()
     .WriteTo.Console(new JsonFormatter())
     .CreateBootstrapLogger();
