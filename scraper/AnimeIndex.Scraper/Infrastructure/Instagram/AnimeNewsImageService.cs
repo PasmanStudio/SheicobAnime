@@ -48,9 +48,8 @@ public class AnimeNewsImageService(
     public async Task<byte[]> GenerateStoryAsync(
         AnimeNewsItem item, NewsContent content, IReadOnlyList<string> imageUrls, CancellationToken ct = default)
     {
-        var photo = await TryDownloadPhotoAsync(PrimaryImage(item, imageUrls), ct);
-        try { return RenderCover(content, photo, 1080, 1920, swipeHint: false); }
-        finally { photo?.Dispose(); }
+        using var photo = await TryDownloadPhotoAsync(PrimaryImage(item, imageUrls), ct);
+        return RenderCover(content, photo, 1080, 1920, swipeHint: false);
     }
 
     /// <summary>
@@ -63,27 +62,24 @@ public class AnimeNewsImageService(
         AnimeNewsItem item, NewsContent content, IReadOnlyList<string> imageUrls, CancellationToken ct = default)
     {
         const int width = 1080, height = 1920;
-        var photo = await TryDownloadPhotoAsync(PrimaryImage(item, imageUrls), ct);
-        try
-        {
-            // ── Fondo ──
-            using var bgSurface = SKSurface.Create(new SKImageInfo(width, height));
-            var bg = bgSurface.Canvas;
-            bg.Clear(SKColors.Black);
-            DrawBackground(bg, width, height);
-            if (photo is not null) DrawPhotoCover(bg, photo, width, height, CropFocus.Center);
-            DrawBottomScrim(bg, width, height);
+        using var photo = await TryDownloadPhotoAsync(PrimaryImage(item, imageUrls), ct);
 
-            // ── Overlay de texto (transparente) ──
-            using var ovSurface = SKSurface.Create(
-                new SKImageInfo(width, height, SKColorType.Rgba8888, SKAlphaType.Premul));
-            var ov = ovSurface.Canvas;
-            ov.Clear(SKColors.Transparent);
-            DrawCoverText(ov, content, width, height, swipeHint: false);
+        // ── Fondo ──
+        using var bgSurface = SKSurface.Create(new SKImageInfo(width, height));
+        var bg = bgSurface.Canvas;
+        bg.Clear(SKColors.Black);
+        DrawBackground(bg, width, height);
+        if (photo is not null) DrawPhotoCover(bg, photo, width, height, CropFocus.Center);
+        DrawBottomScrim(bg, width, height);
 
-            return (Encode(bgSurface), EncodePng(ovSurface));
-        }
-        finally { photo?.Dispose(); }
+        // ── Overlay de texto (transparente) ──
+        using var ovSurface = SKSurface.Create(
+            new SKImageInfo(width, height, SKColorType.Rgba8888, SKAlphaType.Premul));
+        var ov = ovSurface.Canvas;
+        ov.Clear(SKColors.Transparent);
+        DrawCoverText(ov, content, width, height, swipeHint: false);
+
+        return (Encode(bgSurface), EncodePng(ovSurface));
     }
 
     /// <summary>

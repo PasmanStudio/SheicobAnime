@@ -128,18 +128,14 @@ public class SunoMusicGenerator(
 
     private static string? ExtractFirstAudioUrl(JsonElement data)
     {
-        if (data.TryGetProperty("response", out var response)
-            && response.TryGetProperty("sunoData", out var tracks)
-            && tracks.ValueKind == JsonValueKind.Array)
-        {
-            foreach (var track in tracks.EnumerateArray())
-            {
-                if (track.TryGetProperty("audioUrl", out var url)
-                    && url.GetString() is { Length: > 0 } audioUrl)
-                    return audioUrl;
-            }
-        }
-        return null;
+        if (!data.TryGetProperty("response", out var response)
+            || !response.TryGetProperty("sunoData", out var tracks)
+            || tracks.ValueKind != JsonValueKind.Array)
+            return null;
+
+        return tracks.EnumerateArray()
+            .Select(track => track.TryGetProperty("audioUrl", out var url) ? url.GetString() : null)
+            .FirstOrDefault(audioUrl => !string.IsNullOrEmpty(audioUrl));
     }
 
     private static string Truncate(string s, int max = 200) =>
