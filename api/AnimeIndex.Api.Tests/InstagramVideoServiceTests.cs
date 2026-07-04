@@ -118,10 +118,30 @@ public class ReelMusicServiceTests
     }
 
     [Fact]
-    public void Library_EveryMoodHasAtLeastOneTrack()
+    public void Library_EveryMoodHasEnoughTracksForMonthlyVariety()
     {
+        // Con reel diario, ≥10 tracks por mood ⇒ ≥10 días entre repeticiones
         foreach (var mood in new[] { "epic", "dark", "upbeat", "chill", "emotional" })
-            Assert.Contains(ReelMusicService.Library, t => t.Mood == mood);
+            Assert.True(
+                ReelMusicService.Library.Count(t => t.Mood == mood) >= 10,
+                $"mood '{mood}' necesita al menos 10 tracks");
+    }
+
+    [Fact]
+    public void PickTrackRotating_NeverRepeatsUntilMoodExhausted()
+    {
+        var epicCount = ReelMusicService.Library.Count(t => t.Mood == "epic");
+
+        // Días consecutivos → tracks todos distintos hasta agotar el mood
+        var seen = Enumerable.Range(0, epicCount)
+            .Select(day => ReelMusicService.PickTrackRotating("epic", daySeed: day).Title)
+            .ToList();
+        Assert.Equal(epicCount, seen.Distinct().Count());
+
+        // Mismo día → mismo track (retries idempotentes)
+        Assert.Equal(
+            ReelMusicService.PickTrackRotating("dark", daySeed: 42).Title,
+            ReelMusicService.PickTrackRotating("dark", daySeed: 42).Title);
     }
 
     [Fact]
