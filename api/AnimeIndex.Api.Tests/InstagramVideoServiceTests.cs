@@ -1,3 +1,4 @@
+using AnimeIndex.Scraper.Infrastructure;
 using AnimeIndex.Scraper.Infrastructure.Instagram;
 
 namespace AnimeIndex.Api.Tests;
@@ -204,6 +205,47 @@ public class ReelMusicServiceTests
         foreach (var mood in new[] { "epic", "dark", "upbeat", "chill", "emotional" })
             for (var d = 0; d < 3; d++)
                 Assert.Contains("instrumental", ReelMusicService.FallbackStyleFor(mood, d));
+    }
+}
+
+public class AnimeNewsFeedSanitizeXmlTests
+{
+    [Fact]
+    public void SanitizeXml_FixesRealWorldKudasaiTitleAndParses()
+    {
+        // Título real que rompía el feed de kudasai (jul 2026): reproducido en
+        // vivo con XDocument.Parse antes del fix → XmlException/EntityName.
+        var xml = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <rss version="2.0"><channel>
+            <item><title>Monogatari Series: Off & Monster Season anuncia un nuevo episodio centrado en Karen</title></item>
+            </channel></rss>
+            """;
+
+        Assert.Throws<System.Xml.XmlException>(() => System.Xml.Linq.XDocument.Parse(xml));
+
+        var sanitized = AnimeNewsFeedService.SanitizeXml(xml);
+        var doc = System.Xml.Linq.XDocument.Parse(sanitized); // no debe tirar
+
+        var title = doc.Root!.Descendants("title").First().Value;
+        Assert.Equal("Monogatari Series: Off & Monster Season anuncia un nuevo episodio centrado en Karen", title);
+    }
+
+    [Fact]
+    public void SanitizeXml_LeavesWellFormedEntitiesUntouched()
+    {
+        var xml = "<a>&amp; &lt; &gt; &quot; &apos; &#39; &#x2019;</a>";
+        Assert.Equal(xml, AnimeNewsFeedService.SanitizeXml(xml));
+    }
+
+    [Fact]
+    public void SanitizeXml_EscapesMultipleBareAmpersands()
+    {
+        var xml = "<title>Naruto & Sasuke vs Boruto & Kawaki</title>";
+        var result = AnimeNewsFeedService.SanitizeXml(xml);
+
+        Assert.Equal("<title>Naruto &amp; Sasuke vs Boruto &amp; Kawaki</title>", result);
+        System.Xml.Linq.XDocument.Parse(result); // no debe tirar
     }
 }
 

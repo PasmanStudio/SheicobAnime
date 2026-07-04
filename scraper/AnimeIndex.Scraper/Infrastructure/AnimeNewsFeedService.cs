@@ -149,6 +149,17 @@ public partial class AnimeNewsFeedService(
             .ToListAsync(ct);
     }
 
+    /// <summary>
+    /// Repara "&amp;" sueltos antes de parsear. Confirmado en vivo (jul 2026):
+    /// el feed de kudasai (WordPress) a veces no escapa "&amp;" en el &lt;title&gt;
+    /// (p. ej. "Monogatari Series: Off &amp; Monster Season…"), y eso vuelve el XML
+    /// inválido — <see cref="System.Xml.Linq.XDocument.Parse(string)"/> tira
+    /// XmlException/EntityName y se pierde el feed ENTERO, no solo ese item.
+    /// Público + estático para poder testear con el string real que rompía sin
+    /// mockear HTTP. No toca entidades ya bien formadas (&amp;amp;, &amp;#39;, etc.).
+    /// </summary>
+    public static string SanitizeXml(string xml) => UnescapedAmpersand().Replace(xml, "&amp;");
+
     // ── RSS parsing ──────────────────────────────────────────────────────────
 
     private async Task<List<RssItem>> FetchFeedAsync(
@@ -160,6 +171,7 @@ public partial class AnimeNewsFeedService(
 
         // Some feeds have a BOM or whitespace before the XML declaration — trim it.
         xml = xml.TrimStart('﻿', '​', '\r', '\n', ' ');
+        xml = SanitizeXml(xml);
         XDocument doc;
         try { doc = XDocument.Parse(xml); }
         catch (Exception ex)
@@ -492,6 +504,11 @@ public partial class AnimeNewsFeedService(
     // A leading inline ad label that got glued to a paragraph's text.
     [GeneratedRegex(@"^\s*(ADS|ADVERTISEMENT|PUBLICIDAD)\b[\s:.\-–—]*", RegexOptions.IgnoreCase)]
     private static partial Regex LeadingAdRegex();
+
+    // "&" suelto (no arranca amp;/lt;/gt;/quot;/apos;/#123;/#xAB;) → XML inválido.
+    // Confirmado en el feed de kudasai: WordPress no escapa "&" en algunos títulos.
+    [GeneratedRegex(@"&(?!amp;|lt;|gt;|quot;|apos;|#\d+;|#x[0-9a-fA-F]+;)")]
+    private static partial Regex UnescapedAmpersand();
 
     // ── Cross-feed duplicate merge ───────────────────────────────────────────
 
