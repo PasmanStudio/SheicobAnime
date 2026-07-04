@@ -46,28 +46,80 @@ public class ReelMusicService(
     /// <summary>Atribución de los tracks propios — flex de marca, no obligación legal.</summary>
     public const string OwnMusicAttribution = "🎵 Música original · SheicobAnime";
 
-    // URLs verificadas 2026-07 (HTTP 200). Si incompetech rota alguna, el
-    // publisher degrada a Reel silencioso — nunca rompe la corrida.
+    // 63 tracks, URLs verificadas 2026-07 (HTTP 200, HEAD uno por uno). Con
+    // PickTrackRotating (rotación diaria por mood) un reel diario tarda ~2
+    // semanas en repetir un track del mismo mood. Si incompetech rota alguna
+    // URL, el publisher degrada a Reel silencioso — nunca rompe la corrida.
     public static readonly IReadOnlyList<ReelTrack> Library =
     [
-        // Acción / shonen / batalla
+        // ── epic: acción / shonen / estrenos bomba ──
         Cc("Killers",                  "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Killers.mp3",                  "epic", 5),
         Cc("Volatile Reaction",        "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Volatile%20Reaction.mp3",      "epic"),
         Cc("Exhilarate",               "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Exhilarate.mp3",               "epic"),
-        // Misterio / terror / psicológico
+        Cc("Five Armies",              "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Five%20Armies.mp3",            "epic"),
+        Cc("Achilles",                 "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Achilles.mp3",                 "epic"),
+        Cc("Crusade",                  "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Crusade.mp3",                  "epic"),
+        Cc("Hitman",                   "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Hitman.mp3",                   "epic"),
+        Cc("Movement Proposition",     "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Movement%20Proposition.mp3",   "epic"),
+        Cc("Stormfront",               "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Stormfront.mp3",               "epic"),
+        Cc("The Complex",              "https://incompetech.com/music/royalty-free/mp3-royaltyfree/The%20Complex.mp3",            "epic"),
+        Cc("Prelude and Action",       "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Prelude%20and%20Action.mp3",   "epic"),
+        Cc("Exotic Battle",            "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Exotic%20Battle.mp3",          "epic"),
+        Cc("Rynos Theme",              "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Rynos%20Theme.mp3",            "epic"),
+        Cc("Take a Chance",            "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Take%20a%20Chance.mp3",        "epic"),
+        // ── dark: misterio / terror / cancelaciones / polémicas ──
         Cc("Darkest Child",            "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Darkest%20Child.mp3",          "dark"),
         Cc("Epic Unease",              "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Epic%20Unease.mp3",            "dark"),
-        // Comedia / parodia
+        Cc("Gathering Darkness",       "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Gathering%20Darkness.mp3",     "dark"),
+        Cc("Dark Times",               "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Dark%20Times.mp3",             "dark"),
+        Cc("Penumbra",                 "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Penumbra.mp3",                 "dark"),
+        Cc("Mesmerize",                "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Mesmerize.mp3",                "dark"),
+        Cc("Hush",                     "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Hush.mp3",                     "dark"),
+        Cc("Controlled Chaos",         "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Controlled%20Chaos.mp3",       "dark"),
+        Cc("Day of Chaos",             "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Day%20of%20Chaos.mp3",         "dark"),
+        Cc("Echoes of Time",           "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Echoes%20of%20Time.mp3",       "dark"),
+        Cc("Long Note One",            "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Long%20Note%20One.mp3",        "dark"),
+        Cc("Ossuary 6 - Air",          "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Ossuary%206%20-%20Air.mp3",    "dark"),
+        Cc("The Dread",                "https://incompetech.com/music/royalty-free/mp3-royaltyfree/The%20Dread.mp3",              "dark"),
+        Cc("Curse of the Scarab",      "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Curse%20of%20the%20Scarab.mp3", "dark"),
+        // ── upbeat: comedia / eventos / curiosidades ──
         Cc("Monkeys Spinning Monkeys", "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Monkeys%20Spinning%20Monkeys.mp3", "upbeat"),
         Cc("Fluffing a Duck",          "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Fluffing%20a%20Duck.mp3",      "upbeat"),
         Cc("Sneaky Snitch",            "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Sneaky%20Snitch.mp3",          "upbeat"),
-        // Slice of life / cotidiano
+        Cc("Hidden Agenda",            "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Hidden%20Agenda.mp3",          "upbeat"),
+        Cc("Merry Go",                 "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Merry%20Go.mp3",               "upbeat"),
+        Cc("Life of Riley",            "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Life%20of%20Riley.mp3",        "upbeat"),
+        Cc("Quirky Dog",               "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Quirky%20Dog.mp3",             "upbeat"),
+        Cc("Sneaky Adventure",         "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Sneaky%20Adventure.mp3",       "upbeat"),
+        Cc("The Builder",              "https://incompetech.com/music/royalty-free/mp3-royaltyfree/The%20Builder.mp3",            "upbeat"),
+        Cc("Amazing Plan",             "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Amazing%20Plan.mp3",           "upbeat"),
+        Cc("Cut and Run",              "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Cut%20and%20Run.mp3",          "upbeat"),
+        Cc("Hyperfun",                 "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Hyperfun.mp3",                 "upbeat"),
+        Cc("Salty Ditty",              "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Salty%20Ditty.mp3",            "upbeat"),
+        // ── chill: slice of life / notas suaves ──
         Cc("Carefree",                 "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Carefree.mp3",                 "chill"),
         Cc("Wallpaper",                "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Wallpaper.mp3",                "chill"),
         Cc("Deliberate Thought",       "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Deliberate%20Thought.mp3",     "chill"),
-        // Romance / drama
+        Cc("Meditation Impromptu 01",  "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Meditation%20Impromptu%2001.mp3", "chill"),
+        Cc("Frost Waltz",              "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Frost%20Waltz.mp3",            "chill"),
+        Cc("Garden Music",             "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Garden%20Music.mp3",           "chill"),
+        Cc("Lobby Time",               "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Lobby%20Time.mp3",             "chill"),
+        Cc("Music for Manatees",       "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Music%20for%20Manatees.mp3",   "chill"),
+        Cc("Peace of Mind",            "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Peace%20of%20Mind.mp3",        "chill"),
+        Cc("Sincerely",                "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Sincerely.mp3",                "chill"),
+        Cc("Wholesome",                "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Wholesome.mp3",                "chill"),
+        Cc("Ashton Manor",             "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Ashton%20Manor.mp3",           "chill"),
+        // ── emotional: luto / homenajes / romance / drama ──
         Cc("Heartwarming",             "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Heartwarming.mp3",             "emotional"),
         Cc("Anguish",                  "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Anguish.mp3",                  "emotional"),
+        Cc("Sad Trio",                 "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Sad%20Trio.mp3",               "emotional"),
+        Cc("Immersed",                 "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Immersed.mp3",                 "emotional"),
+        Cc("Reawakening",              "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Reawakening.mp3",              "emotional"),
+        Cc("Almost in F",              "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Almost%20in%20F.mp3",          "emotional"),
+        Cc("Dreamy Flashback",         "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Dreamy%20Flashback.mp3",       "emotional"),
+        Cc("Healing",                  "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Healing.mp3",                  "emotional"),
+        Cc("Dreams Become Real",       "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Dreams%20Become%20Real.mp3",   "emotional"),
+        Cc("Easy Lemon",               "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Easy%20Lemon.mp3",             "emotional"),
     ];
 
     private static readonly string[] ValidMoods = ["epic", "dark", "upbeat", "chill", "emotional"];
@@ -225,9 +277,10 @@ public class ReelMusicService(
                 logger.LogInformation("Suno no disponible esta corrida — uso biblioteca ({Mood})", mood);
             }
 
-            // ── 2. Biblioteca ──
+            // ── 2. Biblioteca (rotación diaria: nunca el mismo track hasta
+            //      agotar el mood — ~2 semanas por track con reel diario) ──
             var library = await GetLibraryAsync(ct);
-            var track = PickTrack(dedupKey, mood, library);
+            var track = PickTrackRotating(mood, library);
             logger.LogInformation("News reel music: mood={Mood} → {Track} (\"{Headline}\")",
                 mood, track.Title, headline.Length > 60 ? headline[..60] : headline);
 
@@ -417,7 +470,8 @@ public class ReelMusicService(
 
     /// <summary>
     /// Determinístico por slug: la misma serie siempre suena igual (identidad),
-    /// series distintas rotan dentro del mood. Público para tests.
+    /// series distintas rotan dentro del mood. Usado por el reel de EPISODIOS.
+    /// Público para tests.
     /// </summary>
     public static ReelTrack PickTrack(string seriesSlug, string mood, IReadOnlyList<ReelTrack>? library = null)
     {
@@ -429,5 +483,22 @@ public class ReelMusicService(
         var hash = 0;
         foreach (var c in seriesSlug) hash = unchecked(hash * 31 + c);
         return candidates[Math.Abs(hash) % candidates.Count];
+    }
+
+    /// <summary>
+    /// Rotación por día para el reel de NOTICIAS: garantiza que un track del
+    /// mismo mood NO se repita hasta agotar todos los del mood (con ~13 por
+    /// mood y un reel diario ≈ 2 semanas mínimo entre repeticiones, sin
+    /// necesidad de persistir historial). Mismo día → mismo track (retries
+    /// idempotentes). Público para tests.
+    /// </summary>
+    public static ReelTrack PickTrackRotating(string mood, IReadOnlyList<ReelTrack>? library = null, int? daySeed = null)
+    {
+        library ??= Library;
+        var candidates = library.Where(t => t.Mood == mood).ToList();
+        if (candidates.Count == 0) candidates = [.. library];
+
+        var day = daySeed ?? (int)(DateTime.UtcNow - DateTime.UnixEpoch).TotalDays;
+        return candidates[day % candidates.Count];
     }
 }
