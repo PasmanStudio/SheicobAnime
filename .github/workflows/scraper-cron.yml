@@ -33,6 +33,13 @@ jobs:
         with:
           dotnet-version: '9.x'
 
+      # El Reel de episodios (Instagram__ReelsEnabled=true, opt-in — off por
+      # default) necesita ffmpeg, que ubuntu-latest NO trae preinstalado
+      # (confirmado en vivo en news-cron.yml). Sin esto, si algún día se prende
+      # el reel de episodios, cae a "skipped" silenciosamente.
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
       - name: Cache NuGet packages
         uses: actions/cache@v4
         with:
