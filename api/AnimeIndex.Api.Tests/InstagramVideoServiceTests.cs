@@ -59,6 +59,37 @@ public class InstagramVideoServiceTests
         Assert.Contains("afade=t=out:st=10.5:d=1.5", args);
         Assert.Contains("loudnorm=I=-16", args);
         Assert.Contains("-map [a]", args);
+        // Sin overlay, el audio es el input 1
+        Assert.Contains("[1:a]afade", args);
+    }
+
+    [Fact]
+    public void BuildFfmpegArguments_WithOverlay_AnimatesTextLayer()
+    {
+        var args = InstagramVideoService.BuildFfmpegArguments(
+            "bg.jpg", "out.mp4", 12, overlayPath: "overlay.png");
+
+        // El overlay entra como input loopeado con alpha
+        Assert.Contains("-loop 1 -i \"overlay.png\"", args);
+        Assert.Contains("format=rgba", args);
+        // Fade del texto arrancando a los 0.5s, sobre el canal alpha
+        Assert.Contains("fade=t=in:st=0.5:d=0.8:alpha=1", args);
+        // Slide-up con easing cúbico (80px → 0)
+        Assert.Contains("overlay=x=0:y='pow(1-min(1,max(0,(t-0.5)/0.9)),3)*80'", args);
+        // Con overlay, el audio (silencioso acá) pasa a ser el input 2
+        Assert.Contains("-map 2:a", args);
+    }
+
+    [Fact]
+    public void BuildFfmpegArguments_WithOverlayAndMusic_AudioIndexShifts()
+    {
+        var args = InstagramVideoService.BuildFfmpegArguments(
+            "bg.jpg", "out.mp4", 12, musicPath: "music.mp3", overlayPath: "overlay.png");
+
+        // fondo=0, overlay=1, música=2
+        Assert.Contains("[2:a]afade", args);
+        Assert.Contains("-map [a]", args);
+        Assert.DoesNotContain("anullsrc", args);
     }
 }
 

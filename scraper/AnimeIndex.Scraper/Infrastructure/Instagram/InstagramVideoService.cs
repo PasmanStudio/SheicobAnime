@@ -32,12 +32,16 @@ public class InstagramVideoService(
     private const double MaxZoom = 1.10;
 
     /// <summary>
-    /// Renders the motion-card MP4 for a 1080×1920 card image and returns the bytes.
-    /// Con <paramref name="musicMp3"/> mezcla el track (fade in/out + loudnorm);
-    /// sin música, pista AAC silenciosa.
+    /// Renders the motion-card MP4 (1080×1920) and returns the bytes.
+    /// Con <paramref name="overlayPng"/> anima en capas: Ken Burns en el fondo
+    /// y el bloque de texto entrando con slide-up + fade (easing cúbico) —
+    /// motion graphics de verdad, texto siempre nítido. Sin overlay, zoom plano
+    /// sobre la tarjeta completa. Con <paramref name="musicMp3"/> mezcla el
+    /// track (fade in/out + loudnorm); sin música, pista AAC silenciosa.
     /// </summary>
     public async Task<byte[]> GenerateMotionCardAsync(
         byte[] cardImageBytes,
+        byte[]? overlayPng = null,
         byte[]? musicMp3 = null,
         int musicStartSeconds = 0,
         CancellationToken ct = default)
@@ -46,11 +50,17 @@ public class InstagramVideoService(
         Directory.CreateDirectory(workDir);
         var inputPath = Path.Combine(workDir, "card.png");
         var outputPath = Path.Combine(workDir, "reel.mp4");
+        string? overlayPath = null;
         string? musicPath = null;
 
         try
         {
             await File.WriteAllBytesAsync(inputPath, cardImageBytes, ct);
+            if (overlayPng is not null)
+            {
+                overlayPath = Path.Combine(workDir, "overlay.png");
+                await File.WriteAllBytesAsync(overlayPath, overlayPng, ct);
+            }
             if (musicMp3 is not null)
             {
                 musicPath = Path.Combine(workDir, "music.mp3");
@@ -58,7 +68,7 @@ public class InstagramVideoService(
             }
 
             var args = BuildFfmpegArguments(
-                inputPath, outputPath, settings.ReelDurationSeconds, musicPath, musicStartSeconds);
+                inputPath, outputPath, settings.ReelDurationSeconds, musicPath, musicStartSeconds, overlayPath);
             await RunFfmpegAsync(args, ct);
 
             var bytes = await File.ReadAllBytesAsync(outputPath, ct);
@@ -74,13 +84,16 @@ public class InstagramVideoService(
 
     /// <summary>
     /// Público + static para poder testear la construcción de argumentos sin ffmpeg.
-    /// Con <paramref name="musicPath"/> el track entra como segundo input (desde
-    /// <paramref name="musicStartSeconds"/>) con fade in/out y loudnorm; sin
+    /// Inputs: 0 = fondo, [1 = overlay de texto si hay], último = audio.
+    /// Con <paramref name="overlayPath"/> el texto entra con slide-up + fade
+    /// (easing cúbico ease-out) sobre el Ken Burns del fondo. Con
+    /// <paramref name="musicPath"/> el track entra desde
+    /// <paramref name="musicStartSeconds"/> con fade in/out y loudnorm; sin
     /// música, pista silenciosa (anullsrc).
     /// </summary>
     public static string BuildFfmpegArguments(
         string inputPath, string outputPath, int durationSeconds,
-        string? musicPath = null, int musicStartSeconds = 0)
+        string? musicPath = null, int musicStartSeconds = 0, string? overlayPath = null)
     {
         var inv = System.Globalization.CultureInfo.InvariantCulture;
         var frames = durationSeconds * Fps;
@@ -89,11 +102,33 @@ public class InstagramVideoService(
 
         // zoompan tiembla con inputs chicos: se pre-escala 2× (lanczos) y el
         // filtro recorta la ventana 1080×1920. fade-in de 0.6s al arranque.
-        var videoFilter =
+        var backgroundFilter =
             $"[0:v]scale={OutWidth * 2}:{OutHeight * 2}:flags=lanczos," +
             $"zoompan=z='min(1+on*{zoomStep.ToString("0.00000000", inv)},{MaxZoom.ToString("0.00", inv)})'" +
             $":d={frames}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s={OutWidth}x{OutHeight}:fps={Fps}," +
-            "fade=t=in:st=0:d=0.6,format=yuv420p[v]";
+            "fade=t=in:st=0:d=0.6";
+
+        string videoFilter, overlayInput;
+        if (overlayPath is not null)
+        {
+            // Motion graphics: el bloque de texto entra deslizándose 80px hacia
+            // arriba con easing cúbico (ease-out) + fade, arrancando a los 0.5s.
+            // p = progreso 0→1 en 0.9s; y = pow(1-p,3)*80 (80px → 0 suavizado).
+            overlayInput = $"-loop 1 -i \"{overlayPath}\"";
+            videoFilter =
+                backgroundFilter + "[bg];" +
+                "[1:v]format=rgba,fade=t=in:st=0.5:d=0.8:alpha=1[ov];" +
+                "[bg][ov]overlay=x=0:y='pow(1-min(1,max(0,(t-0.5)/0.9)),3)*80'," +
+                "format=yuv420p[v]";
+        }
+        else
+        {
+            overlayInput = "";
+            videoFilter = backgroundFilter + ",format=yuv420p[v]";
+        }
+
+        // El índice del input de audio depende de si hay overlay
+        var audioIdx = overlayPath is not null ? 2 : 1;
 
         string audioInput, filter, audioMap;
         if (musicPath is not null)
@@ -103,7 +138,7 @@ public class InstagramVideoService(
             var fadeOutStart = Math.Max(0, durationSeconds - 1.5).ToString("0.0#", inv);
             audioInput = $"-ss {musicStartSeconds} -t {durationSeconds} -i \"{musicPath}\"";
             filter = videoFilter + ";" +
-                $"[1:a]afade=t=in:st=0:d=0.8,afade=t=out:st={fadeOutStart}:d=1.5," +
+                $"[{audioIdx}:a]afade=t=in:st=0:d=0.8,afade=t=out:st={fadeOutStart}:d=1.5," +
                 "loudnorm=I=-16:TP=-1.5:LRA=11[a]";
             audioMap = "-map [a]";
         }
@@ -113,12 +148,13 @@ public class InstagramVideoService(
             // videos sin stream de audio, y una pista muda no tiene copyright.
             audioInput = $"-f lavfi -t {durationSeconds} -i anullsrc=channel_layout=stereo:sample_rate=44100";
             filter = videoFilter;
-            audioMap = "-map 1:a";
+            audioMap = $"-map {audioIdx}:a";
         }
 
         return string.Join(' ',
             "-y",
             $"-i \"{inputPath}\"",
+            overlayInput,
             audioInput,
             $"-filter_complex \"{filter}\"",
             $"-map [v] {audioMap}",
