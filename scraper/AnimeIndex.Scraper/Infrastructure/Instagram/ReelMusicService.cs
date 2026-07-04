@@ -196,6 +196,77 @@ public class ReelMusicService(
         }
     }
 
+    /// <summary>
+    /// Variante para NOTICIAS: clasifica el mood por titular/resumen (Gemini con
+    /// fallback heurístico por palabras clave) y descarga el track. El
+    /// <paramref name="dedupKey"/> (p. ej. el RssGuid) fija el track determinístico.
+    /// Devuelve null si algo falla — el reel sale silencioso.
+    /// </summary>
+    public async Task<(ReelTrack Track, byte[] Mp3)?> SelectAndDownloadForNewsAsync(
+        string headline, string? summary, string dedupKey, CancellationToken ct = default)
+    {
+        try
+        {
+            var library = await GetLibraryAsync(ct);
+            var mood = await ClassifyNewsMoodAsync(headline, summary, ct);
+            var track = PickTrack(dedupKey, mood, library);
+            logger.LogInformation("News reel music: mood={Mood} → {Track} (\"{Headline}\")",
+                mood, track.Title, headline.Length > 60 ? headline[..60] : headline);
+
+            var http = httpClientFactory.CreateClient("probe");
+            var mp3 = await http.GetByteArrayAsync(track.Url, ct);
+            return (track, mp3);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "News music selection/download failed — reel goes silent");
+            return null;
+        }
+    }
+
+    private async Task<string> ClassifyNewsMoodAsync(string headline, string? summary, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(aiSettings.ApiKey))
+            return HeuristicNewsMood($"{headline} {summary}");
+
+        try
+        {
+            var response = await gemini.GenerateAsync(
+                "Sos un music supervisor de un noticiero de anime. Clasificá la noticia en UN mood musical " +
+                "para el video: epic (estrenos/anuncios grandes), dark (cancelaciones/polémicas), " +
+                "upbeat (eventos/colaboraciones/curiosidades), emotional (fallecimientos/despedidas/homenajes), " +
+                "chill (notas suaves). Respondé SOLO un JSON: {\"mood\":\"epic|dark|upbeat|chill|emotional\"}",
+                $"Titular: {headline}\nResumen: {summary}",
+                useWebSearch: false, ct);
+
+            using var doc = JsonDocument.Parse(response);
+            var mood = doc.RootElement.GetProperty("mood").GetString()?.Trim().ToLowerInvariant();
+            if (mood is not null && ValidMoods.Contains(mood)) return mood;
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "Gemini news mood classification failed — using heuristic");
+        }
+        return HeuristicNewsMood($"{headline} {summary}");
+    }
+
+    /// <summary>Mood por palabras clave del titular cuando no hay IA. Público para tests.</summary>
+    public static string HeuristicNewsMood(string text)
+    {
+        var t = text.ToLowerInvariant();
+
+        // El orden importa: luto > malas noticias > anuncios grandes > resto
+        if (new[] { "fallec", "muere", "murió", "muerte", "luto", "homenaje", "despedida", "adiós" }.Any(t.Contains))
+            return "emotional";
+        if (new[] { "cancel", "retras", "demanda", "polémica", "polemica", "hiato", "acusa", "cierra", "cierre" }.Any(t.Contains))
+            return "dark";
+        if (new[] { "estreno", "estrena", "tráiler", "trailer", "temporada", "película", "pelicula",
+                    "anuncia", "anuncio", "confirmado", "confirma", "adaptación", "adaptacion", "live-action" }.Any(t.Contains))
+            return "epic";
+
+        return "upbeat"; // default noticias: tono positivo/enérgico
+    }
+
     /// <summary>Gemini clasifica; sin API key o ante cualquier error → heurística por géneros.</summary>
     private async Task<string> ClassifyMoodAsync(Series series, CancellationToken ct)
     {

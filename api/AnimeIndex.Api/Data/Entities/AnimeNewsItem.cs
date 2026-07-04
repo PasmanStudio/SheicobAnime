@@ -32,6 +32,8 @@ public class AnimeNewsItem
     public string IgPostStatus { get; set; } = "pending";
     public string? IgFeedMediaId { get; set; }
     public string? IgStoryMediaId { get; set; }
+    /// <summary>IG media id del Reel diario de noticias — null si esta noticia no fue el reel del día.</summary>
+    public string? IgReelMediaId { get; set; }
     public DateTime? IgPostedAt { get; set; }
     public string? ErrorMessage { get; set; }
 }

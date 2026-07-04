@@ -3,6 +3,7 @@ using AnimeIndex.Api.Data;
 using AnimeIndex.Api.Data.Entities;
 using AnimeIndex.Scraper.Infrastructure;
 using AnimeIndex.Scraper.Infrastructure.AiRewrite;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
 namespace AnimeIndex.Scraper.Infrastructure.Instagram;
@@ -11,6 +12,9 @@ namespace AnimeIndex.Scraper.Infrastructure.Instagram;
 /// Publishes pending anime news items to Instagram as:
 ///   • A single feed post (1080×1080)
 ///   • A story (1080×1920)
+///   • Máx. UN Reel de noticias por día (motion card animada + música por IA,
+///     share_to_feed) — el primer item publicable del día lo gana; dedup por
+///     ig_reel_media_id en las últimas 24 h.
 ///
 /// One item = one feed post + one story (published in sequence).
 /// Errors are caught per-item so a failure on one doesn't block the rest.
@@ -21,10 +25,15 @@ public class AnimeNewsPublisherService(
     AnimeNewsSettings newsSettings,
     MetaGraphApiClient api,
     AnimeNewsImageService imageService,
+    InstagramVideoService videoService,
+    ReelMusicService musicService,
     NewsRewriteService rewriter,
     IHttpClientFactory httpFactory,
     ILogger<AnimeNewsPublisherService> logger)
 {
+    // Meta procesa video asíncrono y puede tardar varios minutos
+    private static readonly TimeSpan VideoProcessingTimeout = TimeSpan.FromMinutes(6);
+
     public async Task PublishPendingAsync(
         IReadOnlyList<AnimeNewsItem> items, CancellationToken ct = default)
     {
@@ -130,11 +139,29 @@ public class AnimeNewsPublisherService(
                     "AnimeNews: failed to publish story for {Title}", Truncate(item.Title, 60));
             }
 
-            // Mark as published (even if only one of the two formats succeeded)
-            var anyPublished = feedMediaId is not null || storyMediaId is not null;
+            // ── Reel diario (máx 1 por 24 h — el primer item publicable lo gana) ──
+            string? reelMediaId = null;
+            if (igSettings.NewsReelEnabled)
+            {
+                try
+                {
+                    var reelRecently = await db.AnimeNewsItems.AnyAsync(
+                        n => n.IgReelMediaId != null && n.IgPostedAt >= DateTime.UtcNow.AddHours(-24), ct);
+                    if (!reelRecently)
+                        reelMediaId = await PublishReelAsync(item, content, images, ct);
+                }
+                catch (Exception ex) when (ex is not TaskCanceledException { CancellationToken.IsCancellationRequested: true })
+                {
+                    logger.LogWarning(ex, "AnimeNews: reel dedup check failed — skipping reel this run");
+                }
+            }
+
+            // Mark as published (even if only one of the formats succeeded)
+            var anyPublished = feedMediaId is not null || storyMediaId is not null || reelMediaId is not null;
             item.IgPostStatus    = anyPublished ? "published" : "failed";
             item.IgFeedMediaId   = feedMediaId;
             item.IgStoryMediaId  = storyMediaId;
+            item.IgReelMediaId   = reelMediaId;
             item.IgPostedAt      = anyPublished ? DateTime.UtcNow : null;
         }
         catch (Exception ex) when (ex is not TaskCanceledException { CancellationToken.IsCancellationRequested: true })
@@ -146,6 +173,57 @@ public class AnimeNewsPublisherService(
         finally
         {
             await db.SaveChangesAsync(CancellationToken.None);
+        }
+    }
+
+    // ── Reel de noticias (motion card + música por IA) ───────────────────────
+
+    /// <summary>
+    /// Publishes the animated news Reel: fondo con Ken Burns + titular entrando
+    /// con slide/fade + track según el mood de la noticia. Best-effort — un
+    /// fallo acá nunca afecta el feed/story ya publicados.
+    /// </summary>
+    private async Task<string?> PublishReelAsync(
+        AnimeNewsItem item, NewsContent content, IReadOnlyList<string> images, CancellationToken ct)
+    {
+        try
+        {
+            var (background, overlay) = await imageService.GenerateStoryLayersAsync(item, content, images, ct);
+            var music = await musicService.SelectAndDownloadForNewsAsync(
+                content.Headline, content.Lede, item.RssGuid, ct);
+
+            var videoBytes = await videoService.GenerateMotionCardAsync(
+                background, overlay, music?.Mp3, music?.Track.StartSeconds ?? 0, ct);
+
+            var fileName = $"news-{item.SourceKey}-{item.Id.ToString("N")[..8]}-reel.mp4";
+            var videoUrl = await api.UploadVideoAsync(videoBytes, fileName, ct);
+
+            var caption = BuildCaption(content);
+            if (music?.Track.Attribution is { } attribution)
+            {
+                // Que la atribución nunca empuje el caption sobre el límite de IG
+                var budget = IgCaptionMaxChars - attribution.Length - 2;
+                if (caption.Length > budget) caption = caption[..budget].TrimEnd();
+                caption = $"{caption}\n\n{attribution}";
+            }
+
+            var containerId = await api.CreateReelContainerAsync(videoUrl, caption, shareToFeed: true, ct);
+            await api.WaitForContainerReadyAsync(containerId, ct, VideoProcessingTimeout);
+            var mediaId = await api.PublishContainerAsync(containerId, ct);
+
+            logger.LogInformation("AnimeNews: published REEL for [{Source}] {Title} → {MediaId}",
+                item.SourceKey, Truncate(item.Title, 60), mediaId);
+            return mediaId;
+        }
+        catch (FfmpegNotAvailableException ex)
+        {
+            logger.LogWarning("AnimeNews: reel skipped — {Reason}", ex.Message);
+            return null;
+        }
+        catch (Exception ex) when (ex is not TaskCanceledException { CancellationToken.IsCancellationRequested: true })
+        {
+            logger.LogWarning(ex, "AnimeNews: failed to publish reel for {Title}", Truncate(item.Title, 60));
+            return null;
         }
     }
 

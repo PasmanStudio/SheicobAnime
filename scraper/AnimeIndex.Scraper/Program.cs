@@ -75,6 +75,9 @@ if (args.Contains("--news"))
         newsBuilder.Services.AddScoped<AnimeIndex.Scraper.Infrastructure.AiRewrite.NewsRewriteService>();
         newsBuilder.Services.AddScoped<AnimeIndex.Scraper.Infrastructure.Instagram.AnimeNewsImageService>();
         newsBuilder.Services.AddScoped<AnimeIndex.Scraper.Infrastructure.Instagram.MetaGraphApiClient>();
+        // Reel diario de noticias: motion card (ffmpeg) + música por mood (IA)
+        newsBuilder.Services.AddScoped<AnimeIndex.Scraper.Infrastructure.Instagram.InstagramVideoService>();
+        newsBuilder.Services.AddScoped<AnimeIndex.Scraper.Infrastructure.Instagram.ReelMusicService>();
         newsBuilder.Services.AddScoped<AnimeIndex.Scraper.Infrastructure.Instagram.AnimeNewsPublisherService>();
         newsBuilder.Services.AddScoped<AnimeIndex.Scraper.Jobs.AnimeNewsJob>();
 

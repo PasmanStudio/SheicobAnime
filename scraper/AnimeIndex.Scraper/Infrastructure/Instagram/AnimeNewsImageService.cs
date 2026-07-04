@@ -54,6 +54,39 @@ public class AnimeNewsImageService(
     }
 
     /// <summary>
+    /// Capas separadas del cover 9:16 para el Reel de noticias (motion graphics):
+    /// fondo (abismo + foto + scrim, JPEG) y overlay (titular/lede/kicker/logo
+    /// sobre transparente, PNG con alpha). ffmpeg las anima por separado — Ken
+    /// Burns en la foto, slide-in con fade en el texto, que queda siempre nítido.
+    /// </summary>
+    public async Task<(byte[] Background, byte[] OverlayPng)> GenerateStoryLayersAsync(
+        AnimeNewsItem item, NewsContent content, IReadOnlyList<string> imageUrls, CancellationToken ct = default)
+    {
+        const int width = 1080, height = 1920;
+        var photo = await TryDownloadPhotoAsync(PrimaryImage(item, imageUrls), ct);
+        try
+        {
+            // ── Fondo ──
+            using var bgSurface = SKSurface.Create(new SKImageInfo(width, height));
+            var bg = bgSurface.Canvas;
+            bg.Clear(SKColors.Black);
+            DrawBackground(bg, width, height);
+            if (photo is not null) DrawPhotoCover(bg, photo, width, height, CropFocus.Center);
+            DrawBottomScrim(bg, width, height);
+
+            // ── Overlay de texto (transparente) ──
+            using var ovSurface = SKSurface.Create(
+                new SKImageInfo(width, height, SKColorType.Rgba8888, SKAlphaType.Premul));
+            var ov = ovSurface.Canvas;
+            ov.Clear(SKColors.Transparent);
+            DrawCoverText(ov, content, width, height, swipeHint: false);
+
+            return (Encode(bgSurface), EncodePng(ovSurface));
+        }
+        finally { photo?.Dispose(); }
+    }
+
+    /// <summary>
     /// Builds the carousel: cover → up to <paramref name="maxKeyPoints"/> key-point slides
     /// (each over a photo, cycling through the article's images with varied crops) → a closing CTA.
     /// Instagram caps carousels at 10; we stay well under.
@@ -100,6 +133,17 @@ public class AnimeNewsImageService(
         if (photo is not null) DrawPhotoCover(canvas, photo, width, height, CropFocus.Center);
         DrawBottomScrim(canvas, width, height);
 
+        DrawCoverText(canvas, content, width, height, swipeHint);
+
+        return Encode(surface);
+    }
+
+    /// <summary>
+    /// Todo el texto/branding del cover (logo, kicker, titular, lede, swipe hint).
+    /// Separado del fondo para que el Reel lo anime como capa independiente.
+    /// </summary>
+    private static void DrawCoverText(SKCanvas canvas, NewsContent content, int width, int height, bool swipeHint)
+    {
         float scale  = width / 1080f;
         float x      = width * 0.07f;
         float bottom = height - height * 0.07f;
@@ -133,8 +177,6 @@ public class AnimeNewsImageService(
             - 22 * scale;
 
         DrawKicker(canvas, x, y, scale, "NOTICIAS");
-
-        return Encode(surface);
     }
 
     // ── Key-point slide (photo + one big headline; abismo panel as fallback) ─────
@@ -542,6 +584,13 @@ public class AnimeNewsImageService(
     }
 
     // ── Resource loading ─────────────────────────────────────────────────────────
+
+    private static byte[] EncodePng(SKSurface surface)
+    {
+        using var image = surface.Snapshot();
+        using var data  = image.Encode(SKEncodedImageFormat.Png, 100);
+        return data.ToArray();
+    }
 
     private static byte[] Encode(SKSurface surface)
     {

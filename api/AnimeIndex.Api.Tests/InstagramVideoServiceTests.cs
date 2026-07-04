@@ -149,6 +149,16 @@ public class ReelMusicServiceTests
     public void ParseTrackFromPublicId_NullUrlReturnsNull()
         => Assert.Null(ReelMusicService.ParseTrackFromPublicId("ig/music/epic-1", null));
 
+    [Theory]
+    [InlineData("Confirmado: la película de Chainsaw Man ya tiene fecha de estreno", "epic")]
+    [InlineData("Fallece el mangaka de Berserk a los 54 años", "emotional")]
+    [InlineData("Cancelado el anime de X tras la polémica", "dark")]
+    [InlineData("El evento de figuras más grande de LATAM llega a Buenos Aires", "upbeat")]
+    // el luto pisa al anuncio si conviven
+    [InlineData("Estreno póstumo: homenaje al creador fallecido", "emotional")]
+    public void HeuristicNewsMood_MapsHeadlines(string headline, string expected)
+        => Assert.Equal(expected, ReelMusicService.HeuristicNewsMood(headline));
+
     [Fact]
     public void PickTrack_UsesCustomLibraryWhenProvided()
     {
