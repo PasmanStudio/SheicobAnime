@@ -164,15 +164,28 @@ public class InstagramPublisherService(
 
         try
         {
-            var frameBytes = await imageService.GenerateStoryAsync(episode.Series, episode, ct);
+            // Capas para motion graphics (fondo + texto animados por separado);
+            // si el render por capas falla, tarjeta plana con zoom como fallback.
+            byte[] background;
+            byte[]? overlay;
+            try
+            {
+                (background, overlay) = await imageService.GenerateStoryLayersAsync(episode.Series, episode, ct);
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Layered render failed — falling back to flat card");
+                background = await imageService.GenerateStoryAsync(episode.Series, episode, ct);
+                overlay = null;
+            }
 
-            // Música por IA (mood de la serie → track CC BY). null = reel silencioso.
+            // Música por IA (mood de la serie → track propio/CC). null = reel silencioso.
             var music = settings.ReelMusicEnabled
                 ? await musicService.SelectAndDownloadAsync(episode.Series, ct)
                 : null;
 
             var videoBytes = await videoService.GenerateMotionCardAsync(
-                frameBytes, music?.Mp3, music?.Track.StartSeconds ?? 0, ct);
+                background, overlay, music?.Mp3, music?.Track.StartSeconds ?? 0, ct);
 
             var fileName = $"{episode.Series.Slug}-ep{episode.EpisodeNumber}-reel-{DateTime.UtcNow:yyyyMMddHHmmss}.mp4";
             var videoUrl = await api.UploadVideoAsync(videoBytes, fileName, ct);
