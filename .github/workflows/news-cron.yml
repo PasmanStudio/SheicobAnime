@@ -41,6 +41,13 @@ jobs:
         with:
           dotnet-version: '9.x'
 
+      # El Reel de noticias (motion card animada) necesita ffmpeg — ubuntu-latest
+      # NO lo trae preinstalado (confirmado en vivo: "ffmpeg no encontrado" en el
+      # run del 4-jul-2026). Sin este paso el reel cae a "skipped" silenciosamente
+      # y el resto del pipeline (feed+story) sigue andando igual.
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
       - name: Cache NuGet packages
         uses: actions/cache@v4
         with:
