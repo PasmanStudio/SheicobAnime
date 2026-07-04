@@ -34,9 +34,13 @@ public class InstagramSettings
     public int MaxCarouselItems { get; set; } = 10;
 
     // ── Reels (motion cards) ────────────────────────────────────────────
-    // Publica un Reel por corrida (tarjeta animada con ffmpeg del episodio más
-    // nuevo) además del carrusel/post de imagen. Apagar con Instagram__ReelsEnabled=false.
-    public bool ReelsEnabled { get; set; } = true;
+    // Reel de EPISODIOS (uno por corrida del scraper). Default OFF — el usuario
+    // quiere el reel diario para las NOTICIAS; prender con Instagram__ReelsEnabled=true.
+    public bool ReelsEnabled { get; set; } = false;
+
+    // Reel de NOTICIAS: máx. uno cada 24 h (motion card animada + música por IA
+    // del primer item publicable del día). Apagar con Instagram__NewsReelEnabled=false.
+    public bool NewsReelEnabled { get; set; } = true;
 
     // Ruta del binario de ffmpeg (default: "ffmpeg" en PATH — preinstalado en
     // ubuntu-latest). Sin ffmpeg el publisher degrada a imagen sin fallar.
