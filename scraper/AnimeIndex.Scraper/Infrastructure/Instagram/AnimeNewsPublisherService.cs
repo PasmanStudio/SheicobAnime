@@ -180,7 +180,7 @@ public class AnimeNewsPublisherService(
                     if (!reelRecently)
                         reelMediaId = await PublishReelAsync(item, content, images, trailerUrl, ct);
                 }
-                catch (Exception ex) when (ex is not TaskCanceledException { CancellationToken.IsCancellationRequested: true })
+                catch (Exception ex) when (!ct.IsCancellationRequested)
                 {
                     logger.LogWarning(ex, "AnimeNews: reel dedup check failed — skipping reel this run");
                 }
@@ -225,7 +225,7 @@ public class AnimeNewsPublisherService(
                     slides.Count == 1 ? "post" : $"carousel ({slides.Count} slides)",
                     item.SourceKey, Truncate(item.Title, 60), feedMediaId);
             }
-            catch (Exception ex) when (ex is not TaskCanceledException { CancellationToken.IsCancellationRequested: true })
+            catch (Exception ex) when (!ct.IsCancellationRequested)
             {
                 logger.LogWarning(ex,
                     "AnimeNews: failed to publish feed for {Title}", Truncate(item.Title, 60));
@@ -247,7 +247,7 @@ public class AnimeNewsPublisherService(
                     "AnimeNews: published story for [{Source}] {Title} → {MediaId}",
                     item.SourceKey, Truncate(item.Title, 60), storyMediaId);
             }
-            catch (Exception ex) when (ex is not TaskCanceledException { CancellationToken.IsCancellationRequested: true })
+            catch (Exception ex) when (!ct.IsCancellationRequested)
             {
                 logger.LogWarning(ex,
                     "AnimeNews: failed to publish story for {Title}", Truncate(item.Title, 60));
@@ -261,7 +261,7 @@ public class AnimeNewsPublisherService(
             item.IgReelMediaId   = reelMediaId;
             item.IgPostedAt      = anyPublished ? DateTime.UtcNow : null;
         }
-        catch (Exception ex) when (ex is not TaskCanceledException { CancellationToken.IsCancellationRequested: true })
+        catch (Exception ex) when (!ct.IsCancellationRequested)
         {
             item.IgPostStatus   = "failed";
             item.ErrorMessage   = ex.Message[..Math.Min(ex.Message.Length, 500)];
@@ -311,7 +311,7 @@ public class AnimeNewsPublisherService(
                         logger.LogInformation("AnimeNews: reel con TRÁILER para \"{Title}\" ({Url})",
                             Truncate(item.Title, 60), trailerUrl);
                     }
-                    catch (Exception ex) when (ex is not OperationCanceledException and not FfmpegNotAvailableException)
+                    catch (Exception ex) when (!ct.IsCancellationRequested && ex is not FfmpegNotAvailableException)
                     {
                         logger.LogWarning(ex, "Trailer reel render failed — falling back to slideshow");
                     }
@@ -332,7 +332,7 @@ public class AnimeNewsPublisherService(
                     videoBytes = await videoService.GenerateSlideshowAsync(
                         slides, music?.Mp3, music?.Track.StartSeconds ?? 0, ct);
                 }
-                catch (Exception ex) when (ex is not OperationCanceledException and not FfmpegNotAvailableException)
+                catch (Exception ex) when (!ct.IsCancellationRequested && ex is not FfmpegNotAvailableException)
                 {
                     logger.LogWarning(ex, "Slideshow render failed — falling back to single motion card");
                     var (background, overlay) = await imageService.GenerateStoryLayersAsync(item, content, images, ct);
@@ -353,7 +353,7 @@ public class AnimeNewsPublisherService(
             // Cover best-effort: si el upload falla, el reel sale igual (sin miniatura linda)
             string? coverUrl = null;
             try { coverUrl = await api.UploadImageAsync(coverJpeg, $"{baseName}-reel-cover.jpg", ct); }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            catch (Exception ex) when (!ct.IsCancellationRequested)
             {
                 logger.LogWarning(ex, "Reel cover upload failed — publishing without cover_url");
             }
@@ -380,7 +380,7 @@ public class AnimeNewsPublisherService(
             logger.LogWarning("AnimeNews: reel skipped — {Reason}", ex.Message);
             return null;
         }
-        catch (Exception ex) when (ex is not TaskCanceledException { CancellationToken.IsCancellationRequested: true })
+        catch (Exception ex) when (!ct.IsCancellationRequested)
         {
             logger.LogWarning(ex, "AnimeNews: failed to publish reel for {Title}", Truncate(item.Title, 60));
             return null;
@@ -458,7 +458,7 @@ public class AnimeNewsPublisherService(
                 trailerUrl = AnimeNewsFeedService.ExtractArticleVideoUrl(html);
             }
         }
-        catch (Exception ex) when (ex is not TaskCanceledException { CancellationToken.IsCancellationRequested: true })
+        catch (Exception ex) when (!ct.IsCancellationRequested)
         {
             logger.LogDebug(ex, "AnimeNews: could not gather extra media for {Title}", Truncate(item.Title, 50));
         }

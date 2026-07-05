@@ -56,7 +56,10 @@ public sealed class SiteRevalidationService(
                 logger.LogWarning("Revalidate: HTTP {Status} purgando '{Tag}' en {SiteUrl}",
                     (int)resp.StatusCode, tag, _siteUrl);
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        // Solo re-lanza si el CALLER canceló. Un timeout de HttpClient llega como
+        // TaskCanceledException con su token interno cancelado — NO es cancelación
+        // del caller y debe tragarse (si no, tumba el import entero al final).
+        catch (Exception ex) when (!ct.IsCancellationRequested)
         {
             logger.LogWarning(ex, "Revalidate: fallo al purgar el tag '{Tag}' (no crítico)", tag);
         }

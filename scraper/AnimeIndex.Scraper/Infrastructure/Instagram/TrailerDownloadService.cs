@@ -100,7 +100,7 @@ public class TrailerDownloadService(
             CleanUp(workDir);
             return null;
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (Exception ex) when (!ct.IsCancellationRequested)
         {
             logger.LogWarning(ex, "Descarga de tráiler falló para {Url} — reel cae a slideshow", videoUrl);
             CleanUp(workDir);

@@ -197,7 +197,7 @@ public class InstagramPublisherService(
                 var idx = doc.RootElement.GetProperty("index").GetInt32();
                 if (idx >= 0 && idx < episodes.Count) hero = episodes[idx];
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            catch (Exception ex) when (!ct.IsCancellationRequested)
             {
                 logger.LogDebug(ex, "Gemini hero-episode ranking failed — using heuristic");
             }
@@ -252,7 +252,7 @@ public class InstagramPublisherService(
             {
                 (background, overlay) = await imageService.GenerateStoryLayersAsync(episode.Series, episode, ct);
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            catch (Exception ex) when (!ct.IsCancellationRequested)
             {
                 logger.LogWarning(ex, "Layered render failed — falling back to flat card");
                 background = await imageService.GenerateStoryAsync(episode.Series, episode, ct);
@@ -303,7 +303,7 @@ public class InstagramPublisherService(
             logger.LogWarning("Reel skipped — {Reason}", ex.Message);
             return null;
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (Exception ex) when (!ct.IsCancellationRequested)
         {
             record.Status       = "failed";
             record.ErrorMessage = ex.Message[..Math.Min(ex.Message.Length, 500)];
