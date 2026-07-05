@@ -80,6 +80,26 @@ jobs:
             echo "waiting for bgutil provider ($i/15)..."; sleep 1
           done
 
+      # Cookies de YouTube: el PO token SOLO no evade el "confirm you're not a bot"
+      # desde IPs de datacenter (confirmado en vivo jul-2026). La combinación que
+      # SÍ funciona desde CI es cookies de una sesión logueada (cuenta descartable)
+      # + el PO token de arriba. Escribe el secret YOUTUBE_COOKIES (formato Netscape
+      # cookies.txt, exportado con "Get cookies.txt") a un archivo temporal. Sin el
+      # secret cargado no se escribe nada y yt-dlp corre sin cookies (best-effort:
+      # cae al slideshow como hasta ahora). Tip al exportar: hacerlo en una ventana
+      # de incógnito logueada y CERRARLA sin desloguear, para que YouTube no rote
+      # la sesión y las cookies duren más.
+      - name: Write YouTube cookies
+        env:
+          YOUTUBE_COOKIES: ${{ secrets.YOUTUBE_COOKIES }}
+        run: |
+          if [ -n "$YOUTUBE_COOKIES" ]; then
+            printf '%s' "$YOUTUBE_COOKIES" > "$RUNNER_TEMP/yt-cookies.txt"
+            echo "cookies escritas ($(wc -l < "$RUNNER_TEMP/yt-cookies.txt") líneas)"
+          else
+            echo "sin secret YOUTUBE_COOKIES — yt-dlp corre sin cookies (slideshow)"
+          fi
+
       - name: Cache NuGet packages
         uses: actions/cache@v4
         with:
@@ -102,6 +122,9 @@ jobs:
           Instagram__AccessToken:  ${{ secrets.INSTAGRAM_ACCESS_TOKEN }}
           Instagram__IgUserId:     ${{ secrets.INSTAGRAM_IG_USER_ID }}
           Instagram__ImgBbApiKey:  ${{ secrets.IMGBB_API_KEY }}
+          # Cookies de YouTube para el reel-tráiler (ver paso "Write YouTube cookies").
+          # La ruta se pasa siempre; el código solo usa --cookies si el archivo existe.
+          Instagram__YtDlpCookiesPath: ${{ runner.temp }}/yt-cookies.txt
           # ── Cloudinary (host de imágenes preferido — key-auth, sin throttle de IP) ──
           Instagram__CloudinaryCloudName:  ${{ secrets.CLOUDINARY_CLOUD_NAME }}
           Instagram__CloudinaryApiKey:     ${{ secrets.CLOUDINARY_API_KEY }}
