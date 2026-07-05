@@ -37,8 +37,13 @@ public class TrailerDownloadService(
             FileName = string.IsNullOrWhiteSpace(settings.YtDlpPath) ? "yt-dlp" : settings.YtDlpPath,
             // Solo video H.264 ≤720p (sin audio: se mutea igual y baja más rápido);
             // fallbacks progresivos por si el formato exacto no existe.
+            // --extractor-args player_client=tv,ios,web_safari: los clientes de TV/iOS
+            // NO piden el check "confirm you're not a bot" que YouTube tira contra
+            // IPs de datacenter (GitHub Actions) — es el workaround gratis y sin
+            // cookies para evadir ese bloqueo. Configurable vía Instagram__YtDlpPlayerClients.
             Arguments =
                 "-f \"bv*[height<=720][ext=mp4]/bv*[height<=720]/best[height<=720]/best\" " +
+                $"--extractor-args \"youtube:player_client={settings.YtDlpPlayerClients}\" " +
                 "--no-playlist --max-filesize 150M --socket-timeout 20 " +
                 $"-o \"{outputPath}\" \"{videoUrl}\"",
             RedirectStandardError = true,

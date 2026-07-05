@@ -52,6 +52,11 @@ public class InstagramSettings
     // Binario de yt-dlp (el workflow lo instala con pipx; en dev local puede faltar).
     public string YtDlpPath { get; set; } = "yt-dlp";
 
+    // player_client de yt-dlp: los clientes tv/ios evaden el check anti-bot que
+    // YouTube tira contra IPs de datacenter (GitHub Actions). Si YouTube endurece
+    // el bloqueo, ajustar acá sin redeploy (probar "tv", "ios", "mweb", etc.).
+    public string YtDlpPlayerClients { get; set; } = "tv,ios,web_safari";
+
     // Duración del reel de tráiler en segundos (≤60 por si se reusa como story).
     public int TrailerClipSeconds { get; set; } = 18;
 
