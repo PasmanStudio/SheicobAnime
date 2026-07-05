@@ -83,7 +83,7 @@ public class SunoMusicGenerator(
             logger.LogInformation("Suno: track \"{Title}\" listo ({Mb:F1} MB)", title, mp3.Length / 1024.0 / 1024.0);
             return mp3;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (!ct.IsCancellationRequested)
         {
             logger.LogWarning(ex, "Suno generation failed — fallback a biblioteca");
             return null;

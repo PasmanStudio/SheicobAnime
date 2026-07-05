@@ -76,7 +76,12 @@ public class AnimeNewsPublisherService(
             reelAvailable = !await db.AnimeNewsItems.AnyAsync(
                 n => n.IgReelMediaId != null && n.IgPostedAt >= DateTime.UtcNow.AddHours(-24), ct);
         }
-        catch { reelAvailable = false; }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            // Ante un fallo de DB, no arriesgar un 2do reel del día
+            logger.LogWarning(ex, "AnimeNews: dedup query falló — asumo reel ya publicado hoy");
+            reelAvailable = false;
+        }
 
         if (!reelAvailable)
             return items.Take(newsSettings.MaxPerRun).ToList();
@@ -112,7 +117,7 @@ public class AnimeNewsPublisherService(
                 var idx = doc.RootElement.GetProperty("index").GetInt32();
                 if (idx >= 0 && idx < items.Count) return items[idx];
             }
-            catch (Exception ex)
+            catch (Exception ex) when (!ct.IsCancellationRequested)
             {
                 logger.LogDebug(ex, "Gemini relevance ranking failed — using heuristic");
             }
