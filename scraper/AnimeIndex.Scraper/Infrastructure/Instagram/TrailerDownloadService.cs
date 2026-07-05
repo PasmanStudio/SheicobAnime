@@ -32,19 +32,28 @@ public class TrailerDownloadService(
         Directory.CreateDirectory(workDir);
         var outputPath = Path.Join(workDir, "trailer.mp4");
 
+        // Cookies de una sesión logueada: es lo que realmente evade el "confirm
+        // you're not a bot" desde IPs de datacenter (el PO token solo no alcanza).
+        // El workflow escribe el secret a un archivo; solo lo pasamos si existe
+        // (sin secret cargado → sin --cookies, best-effort como siempre).
+        var cookiesArg = !string.IsNullOrWhiteSpace(settings.YtDlpCookiesPath)
+                         && File.Exists(settings.YtDlpCookiesPath)
+            ? $"--cookies \"{settings.YtDlpCookiesPath}\" "
+            : string.Empty;
+
         var psi = new ProcessStartInfo
         {
             FileName = string.IsNullOrWhiteSpace(settings.YtDlpPath) ? "yt-dlp" : settings.YtDlpPath,
             // Solo video H.264 ≤720p (sin audio: se mutea igual y baja más rápido);
             // fallbacks progresivos por si el formato exacto no existe.
             // --extractor-args player_client=...: YouTube tira "confirm you're not a
-            // bot" contra IPs de datacenter (GitHub Actions). El workflow levanta el
-            // provider de PO token (bgutil) + su plugin de yt-dlp; los clientes web
-            // (web_safari) consumen esos tokens para evadir el bloqueo. Configurable
-            // vía Instagram__YtDlpPlayerClients (default "web_safari,tv").
+            // bot" contra IPs de datacenter (GitHub Actions). El fix real es --cookies
+            // (arriba); el PO token provider (bgutil) + los clientes web complementan.
+            // Configurable vía Instagram__YtDlpPlayerClients (default "web_safari,tv").
             Arguments =
                 "-f \"bv*[height<=720][ext=mp4]/bv*[height<=720]/best[height<=720]/best\" " +
                 $"--extractor-args \"youtube:player_client={settings.YtDlpPlayerClients}\" " +
+                cookiesArg +
                 "--no-playlist --max-filesize 150M --socket-timeout 20 " +
                 $"-o \"{outputPath}\" \"{videoUrl}\"",
             RedirectStandardError = true,

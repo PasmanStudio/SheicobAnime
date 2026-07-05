@@ -60,6 +60,14 @@ public class InstagramSettings
     // (probar "web_safari", "mweb", "tv", etc.) — requiere el provider corriendo.
     public string YtDlpPlayerClients { get; set; } = "web_safari,tv";
 
+    // Cookies de YouTube (formato Netscape cookies.txt). El PO token solo NO evade
+    // el check anti-bot desde IPs de datacenter (confirmado en vivo jul-2026); la
+    // combinación que SÍ funciona desde CI es cookies de una sesión logueada +
+    // el PO token provider. El workflow escribe el secret YOUTUBE_COOKIES a un
+    // archivo y pasa su ruta acá; si el archivo existe, yt-dlp lo usa con --cookies.
+    // Vacío o archivo inexistente → sin cookies (best-effort, cae al slideshow).
+    public string YtDlpCookiesPath { get; set; } = string.Empty;
+
     // Duración del reel de tráiler en segundos (≤60 por si se reusa como story).
     public int TrailerClipSeconds { get; set; } = 18;
 
