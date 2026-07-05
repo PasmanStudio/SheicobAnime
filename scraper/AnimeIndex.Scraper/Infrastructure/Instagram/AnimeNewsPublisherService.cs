@@ -139,9 +139,12 @@ public class AnimeNewsPublisherService(
         // Noticias de peso (luto / polémicas fuertes)
         score += new[] { "fallec", "muere", "murió", "homenaje", "demanda", "cancel" }
             .Count(t.Contains) * 3;
-        // Franquicias enormes: empujón extra
+        // Franquicias enormes / títulos top del momento: empujón extra
         score += new[] { "one piece", "naruto", "dragon ball", "jujutsu", "chainsaw", "attack on titan",
-                          "shingeki", "demon slayer", "kimetsu", "ghibli", "evangelion" }
+                          "shingeki", "demon slayer", "kimetsu", "ghibli", "evangelion",
+                          "black clover", "spy x family", "spy family", "frieren", "solo leveling",
+                          "dandadan", "blue lock", "my hero", "boku no hero", "bleach", "re:zero",
+                          "mushoku tensei", "witch hat", "sword art", "tokyo revengers", "oshi no ko" }
             .Count(t.Contains) * 2;
         // Menores
         score += new[] { "colaboración", "colaboracion", "evento", "figura", "manga" }

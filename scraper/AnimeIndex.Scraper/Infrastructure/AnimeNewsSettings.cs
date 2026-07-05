@@ -3,8 +3,8 @@ namespace AnimeIndex.Scraper.Infrastructure;
 public class AnimeNewsSettings
 {
     /// <summary>
-    /// Maximum news items to post per run.
-    /// With hourly cron this should be 1-2 — posting too many at once looks like spam.
+    /// Maximum news items to post per run. Con el cron curado (5 corridas/día) cada corrida
+    /// publica solo la más relevante del pool → mantener en 1 (subirlo vuelve a spamear).
     /// </summary>
     public int MaxPerRun { get; set; } = 1;
 
