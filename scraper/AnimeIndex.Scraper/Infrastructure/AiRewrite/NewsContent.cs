@@ -13,9 +13,10 @@ public sealed record NewsContent(
     string Headline,
     // One-line lede shown under the cover title. Null when there's nothing worth adding.
     string? Lede,
-    // Short, self-contained ideas — one per carousel slide (typically 2–3).
+    // Short, self-contained ideas — one per carousel slide (typically 2–3). Van en las slides.
     IReadOnlyList<string> KeyPoints,
-    // Full Instagram caption body: hook -> 2–4 original sentences -> question/CTA. No hashtags, no handle.
+    // Cuerpo del caption de Instagram: MÁS largo y profundo que las slides (3–5 párrafos con
+    // contexto/detalles) y distinto de KeyPoints, cerrando con pregunta/CTA. Sin hashtags ni handle.
     string Caption,
     // Hashtags WITHOUT the leading '#'. Merged with the base set by the caption builder.
     IReadOnlyList<string> Hashtags,

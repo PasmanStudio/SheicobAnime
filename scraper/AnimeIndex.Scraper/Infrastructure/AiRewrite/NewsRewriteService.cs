@@ -75,6 +75,8 @@ public class NewsRewriteService(
         var sb = new StringBuilder();
         sb.AppendLine("Reescribí esta noticia de anime/manga para un post de Instagram de SheicobAnime.");
         sb.AppendLine("Si la información es escasa, podés complementarla con contexto público confiable sobre el mismo tema.");
+        sb.AppendLine("Las slides del posteo muestran el titular + key_points (frases cortas). El caption es TEXTO APARTE:");
+        sb.AppendLine("Instagram permite hasta 2200 caracteres, así que el caption tiene que AHONDAR más que las slides — no repetirlas.");
         sb.AppendLine();
         sb.AppendLine($"Título de referencia: {item.Title}");
         if (!string.IsNullOrWhiteSpace(item.Summary))
@@ -88,11 +90,13 @@ public class NewsRewriteService(
             {
               "headline": "titular original, atractivo, máx ~80 caracteres. Frase completa, SIN puntos suspensivos.",
               "lede": "una sola frase que amplíe el titular, máx ~110 caracteres. Completa, SIN puntos suspensivos.",
-              "key_points": ["3 a 5 ideas cortas, autoconclusivas y bien distintas entre sí, máx ~95 caracteres cada una. Cada una es una frase COMPLETA, sin '...' ni recortes."],
-              "caption": "2 a 4 frases originales con voz rioplatense + una pregunta o CTA al final. Sin hashtags. Sin @.",
+              "key_points": ["3 a 5 ideas cortas, autoconclusivas y bien distintas entre sí, máx ~95 caracteres cada una. Cada una es una frase COMPLETA, sin '...' ni recortes. Van en las slides."],
+              "caption": "el CUERPO de la publicación, más largo y profundo que las slides: 3 a 5 párrafos cortos que DESARROLLEN la noticia (contexto y antecedentes, detalles como estudio, staff, fechas, plataforma o formato si aparecen, y qué significa para los fans). Tiene que APORTAR datos que NO están en key_points ni en el titular — nada de repetir las frases de las slides. Terminá con una pregunta o CTA. Separá los párrafos con un salto de línea (\\n). Sin hashtags. Sin @.",
               "hashtags": ["6 a 10 hashtags relevantes SIN el símbolo #, en minúscula y sin espacios"]
             }
             """);
+        sb.AppendLine();
+        sb.AppendLine("IMPORTANTE: key_points (slides) y caption (cuerpo del post) NO pueden decir lo mismo — el caption suma contexto y detalle.");
         return sb.ToString();
     }
 
@@ -157,9 +161,21 @@ public class NewsRewriteService(
             if (!string.IsNullOrWhiteSpace(s) && s!.Length >= 20) keyPoints.Add(s!);
         }
 
-        // A presentable caption built from the cleaned lede — no source chrome, no copy of the body.
+        // Caption = cuerpo un poco más completo que las slides, sin dumpear el
+        // artículo entero ni su chrome: el lede + hasta 2 frases de contexto de
+        // párrafos POSTERIORES (los que NO se usaron como key points), así el texto
+        // del post no es idéntico a lo que ya se ve en las imágenes. La profundidad
+        // real (reescritura con más contexto) la aporta la IA; esto es el fallback
+        // cuando no hay API key o se agotó la cuota.
         var caption = new StringBuilder();
         if (!string.IsNullOrWhiteSpace(lede)) caption.Append(lede);
+        for (var i = 3; i < paragraphs.Count && caption.Length < 600; i++)
+        {
+            var s = FirstSentence(paragraphs[i], 160);
+            if (string.IsNullOrWhiteSpace(s) || s!.Length < 25) continue;
+            if (caption.Length > 0 && caption[^1] is not ('.' or '!' or '?')) caption.Append('.');
+            caption.Append("\n\n").Append(s);
+        }
         if (caption.Length > 0 && caption[^1] is not ('.' or '!' or '?')) caption.Append('.');
         caption.Append("\n\n¿Qué opinás? Te lo contamos completo en SheicobAnime.");
 
