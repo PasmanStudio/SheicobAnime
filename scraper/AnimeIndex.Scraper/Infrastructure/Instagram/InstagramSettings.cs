@@ -52,10 +52,13 @@ public class InstagramSettings
     // Binario de yt-dlp (el workflow lo instala con pipx; en dev local puede faltar).
     public string YtDlpPath { get; set; } = "yt-dlp";
 
-    // player_client de yt-dlp: los clientes tv/ios evaden el check anti-bot que
-    // YouTube tira contra IPs de datacenter (GitHub Actions). Si YouTube endurece
-    // el bloqueo, ajustar acá sin redeploy (probar "tv", "ios", "mweb", etc.).
-    public string YtDlpPlayerClients { get; set; } = "tv,ios,web_safari";
+    // player_client de yt-dlp. YouTube bloquea las IPs de datacenter (GitHub
+    // Actions) con "confirm you're not a bot"; el workflow levanta el provider
+    // de PO token (bgutil) para evadirlo. Los PO tokens los consumen los clientes
+    // web, por eso 'web_safari' va primero; 'tv' queda de fallback (a veces pasa
+    // sin token). Si YouTube endurece el bloqueo, ajustar acá sin redeploy
+    // (probar "web_safari", "mweb", "tv", etc.) — requiere el provider corriendo.
+    public string YtDlpPlayerClients { get; set; } = "web_safari,tv";
 
     // Duración del reel de tráiler en segundos (≤60 por si se reusa como story).
     public int TrailerClipSeconds { get; set; } = 18;
