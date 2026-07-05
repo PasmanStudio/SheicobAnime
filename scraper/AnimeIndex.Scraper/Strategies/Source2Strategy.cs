@@ -476,8 +476,8 @@ public sealed class Source2Strategy(
         // UpsertSeriesAsync (2 round-trips), re-escribiendo TODO el catálogo cada
         // corrida → miles de viajes secuenciales a Supabase (~20 min de la corrida).
         // Ahora discovery solo INSERTA series nuevas; las existentes las refresca
-        // la Fase 2 (enrichment de 'ongoing'), y las 'completed' son inmutables
-        // (UpsertSeriesAsync nunca las saca de 'completed').
+        // la Fase 2 (enrichment de 'ongoing' y 'upcoming'), y las 'completed' son
+        // inmutables (UpsertSeriesAsync nunca las saca de 'completed').
         var blockedSlugs = (await db.BlockedSlugs.Select(b => b.Slug).ToListAsync(ct))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var knownSlugs = (await db.Series.Select(s => s.Slug).ToListAsync(ct))
@@ -572,11 +572,15 @@ public sealed class Source2Strategy(
     private record SlugStatus(string Slug, string? Status);
 
     /// <summary>
-    /// Returns slugs that need enrichment: only series with status = 'ongoing'.
-    /// Initial full-scrape is complete; daily runs focus on airing series only
-    /// (~84 series vs the previous 223) to keep each cycle under ~15 minutes.
+    /// Returns slugs that need enrichment: series with status 'ongoing' OR
+    /// 'upcoming'. Los estrenos se catalogan como 'upcoming' (notyet) antes de
+    /// salir al aire, pero discovery NO reescribe series existentes — así que sin
+    /// incluir 'upcoming' acá quedaban congelados para siempre con 0 episodios
+    /// aunque ya hubieran estrenado (deadlock). Al visitar su ficha, UpsertSeries
+    /// vuelca el status real ('ongoing' cuando ya emite) y baja sus episodios.
     /// Blocked slugs are excluded. Ordered by updated_at ASC so least-recently
-    /// scraped series are processed first.
+    /// scraped series are processed first (las recién enriquecidas van al fondo de
+    /// la cola, así las 'upcoming' que aún no estrenan rotan sin monopolizar el ciclo).
     /// </summary>
     private async Task<IReadOnlyList<(string Slug, string? Status)>> GetSeriesNeedingEnrichmentAsync(
         CancellationToken ct)
@@ -586,7 +590,7 @@ public sealed class Source2Strategy(
             SELECT s.slug AS "Slug", s.status AS "Status"
             FROM series s
             WHERE NOT EXISTS (SELECT 1 FROM blocked_slugs b WHERE b.slug = s.slug)
-            AND s.status = 'ongoing'
+            AND s.status IN ('ongoing', 'upcoming')
             ORDER BY s.updated_at ASC
             """)
             .ToListAsync(ct);
