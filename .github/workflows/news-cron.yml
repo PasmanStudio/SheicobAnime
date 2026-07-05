@@ -1,27 +1,20 @@
 name: News — Anime RSS → Instagram
 
-# Runs every hour from 11:00–23:00 UTC = 8 AM–8 PM Argentina (UTC-3).
-# Each run fetches SomosKudasai RSS, picks 1 new article, posts feed + story.
-# Fast job: ~3–5 minutes total (RSS fetch + article scrape + 2 IG API calls).
+# 5 corridas curadas por día (antes: cada hora, 13/día → spam + agotaba la cuota
+# de Gemini). Cada corrida elige la noticia MÁS relevante del pool acumulado y
+# publica 1 sola. Menos posts, mejores, y ~9-12 llamadas Gemini/día (dentro del
+# free tier). Horarios pensados para el pico de Argentina (UTC-3).
+# Fast job: ~3–5 minutes total (RSS fetch + article scrape + IG API calls).
 # No Hangfire — uses the standalone --news mode that exits after one post.
 
 on:
   schedule:
-    # Every hour, hours 11–23 UTC (8 AM–8 PM Argentina UTC-3)
-    # GHA cron doesn't support ranges directly — list each hour explicitly.
-    - cron: '0 11 * * *'
-    - cron: '0 12 * * *'
-    - cron: '0 13 * * *'
-    - cron: '0 14 * * *'
-    - cron: '0 15 * * *'
-    - cron: '0 16 * * *'
-    - cron: '0 17 * * *'
-    - cron: '0 18 * * *'
-    - cron: '0 19 * * *'
-    - cron: '0 20 * * *'
-    - cron: '0 21 * * *'
-    - cron: '0 22 * * *'
-    - cron: '0 23 * * *'
+    # Horarios Argentina (UTC-3) → UTC. GHA cron solo corre en UTC.
+    - cron: '0 15 * * *'   # 12:00 ART
+    - cron: '0 18 * * *'   # 15:00 ART
+    - cron: '0 20 * * *'   # 17:00 ART
+    - cron: '0 22 * * *'   # 19:00 ART
+    - cron: '0 1 * * *'    # 22:00 ART (día anterior en UTC)
   workflow_dispatch:   # allow manual trigger from Actions tab
 
 env:
