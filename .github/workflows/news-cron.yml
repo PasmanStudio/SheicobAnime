@@ -41,6 +41,20 @@ jobs:
         with:
           dotnet-version: '9.x'
 
+      # El Reel de noticias (motion card animada) necesita ffmpeg — ubuntu-latest
+      # NO lo trae preinstalado (confirmado en vivo: "ffmpeg no encontrado" en el
+      # run del 4-jul-2026). Sin este paso el reel cae a "skipped" silenciosamente
+      # y el resto del pipeline (feed+story) sigue andando igual.
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      # yt-dlp para el reel "tráiler + titular" (baja el PV embebido en el
+      # artículo). pipx viene preinstalado en el runner y trae la versión
+      # actual (la de apt queda vieja y YouTube la rompe). Best-effort: si
+      # YouTube bloquea la IP del runner, el reel cae al slideshow de imágenes.
+      - name: Install yt-dlp
+        run: pipx install yt-dlp && yt-dlp --version
+
       - name: Cache NuGet packages
         uses: actions/cache@v4
         with:
@@ -71,6 +85,10 @@ jobs:
           Instagram__AppSecret:    ${{ secrets.INSTAGRAM_APP_SECRET }}
           Instagram__SiteUrl:      ${{ secrets.INSTAGRAM_SITE_URL }}
           Instagram__Handle:       "sheicobanime"
+          # ── Suno vía sunoapi.org (tercero) — música FRESCA por reel ────────
+          # Key en https://sunoapi.org/api-key → secret SUNO_API_KEY. Sin ella,
+          # el reel usa la biblioteca de Cloudinary/CC (fallback, no rompe).
+          Instagram__SunoApiKey:   ${{ secrets.SUNO_API_KEY }}
           # ── IA de reescritura (Gemini, free tier) ─────────────────────────
           # Sacá la key gratis (sin tarjeta) en https://aistudio.google.com → "Get API key"
           # y cargala como secret GEMINI_API_KEY. Sin ella, el pipeline cae a contenido

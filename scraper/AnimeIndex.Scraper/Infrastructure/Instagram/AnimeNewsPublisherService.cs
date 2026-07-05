@@ -3,16 +3,21 @@ using AnimeIndex.Api.Data;
 using AnimeIndex.Api.Data.Entities;
 using AnimeIndex.Scraper.Infrastructure;
 using AnimeIndex.Scraper.Infrastructure.AiRewrite;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
 namespace AnimeIndex.Scraper.Infrastructure.Instagram;
 
 /// <summary>
 /// Publishes pending anime news items to Instagram as:
-///   • A single feed post (1080×1080)
-///   • A story (1080×1920)
+///   • Máx. UN Reel de noticias por día (slideshow: cover + puntos clave + CTA,
+///     con música por IA y share_to_feed) — la noticia MÁS RELEVANTE del pool
+///     lo gana (dedup por ig_reel_media_id en las últimas 24 h). La noticia del
+///     reel NO publica además el carrusel: sería la misma noticia dos veces en
+///     el feed. Si el reel falla, el carrusel actúa de respaldo.
+///   • A single feed post / carousel (1080×1080) para el resto.
+///   • A story (1080×1920) siempre.
 ///
-/// One item = one feed post + one story (published in sequence).
 /// Errors are caught per-item so a failure on one doesn't block the rest.
 /// </summary>
 public class AnimeNewsPublisherService(
@@ -21,10 +26,21 @@ public class AnimeNewsPublisherService(
     AnimeNewsSettings newsSettings,
     MetaGraphApiClient api,
     AnimeNewsImageService imageService,
+    InstagramVideoService videoService,
+    ReelMusicService musicService,
+    TrailerDownloadService trailerService,
     NewsRewriteService rewriter,
+    GeminiClient gemini,
+    AiSettings aiSettings,
     IHttpClientFactory httpFactory,
     ILogger<AnimeNewsPublisherService> logger)
 {
+    // Meta procesa video asíncrono y puede tardar varios minutos
+    private static readonly TimeSpan VideoProcessingTimeout = TimeSpan.FromMinutes(6);
+
+    /// <param name="items">Pool de candidatos pendientes (puede ser mayor a
+    /// MaxPerRun — acá se capa). Si el Reel del día está disponible, la noticia
+    /// MÁS RELEVANTE del pool (IA/heurística) se procesa primero y se lo lleva.</param>
     public async Task PublishPendingAsync(
         IReadOnlyList<AnimeNewsItem> items, CancellationToken ct = default)
     {
@@ -35,21 +51,111 @@ public class AnimeNewsPublisherService(
         }
         if (items.Count == 0) return;
 
-        logger.LogInformation("AnimeNews: publishing {Count} news item(s) to Instagram", items.Count);
+        var batch = await SelectBatchAsync(items, ct);
+        logger.LogInformation("AnimeNews: publishing {Count} news item(s) to Instagram ({Pool} candidatas)",
+            batch.Count, items.Count);
 
-        foreach (var item in items)
+        foreach (var item in batch)
         {
             if (ct.IsCancellationRequested) break;
             await PublishItemAsync(item, ct);
         }
     }
 
+    // ── Selección del batch (la más relevante primero si hay reel del día) ────
+
+    private async Task<IReadOnlyList<AnimeNewsItem>> SelectBatchAsync(
+        IReadOnlyList<AnimeNewsItem> items, CancellationToken ct)
+    {
+        if (items.Count <= 1 || !igSettings.NewsReelEnabled)
+            return items.Take(newsSettings.MaxPerRun).ToList();
+
+        bool reelAvailable;
+        try
+        {
+            reelAvailable = !await db.AnimeNewsItems.AnyAsync(
+                n => n.IgReelMediaId != null && n.IgPostedAt >= DateTime.UtcNow.AddHours(-24), ct);
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            // Ante un fallo de DB, no arriesgar un 2do reel del día
+            logger.LogWarning(ex, "AnimeNews: dedup query falló — asumo reel ya publicado hoy");
+            reelAvailable = false;
+        }
+
+        if (!reelAvailable)
+            return items.Take(newsSettings.MaxPerRun).ToList();
+
+        var best = await PickMostRelevantAsync(items, ct);
+        logger.LogInformation("AnimeNews: noticia del día para el reel → \"{Title}\"", Truncate(best.Title, 80));
+
+        return items
+            .OrderByDescending(i => ReferenceEquals(i, best) ? 1 : 0)
+            .ThenByDescending(i => i.PublishedAt)
+            .Take(newsSettings.MaxPerRun)
+            .ToList();
+    }
+
+    /// <summary>Gemini elige la noticia más relevante del pool; fallback heurístico por keywords.</summary>
+    private async Task<AnimeNewsItem> PickMostRelevantAsync(
+        IReadOnlyList<AnimeNewsItem> items, CancellationToken ct)
+    {
+        if (!string.IsNullOrWhiteSpace(aiSettings.ApiKey))
+        {
+            try
+            {
+                var list = string.Join("\n", items.Select((n, i) =>
+                    $"{i}: {n.Title}" + (string.IsNullOrWhiteSpace(n.Summary) ? "" : $" — {Truncate(n.Summary!, 120)}")));
+                var response = await gemini.GenerateAsync(
+                    "Sos el editor jefe de un medio de anime en español para LATAM. De la lista, elegí LA noticia " +
+                    "más relevante/viral para el video destacado del día (estrenos grandes, anuncios bomba, " +
+                    "fallecimientos de figuras, polémicas fuertes pesan más que curiosidades menores). " +
+                    "Respondé SOLO un JSON: {\"index\": <número de la lista>}",
+                    list, useWebSearch: false, ct);
+
+                using var doc = System.Text.Json.JsonDocument.Parse(response);
+                var idx = doc.RootElement.GetProperty("index").GetInt32();
+                if (idx >= 0 && idx < items.Count) return items[idx];
+            }
+            catch (Exception ex) when (!ct.IsCancellationRequested)
+            {
+                logger.LogDebug(ex, "Gemini relevance ranking failed — using heuristic");
+            }
+        }
+
+        // Heurística: mayor score gana; empate → la más nueva (orden de entrada)
+        return items.OrderByDescending(n => HeuristicNewsScore($"{n.Title} {n.Summary}")).First();
+    }
+
+    /// <summary>Score de relevancia por keywords cuando no hay IA. Público para tests.</summary>
+    public static int HeuristicNewsScore(string text)
+    {
+        var t = text.ToLowerInvariant();
+
+        // Anuncios grandes / lanzamientos
+        var score = new[] { "estreno", "estrena", "tráiler", "trailer", "temporada", "película",
+                             "pelicula", "confirmado", "confirma", "anuncia", "live-action", "adaptación", "adaptacion" }
+            .Count(t.Contains) * 3;
+        // Noticias de peso (luto / polémicas fuertes)
+        score += new[] { "fallec", "muere", "murió", "homenaje", "demanda", "cancel" }
+            .Count(t.Contains) * 3;
+        // Franquicias enormes: empujón extra
+        score += new[] { "one piece", "naruto", "dragon ball", "jujutsu", "chainsaw", "attack on titan",
+                          "shingeki", "demon slayer", "kimetsu", "ghibli", "evangelion" }
+            .Count(t.Contains) * 2;
+        // Menores
+        score += new[] { "colaboración", "colaboracion", "evento", "figura", "manga" }
+            .Count(t.Contains);
+
+        return score;
+    }
+
     private async Task PublishItemAsync(AnimeNewsItem item, CancellationToken ct)
     {
         try
         {
-            // Gather all usable article images (cover + in-body) for an image-rich carousel.
-            var images = await GatherImagesAsync(item, ct);
+            // Gather all usable article media (cover + in-body images + trailer).
+            var (images, trailerUrl) = await GatherMediaAsync(item, ct);
 
             // Guarantee every post has a real image — never publish a text-only/flat poster.
             // Checked BEFORE the rewrite so we don't spend a Gemini call on an unpostable item.
@@ -65,8 +171,30 @@ public class AnimeNewsPublisherService(
             // Turn the raw item into finished, original content (AI rewrite, or clean fallback).
             var content = await rewriter.RewriteAsync(item, ct);
 
+            // ── Reel diario PRIMERO (máx 1 por 24 h) ──────────────────────
+            // Si esta noticia gana el reel, NO se publica además el carrusel:
+            // el reel (share_to_feed=true) ya la muestra en el feed con las
+            // mismas slides animadas — dos posts de la misma noticia es spam.
+            string? reelMediaId = null;
+            if (igSettings.NewsReelEnabled)
+            {
+                try
+                {
+                    var reelRecently = await db.AnimeNewsItems.AnyAsync(
+                        n => n.IgReelMediaId != null && n.IgPostedAt >= DateTime.UtcNow.AddHours(-24), ct);
+                    if (!reelRecently)
+                        reelMediaId = await PublishReelAsync(item, content, images, trailerUrl, ct);
+                }
+                catch (Exception ex) when (!ct.IsCancellationRequested)
+                {
+                    logger.LogWarning(ex, "AnimeNews: reel dedup check failed — skipping reel this run");
+                }
+            }
+
             // ── Feed (carousel: cover + content slides + closing CTA) ──
+            // Solo si el reel NO salió — si falló, el carrusel es el respaldo.
             string? feedMediaId = null;
+            if (reelMediaId is null)
             try
             {
                 var slides  = await imageService.GenerateCarouselSlidesAsync(
@@ -102,7 +230,7 @@ public class AnimeNewsPublisherService(
                     slides.Count == 1 ? "post" : $"carousel ({slides.Count} slides)",
                     item.SourceKey, Truncate(item.Title, 60), feedMediaId);
             }
-            catch (Exception ex) when (ex is not TaskCanceledException { CancellationToken.IsCancellationRequested: true })
+            catch (Exception ex) when (!ct.IsCancellationRequested)
             {
                 logger.LogWarning(ex,
                     "AnimeNews: failed to publish feed for {Title}", Truncate(item.Title, 60));
@@ -124,20 +252,21 @@ public class AnimeNewsPublisherService(
                     "AnimeNews: published story for [{Source}] {Title} → {MediaId}",
                     item.SourceKey, Truncate(item.Title, 60), storyMediaId);
             }
-            catch (Exception ex) when (ex is not TaskCanceledException { CancellationToken.IsCancellationRequested: true })
+            catch (Exception ex) when (!ct.IsCancellationRequested)
             {
                 logger.LogWarning(ex,
                     "AnimeNews: failed to publish story for {Title}", Truncate(item.Title, 60));
             }
 
-            // Mark as published (even if only one of the two formats succeeded)
-            var anyPublished = feedMediaId is not null || storyMediaId is not null;
+            // Mark as published (even if only one of the formats succeeded)
+            var anyPublished = feedMediaId is not null || storyMediaId is not null || reelMediaId is not null;
             item.IgPostStatus    = anyPublished ? "published" : "failed";
             item.IgFeedMediaId   = feedMediaId;
             item.IgStoryMediaId  = storyMediaId;
+            item.IgReelMediaId   = reelMediaId;
             item.IgPostedAt      = anyPublished ? DateTime.UtcNow : null;
         }
-        catch (Exception ex) when (ex is not TaskCanceledException { CancellationToken.IsCancellationRequested: true })
+        catch (Exception ex) when (!ct.IsCancellationRequested)
         {
             item.IgPostStatus   = "failed";
             item.ErrorMessage   = ex.Message[..Math.Min(ex.Message.Length, 500)];
@@ -146,6 +275,120 @@ public class AnimeNewsPublisherService(
         finally
         {
             await db.SaveChangesAsync(CancellationToken.None);
+        }
+    }
+
+    // ── Reel de noticias (slideshow + música por IA) ─────────────────────────
+
+    /// <summary>
+    /// Publishes the news Reel as a SLIDESHOW: cover + puntos clave + CTA (las
+    /// mismas escenas editoriales del carrusel, en 9:16) con Ken Burns alternado,
+    /// crossfades y track según el mood. El cover 9:16 va como cover_url del
+    /// reel — sin él, IG usaba el primer frame (negro por el fade-in) como
+    /// miniatura del feed. Best-effort — un fallo acá degrada al carrusel.
+    /// </summary>
+    private async Task<string?> PublishReelAsync(
+        AnimeNewsItem item, NewsContent content, IReadOnlyList<string> images,
+        string? trailerUrl, CancellationToken ct)
+    {
+        try
+        {
+            var music = await musicService.SelectAndDownloadForNewsAsync(
+                content.Headline, content.Lede, item.RssGuid, ct);
+
+            // Cadena de formatos, de mejor a más simple:
+            //   1. Tráiler + titular (si el artículo embebe un PV y se pudo bajar)
+            //   2. Slideshow de escenas (cover + puntos clave + CTA)
+            //   3. Motion-card de capas (tarjeta única)
+            byte[]? videoBytes = null;
+            byte[] coverJpeg;
+
+            if (igSettings.TrailerReelEnabled && trailerUrl is not null)
+            {
+                var clipPath = await trailerService.DownloadAsync(trailerUrl, ct);
+                if (clipPath is not null)
+                {
+                    try
+                    {
+                        var (bg, overlay) = imageService.GenerateVideoReelLayers(content);
+                        videoBytes = await videoService.GenerateTrailerReelAsync(
+                            clipPath, bg, overlay, music?.Mp3, music?.Track.StartSeconds ?? 0, ct);
+                        logger.LogInformation("AnimeNews: reel con TRÁILER para \"{Title}\" ({Url})",
+                            Truncate(item.Title, 60), trailerUrl);
+                    }
+                    catch (Exception ex) when (!ct.IsCancellationRequested && ex is not FfmpegNotAvailableException)
+                    {
+                        logger.LogWarning(ex, "Trailer reel render failed — falling back to slideshow");
+                    }
+                    finally
+                    {
+                        TrailerDownloadService.CleanUp(clipPath);
+                    }
+                }
+            }
+
+            if (videoBytes is null)
+            {
+                try
+                {
+                    var slides = await imageService.GenerateReelSlidesAsync(
+                        item, content, images, maxKeyPoints: 3, ct);
+                    coverJpeg  = slides[0];
+                    videoBytes = await videoService.GenerateSlideshowAsync(
+                        slides, music?.Mp3, music?.Track.StartSeconds ?? 0, ct);
+                }
+                catch (Exception ex) when (!ct.IsCancellationRequested && ex is not FfmpegNotAvailableException)
+                {
+                    logger.LogWarning(ex, "Slideshow render failed — falling back to single motion card");
+                    var (background, overlay) = await imageService.GenerateStoryLayersAsync(item, content, images, ct);
+                    coverJpeg  = await imageService.GenerateStoryAsync(item, content, images, ct);
+                    videoBytes = await videoService.GenerateMotionCardAsync(
+                        background, overlay, music?.Mp3, music?.Track.StartSeconds ?? 0, ct);
+                }
+            }
+            else
+            {
+                // El cover del reel de tráiler es la tarjeta editorial con la foto
+                coverJpeg = await imageService.GenerateStoryAsync(item, content, images, ct);
+            }
+
+            var baseName = $"news-{item.SourceKey}-{item.Id.ToString("N")[..8]}";
+            var videoUrl = await api.UploadVideoAsync(videoBytes, $"{baseName}-reel.mp4", ct);
+
+            // Cover best-effort: si el upload falla, el reel sale igual (sin miniatura linda)
+            string? coverUrl = null;
+            try { coverUrl = await api.UploadImageAsync(coverJpeg, $"{baseName}-reel-cover.jpg", ct); }
+            catch (Exception ex) when (!ct.IsCancellationRequested)
+            {
+                logger.LogWarning(ex, "Reel cover upload failed — publishing without cover_url");
+            }
+
+            var caption = BuildCaption(content);
+            if (music?.Track.Attribution is { } attribution)
+            {
+                // Que la atribución nunca empuje el caption sobre el límite de IG
+                var budget = IgCaptionMaxChars - attribution.Length - 2;
+                if (caption.Length > budget) caption = caption[..budget].TrimEnd();
+                caption = $"{caption}\n\n{attribution}";
+            }
+
+            var containerId = await api.CreateReelContainerAsync(videoUrl, caption, shareToFeed: true, coverUrl, ct);
+            await api.WaitForContainerReadyAsync(containerId, ct, VideoProcessingTimeout);
+            var mediaId = await api.PublishContainerAsync(containerId, ct);
+
+            logger.LogInformation("AnimeNews: published REEL for [{Source}] {Title} → {MediaId}",
+                item.SourceKey, Truncate(item.Title, 60), mediaId);
+            return mediaId;
+        }
+        catch (FfmpegNotAvailableException ex)
+        {
+            logger.LogWarning("AnimeNews: reel skipped — {Reason}", ex.Message);
+            return null;
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            logger.LogWarning(ex, "AnimeNews: failed to publish reel for {Title}", Truncate(item.Title, 60));
+            return null;
         }
     }
 
@@ -196,14 +439,18 @@ public class AnimeNewsPublisherService(
     // ── Image gathering ─────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Collects every usable image for the carousel: the stored cover plus any in-body images
-    /// from the article page (best-effort re-fetch). More images ⇒ a richer, koryugi-style carousel.
+    /// Collects every usable media for the item: the stored cover plus any in-body
+    /// images from the article page (best-effort re-fetch), AND the first embedded
+    /// YouTube trailer if any — el reel lo usa de fondo cuando existe.
     /// </summary>
-    private async Task<IReadOnlyList<string>> GatherImagesAsync(AnimeNewsItem item, CancellationToken ct)
+    private async Task<(IReadOnlyList<string> Images, string? TrailerUrl)> GatherMediaAsync(
+        AnimeNewsItem item, CancellationToken ct)
     {
         var images = new List<string>();
+        string? trailerUrl = null;
         if (!string.IsNullOrWhiteSpace(item.ImageUrl)) images.Add(item.ImageUrl!);
-        if (string.IsNullOrWhiteSpace(item.ArticleUrl)) return images;
+        if (string.IsNullOrWhiteSpace(item.ArticleUrl))
+            return (images, null);
 
         try
         {
@@ -213,14 +460,15 @@ public class AnimeNewsPublisherService(
             {
                 var html = await resp.Content.ReadAsStringAsync(ct);
                 images.AddRange(AnimeNewsFeedService.ExtractArticleImages(html));
+                trailerUrl = AnimeNewsFeedService.ExtractArticleVideoUrl(html);
             }
         }
-        catch (Exception ex) when (ex is not TaskCanceledException { CancellationToken.IsCancellationRequested: true })
+        catch (Exception ex) when (!ct.IsCancellationRequested)
         {
-            logger.LogDebug(ex, "AnimeNews: could not gather extra images for {Title}", Truncate(item.Title, 50));
+            logger.LogDebug(ex, "AnimeNews: could not gather extra media for {Title}", Truncate(item.Title, 50));
         }
 
-        return images.Distinct().Take(6).ToList();
+        return (images.Distinct().Take(6).ToList(), trailerUrl);
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

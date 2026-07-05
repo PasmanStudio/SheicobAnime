@@ -100,6 +100,104 @@ public class MetaGraphApiClient(
         return url;
     }
 
+    // ── Video hosting ─────────────────────────────────────────────────
+
+    /// <summary>
+    /// Uploads video bytes (MP4) to Cloudinary and returns the public HTTPS URL
+    /// that Meta will fetch. Video requires Cloudinary — imgbb no hostea video.
+    /// </summary>
+    public async Task<string> UploadVideoAsync(
+        byte[] videoBytes, string fileName, CancellationToken ct = default)
+    {
+        if (!settings.CloudinaryConfigured)
+            throw new InvalidOperationException(
+                "Video upload requires Cloudinary (imgbb only hosts images) — set Instagram__Cloudinary* secrets");
+
+        using var ms = new MemoryStream(videoBytes);
+        var result = await Cloudinary.UploadAsync(new VideoUploadParams
+        {
+            File      = new FileDescription(fileName, ms),
+            PublicId  = Path.GetFileNameWithoutExtension(fileName),
+            Folder    = string.IsNullOrWhiteSpace(settings.CloudinaryFolder) ? null : settings.CloudinaryFolder,
+            Overwrite = true,
+        }, ct);
+
+        if (result.Error is not null)
+            throw new InvalidOperationException($"Cloudinary video upload failed: {result.Error.Message}");
+
+        var url = result.SecureUrl?.ToString()
+            ?? throw new InvalidOperationException("Cloudinary response missing secure_url");
+
+        logger.LogDebug("Uploaded {File} to Cloudinary: {Url}", fileName, url);
+        return url;
+    }
+
+    // ── Reels ─────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Creates a Reel container (media_type=REELS). The video must already be
+    /// hosted on a public HTTPS URL. share_to_feed=true also surfaces the Reel
+    /// in the profile feed. Video processing is async — poll with
+    /// WaitForContainerReadyAsync using a generous timeout (~5 min).
+    /// </summary>
+    public async Task<string> CreateReelContainerAsync(
+        string videoUrl, string? caption, bool shareToFeed = true,
+        string? coverUrl = null, CancellationToken ct = default)
+    {
+        var fields = new Dictionary<string, string>
+        {
+            ["media_type"]    = "REELS",
+            ["video_url"]     = videoUrl,
+            ["share_to_feed"] = shareToFeed ? "true" : "false",
+            ["access_token"]  = settings.AccessToken
+        };
+        if (!string.IsNullOrWhiteSpace(caption))
+            fields["caption"] = caption;
+        // Sin cover, IG usa el primer frame — que en nuestros reels es NEGRO
+        // (el video abre con fade-in desde negro) → la miniatura del feed salía
+        // negra. El cover es la tarjeta 9:16 (JPEG ≤8MB según specs).
+        if (!string.IsNullOrWhiteSpace(coverUrl))
+            fields["cover_url"] = coverUrl;
+
+        using var form = new FormUrlEncodedContent(fields);
+        var resp = await Http.PostAsync($"{BaseUrl}/{settings.IgUserId}/media", form, ct);
+        var body = await resp.Content.ReadAsStringAsync(ct);
+
+        if (!resp.IsSuccessStatusCode)
+            throw new InvalidOperationException($"CreateReel failed ({resp.StatusCode}): {body}");
+
+        using var doc = JsonDocument.Parse(body);
+        return doc.RootElement.GetProperty("id").GetString()
+            ?? throw new InvalidOperationException("Reel container response missing id");
+    }
+
+    /// <summary>
+    /// Creates a video Story container with a link sticker (media_type=STORIES +
+    /// video_url). Video stories: 3–60 s, máx 100MB, mismos códecs que Reels.
+    /// </summary>
+    public async Task<string> CreateVideoStoryContainerAsync(
+        string videoUrl, string linkStickerUrl, CancellationToken ct = default)
+    {
+        var fields = new Dictionary<string, string>
+        {
+            ["media_type"]       = "STORIES",
+            ["video_url"]        = videoUrl,
+            ["link_sticker_url"] = linkStickerUrl,
+            ["access_token"]     = settings.AccessToken
+        };
+
+        using var form = new FormUrlEncodedContent(fields);
+        var resp = await Http.PostAsync($"{BaseUrl}/{settings.IgUserId}/media", form, ct);
+        var body = await resp.Content.ReadAsStringAsync(ct);
+
+        if (!resp.IsSuccessStatusCode)
+            throw new InvalidOperationException($"CreateVideoStory failed ({resp.StatusCode}): {body}");
+
+        using var doc = JsonDocument.Parse(body);
+        return doc.RootElement.GetProperty("id").GetString()
+            ?? throw new InvalidOperationException("Video story container response missing id");
+    }
+
     // ── Carousel workflow ─────────────────────────────────────────────
 
     /// <summary>
@@ -225,15 +323,18 @@ public class MetaGraphApiClient(
     // ── Shared publish flow ───────────────────────────────────────────
 
     /// <summary>
-    /// Polls the container until its status is FINISHED (up to ~90 s).
+    /// Polls the container until its status is FINISHED (default ~90 s — pass a
+    /// longer timeout for video: Meta puede tardar varios minutos en procesarlo).
     /// Throws if it reaches ERROR or EXPIRED.
     /// </summary>
-    public async Task WaitForContainerReadyAsync(string containerId, CancellationToken ct = default)
+    public async Task WaitForContainerReadyAsync(
+        string containerId, CancellationToken ct = default, TimeSpan? timeout = null)
     {
         var url = $"{BaseUrl}/{containerId}"
                 + $"?fields=status_code&access_token={Uri.EscapeDataString(settings.AccessToken)}";
 
-        for (var attempt = 0; attempt < 18; attempt++)
+        var attempts = (int)Math.Ceiling((timeout ?? TimeSpan.FromSeconds(90)).TotalSeconds / 5);
+        for (var attempt = 0; attempt < attempts; attempt++)
         {
             await Task.Delay(TimeSpan.FromSeconds(5), ct);
 
@@ -256,7 +357,8 @@ public class MetaGraphApiClient(
             }
         }
 
-        throw new TimeoutException($"Container {containerId} did not finish within 90 seconds");
+        throw new TimeoutException(
+            $"Container {containerId} did not finish within {(timeout ?? TimeSpan.FromSeconds(90)).TotalSeconds:F0} seconds");
     }
 
     /// <summary>Publishes a ready container and returns the published IG Media ID.</summary>
