@@ -403,22 +403,37 @@ public class AnimeNewsPublisherService(
 
     /// <summary>
     /// Builds the Instagram caption from the already-rewritten content: a headline line, the
-    /// original editorial body (the rewrite — never the source text), a CTA, smart hashtags
-    /// and the handle. Short by design, like koryugi/kamiread — no wall of copied text.
+    /// original editorial body (the rewrite — never the source text; ahora más largo/profundo
+    /// que las slides), a CTA, smart hashtags and the handle. El cuerpo se presupuesta para que
+    /// los hashtags y el @ nunca queden fuera del límite de IG (2200), incluso con la atribución
+    /// de música que se agrega después.
     /// </summary>
     private string BuildCaption(NewsContent content)
     {
-        var sb = new StringBuilder();
-        sb.Append("📰 ").Append(content.Headline.Trim()).Append("\n\n");
+        var header = $"📰 {content.Headline.Trim()}\n\n";
 
-        if (!string.IsNullOrWhiteSpace(content.Caption))
-            sb.Append(content.Caption.Trim()).Append("\n\n");
-
-        sb.Append("🔔 Seguinos para más noticias de anime\n");
-        sb.Append("▶️ Mirá anime gratis · Link en la bio\n\n");
-        sb.Append(BuildHashtags(content.Hashtags));
+        // El "pie" fijo (CTA + hashtags + handle) se arma primero para saber cuánto
+        // espacio real queda para el cuerpo — así un caption largo nunca corta los
+        // hashtags. Reservamos además un margen para la atribución de música que
+        // PublishReelAsync agrega al final cuando el track es CC.
+        var tail = new StringBuilder();
+        tail.Append("🔔 Seguinos para más noticias de anime\n");
+        tail.Append("▶️ Mirá anime gratis · Link en la bio\n\n");
+        tail.Append(BuildHashtags(content.Hashtags));
         if (!string.IsNullOrWhiteSpace(igSettings.Handle))
-            sb.Append("\n\n@").Append(igSettings.Handle);
+            tail.Append("\n\n@").Append(igSettings.Handle);
+
+        const int attributionMargin = 90;
+        var bodyBudget = IgCaptionMaxChars - header.Length - tail.Length - attributionMargin;
+
+        var body = content.Caption?.Trim() ?? string.Empty;
+        if (bodyBudget > 0 && body.Length > bodyBudget)
+            body = body[..bodyBudget].TrimEnd();
+
+        var sb = new StringBuilder();
+        sb.Append(header);
+        if (body.Length > 0) sb.Append(body).Append("\n\n");
+        sb.Append(tail);
 
         var result = sb.ToString();
         return result.Length <= IgCaptionMaxChars ? result : result[..IgCaptionMaxChars].TrimEnd();
