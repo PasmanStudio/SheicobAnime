@@ -250,11 +250,15 @@ public sealed class SeriesImportService(
     /// Picks the best candidate for a free-text query: most query tokens present in the
     /// slug, then the shortest (most specific base) slug, then original relevance order.
     /// E.g. "frieren" → "sousou-no-frieren" over "sousou-no-frieren-2nd-season".
+    ///
+    /// Tokeniza partiendo por CUALQUIER caracter no alfanumérico (no solo espacio/guion):
+    /// antes "Mushoku Tensei III: …" dejaba el token "iii:" con dos puntos, que nunca
+    /// matcheaba el "iii" del slug → empataba con la temporada 1 y el desempate por
+    /// slug más corto elegía la 1 en vez de la 3. Público para test.
     /// </summary>
-    private static string PickBest(string query, IReadOnlyList<SourceSeriesRef> results)
+    public static string PickBest(string query, IReadOnlyList<SourceSeriesRef> results)
     {
-        var tokens = query.ToLowerInvariant()
-            .Split([' ', '-'], StringSplitOptions.RemoveEmptyEntries);
+        var tokens = Tokenize(query);
 
         return results
             .Select((r, idx) => (r.Slug, idx, norm: r.Slug.Replace('-', ' ').ToLowerInvariant()))
@@ -263,4 +267,10 @@ public sealed class SeriesImportService(
             .ThenBy(x => x.idx)
             .First().Slug;
     }
+
+    private static string[] Tokenize(string text) =>
+        System.Text.RegularExpressions.Regex
+            .Split(text.ToLowerInvariant(), @"[^a-z0-9]+")
+            .Where(t => t.Length > 0)
+            .ToArray();
 }

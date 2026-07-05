@@ -48,9 +48,100 @@ public class AnimeNewsImageService(
     public async Task<byte[]> GenerateStoryAsync(
         AnimeNewsItem item, NewsContent content, IReadOnlyList<string> imageUrls, CancellationToken ct = default)
     {
-        var photo = await TryDownloadPhotoAsync(PrimaryImage(item, imageUrls), ct);
-        try { return RenderCover(content, photo, 1080, 1920, swipeHint: false); }
-        finally { photo?.Dispose(); }
+        using var photo = await TryDownloadPhotoAsync(PrimaryImage(item, imageUrls), ct);
+        return RenderCover(content, photo, 1080, 1920, swipeHint: false);
+    }
+
+    /// <summary>
+    /// Slides 9:16 (1080×1920) para el Reel-slideshow de noticias: cover +
+    /// hasta <paramref name="maxKeyPoints"/> puntos clave + CTA de cierre —
+    /// el mismo contenido editorial del carrusel pero en formato vertical.
+    /// ffmpeg las encadena con Ken Burns alternado y crossfades.
+    /// </summary>
+    public async Task<List<byte[]>> GenerateReelSlidesAsync(
+        AnimeNewsItem item, NewsContent content, IReadOnlyList<string> imageUrls,
+        int maxKeyPoints = 3, CancellationToken ct = default)
+    {
+        const int width = 1080, height = 1920;
+        var urls   = BuildImageList(item, imageUrls);
+        var photos = await DownloadPhotosAsync(urls, ct);
+        try
+        {
+            var keyPoints = content.KeyPoints.Take(Math.Max(0, maxKeyPoints)).ToList();
+
+            var slides = new List<byte[]>(keyPoints.Count + 2)
+            {
+                RenderCover(content, photos.Count > 0 ? photos[0] : null, width, height, swipeHint: false),
+            };
+
+            for (int i = 0; i < keyPoints.Count; i++)
+            {
+                // Mismo cycling de fotos/encuadres que el carrusel
+                var photo = photos.Count > 0 ? photos[(i + 1) % photos.Count] : null;
+                var focus = (CropFocus)(i % 5);
+                slides.Add(RenderKeyPoint(keyPoints[i], photo, focus, width, height));
+            }
+
+            slides.Add(RenderCta(width, height));
+            return slides;
+        }
+        finally { foreach (var p in photos) p.Dispose(); }
+    }
+
+    /// <summary>
+    /// Capas para el Reel "tráiler + titular": fondo abismo SIN foto (el video
+    /// es el protagonista — glow + scrim para que el texto respire) y el mismo
+    /// overlay de texto de marca. El tráiler va como banda central encima del
+    /// fondo, el texto encima de todo.
+    /// </summary>
+    public (byte[] Background, byte[] OverlayPng) GenerateVideoReelLayers(NewsContent content)
+    {
+        const int width = 1080, height = 1920;
+
+        using var bgSurface = SKSurface.Create(new SKImageInfo(width, height));
+        var bg = bgSurface.Canvas;
+        bg.Clear(SKColors.Black);
+        DrawBackground(bg, width, height);
+        DrawCenterGlow(bg, width, height);
+        DrawBottomScrim(bg, width, height);
+
+        using var ovSurface = SKSurface.Create(
+            new SKImageInfo(width, height, SKColorType.Rgba8888, SKAlphaType.Premul));
+        var ov = ovSurface.Canvas;
+        ov.Clear(SKColors.Transparent);
+        DrawCoverText(ov, content, width, height, swipeHint: false);
+
+        return (Encode(bgSurface), EncodePng(ovSurface));
+    }
+
+    /// <summary>
+    /// Capas separadas del cover 9:16 para el Reel de noticias (motion graphics):
+    /// fondo (abismo + foto + scrim, JPEG) y overlay (titular/lede/kicker/logo
+    /// sobre transparente, PNG con alpha). ffmpeg las anima por separado — Ken
+    /// Burns en la foto, slide-in con fade en el texto, que queda siempre nítido.
+    /// </summary>
+    public async Task<(byte[] Background, byte[] OverlayPng)> GenerateStoryLayersAsync(
+        AnimeNewsItem item, NewsContent content, IReadOnlyList<string> imageUrls, CancellationToken ct = default)
+    {
+        const int width = 1080, height = 1920;
+        using var photo = await TryDownloadPhotoAsync(PrimaryImage(item, imageUrls), ct);
+
+        // ── Fondo ──
+        using var bgSurface = SKSurface.Create(new SKImageInfo(width, height));
+        var bg = bgSurface.Canvas;
+        bg.Clear(SKColors.Black);
+        DrawBackground(bg, width, height);
+        if (photo is not null) DrawPhotoCover(bg, photo, width, height, CropFocus.Center);
+        DrawBottomScrim(bg, width, height);
+
+        // ── Overlay de texto (transparente) ──
+        using var ovSurface = SKSurface.Create(
+            new SKImageInfo(width, height, SKColorType.Rgba8888, SKAlphaType.Premul));
+        var ov = ovSurface.Canvas;
+        ov.Clear(SKColors.Transparent);
+        DrawCoverText(ov, content, width, height, swipeHint: false);
+
+        return (Encode(bgSurface), EncodePng(ovSurface));
     }
 
     /// <summary>
@@ -100,6 +191,17 @@ public class AnimeNewsImageService(
         if (photo is not null) DrawPhotoCover(canvas, photo, width, height, CropFocus.Center);
         DrawBottomScrim(canvas, width, height);
 
+        DrawCoverText(canvas, content, width, height, swipeHint);
+
+        return Encode(surface);
+    }
+
+    /// <summary>
+    /// Todo el texto/branding del cover (logo, kicker, titular, lede, swipe hint).
+    /// Separado del fondo para que el Reel lo anime como capa independiente.
+    /// </summary>
+    private static void DrawCoverText(SKCanvas canvas, NewsContent content, int width, int height, bool swipeHint)
+    {
         float scale  = width / 1080f;
         float x      = width * 0.07f;
         float bottom = height - height * 0.07f;
@@ -133,15 +235,13 @@ public class AnimeNewsImageService(
             - 22 * scale;
 
         DrawKicker(canvas, x, y, scale, "NOTICIAS");
-
-        return Encode(surface);
     }
 
     // ── Key-point slide (photo + one big headline; abismo panel as fallback) ─────
 
-    private static byte[] RenderKeyPoint(string headline, SKBitmap? photo, CropFocus focus)
+    private static byte[] RenderKeyPoint(string headline, SKBitmap? photo, CropFocus focus,
+        int width = 1080, int height = 1080)
     {
-        const int width = 1080, height = 1080;
         using var surface = SKSurface.Create(new SKImageInfo(width, height));
         var canvas = surface.Canvas;
         canvas.Clear(SKColors.Black);
@@ -194,9 +294,8 @@ public class AnimeNewsImageService(
 
     // ── Closing CTA slide ────────────────────────────────────────────────────────
 
-    private static byte[] RenderCta()
+    private static byte[] RenderCta(int width = 1080, int height = 1080)
     {
-        const int width = 1080, height = 1080;
         using var surface = SKSurface.Create(new SKImageInfo(width, height));
         var canvas = surface.Canvas;
         canvas.Clear(SKColors.Black);
@@ -542,6 +641,13 @@ public class AnimeNewsImageService(
     }
 
     // ── Resource loading ─────────────────────────────────────────────────────────
+
+    private static byte[] EncodePng(SKSurface surface)
+    {
+        using var image = surface.Snapshot();
+        using var data  = image.Encode(SKEncodedImageFormat.Png, 100);
+        return data.ToArray();
+    }
 
     private static byte[] Encode(SKSurface surface)
     {

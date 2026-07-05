@@ -35,25 +35,65 @@ public class InstagramImageService(
         Series series, Episode episode, CancellationToken ct = default)
         => await GenerateAsync(series, episode, 1080, 1080, isStory: false, ct);
 
+    /// <summary>
+    /// Capas separadas de la story para el Reel animado (motion graphics):
+    /// fondo (gradiente + arte + scrim, JPEG) y overlay (SOLO texto/branding
+    /// sobre transparente, PNG con alpha). ffmpeg las anima independientes:
+    /// Ken Burns en el fondo, slide-in con fade en el texto — el texto queda
+    /// nítido siempre (nunca se zoomea).
+    /// </summary>
+    public async Task<(byte[] Background, byte[] OverlayPng)> GenerateStoryLayersAsync(
+        Series series, Episode episode, CancellationToken ct = default)
+    {
+        const int width = 1080, height = 1920;
+        var coverBitmap = await TryDownloadCoverAsync(episode.ThumbnailUrl ?? series.CoverUrl, ct);
+
+        // ── Fondo ──
+        using var bgSurface = SKSurface.Create(new SKImageInfo(width, height));
+        var bg = bgSurface.Canvas;
+        bg.Clear(SKColors.Black);
+        DrawBackground(bg, width, height);
+        if (coverBitmap is not null)
+        {
+            using (coverBitmap)
+                DrawCoverImage(bg, coverBitmap, width, height, isStory: true);
+        }
+        DrawGradientOverlay(bg, width, height, isStory: true);
+        using var bgImage = bgSurface.Snapshot();
+        using var bgData  = bgImage.Encode(SKEncodedImageFormat.Jpeg, 92);
+
+        // ── Overlay de texto (transparente) ──
+        using var ovSurface = SKSurface.Create(
+            new SKImageInfo(width, height, SKColorType.Rgba8888, SKAlphaType.Premul));
+        var ov = ovSurface.Canvas;
+        ov.Clear(SKColors.Transparent);
+        DrawTextContent(ov, series, episode, width, height, isStory: true);
+        using var ovImage = ovSurface.Snapshot();
+        using var ovData  = ovImage.Encode(SKEncodedImageFormat.Png, 100);
+
+        return (bgData.ToArray(), ovData.ToArray());
+    }
+
+    private async Task<SKBitmap?> TryDownloadCoverAsync(string? imageUrl, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(imageUrl)) return null;
+        try
+        {
+            var http = httpClientFactory.CreateClient("probe");
+            var bytes = await http.GetByteArrayAsync(imageUrl, ct);
+            return SKBitmap.Decode(bytes);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Could not download cover image from {Url} — using gradient fallback", imageUrl);
+            return null;
+        }
+    }
+
     private async Task<byte[]> GenerateAsync(
         Series series, Episode episode, int width, int height, bool isStory, CancellationToken ct)
     {
-        SKBitmap? coverBitmap = null;
-        var imageUrl = episode.ThumbnailUrl ?? series.CoverUrl;
-
-        if (!string.IsNullOrWhiteSpace(imageUrl))
-        {
-            try
-            {
-                var http = httpClientFactory.CreateClient("probe");
-                var bytes = await http.GetByteArrayAsync(imageUrl, ct);
-                coverBitmap = SKBitmap.Decode(bytes);
-            }
-            catch (Exception ex)
-            {
-                logger.LogWarning(ex, "Could not download cover image from {Url} — using gradient fallback", imageUrl);
-            }
-        }
+        var coverBitmap = await TryDownloadCoverAsync(episode.ThumbnailUrl ?? series.CoverUrl, ct);
 
         using var surface = SKSurface.Create(new SKImageInfo(width, height));
         var canvas = surface.Canvas;

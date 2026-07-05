@@ -130,10 +130,14 @@ public partial class AnimeNewsFeedService(
     }
 
     /// <summary>
-    /// Returns pending items that have an image (up to MaxPerRun), ordered by publish date desc.
+    /// Returns pending items that have an image, ordered by publish date desc.
     /// Items without images are permanently skipped and never returned here.
+    /// <paramref name="take"/> overrides MaxPerRun — el publisher pide un pool
+    /// más grande cuando el Reel del día está disponible, para elegir la
+    /// noticia más relevante (no la más nueva) y procesarla primero.
     /// </summary>
-    public async Task<List<AnimeNewsItem>> GetPendingItemsAsync(CancellationToken ct = default)
+    public async Task<List<AnimeNewsItem>> GetPendingItemsAsync(
+        CancellationToken ct = default, int? take = null)
     {
         var cutoff = DateTime.UtcNow.AddHours(-settings.MaxAgeHours);
         return await db.AnimeNewsItems
@@ -141,9 +145,20 @@ public partial class AnimeNewsFeedService(
                      && n.PublishedAt >= cutoff
                      && n.ImageUrl != null)
             .OrderByDescending(n => n.PublishedAt)
-            .Take(settings.MaxPerRun)
+            .Take(take ?? settings.MaxPerRun)
             .ToListAsync(ct);
     }
+
+    /// <summary>
+    /// Repara "&amp;" sueltos antes de parsear. Confirmado en vivo (jul 2026):
+    /// el feed de kudasai (WordPress) a veces no escapa "&amp;" en el &lt;title&gt;
+    /// (p. ej. "Monogatari Series: Off &amp; Monster Season…"), y eso vuelve el XML
+    /// inválido — <see cref="System.Xml.Linq.XDocument.Parse(string)"/> tira
+    /// XmlException/EntityName y se pierde el feed ENTERO, no solo ese item.
+    /// Público + estático para poder testear con el string real que rompía sin
+    /// mockear HTTP. No toca entidades ya bien formadas (&amp;amp;, &amp;#39;, etc.).
+    /// </summary>
+    public static string SanitizeXml(string xml) => UnescapedAmpersand().Replace(xml, "&amp;");
 
     // ── RSS parsing ──────────────────────────────────────────────────────────
 
@@ -156,6 +171,7 @@ public partial class AnimeNewsFeedService(
 
         // Some feeds have a BOM or whitespace before the XML declaration — trim it.
         xml = xml.TrimStart('﻿', '​', '\r', '\n', ' ');
+        xml = SanitizeXml(xml);
         XDocument doc;
         try { doc = XDocument.Parse(xml); }
         catch (Exception ex)
@@ -488,6 +504,36 @@ public partial class AnimeNewsFeedService(
     // A leading inline ad label that got glued to a paragraph's text.
     [GeneratedRegex(@"^\s*(ADS|ADVERTISEMENT|PUBLICIDAD)\b[\s:.\-–—]*", RegexOptions.IgnoreCase)]
     private static partial Regex LeadingAdRegex();
+
+    // "&" suelto (no arranca amp;/lt;/gt;/quot;/apos;/#123;/#xAB;) → XML inválido.
+    // Confirmado en el feed de kudasai: WordPress no escapa "&" en algunos títulos.
+    [GeneratedRegex(@"&(?!amp;|lt;|gt;|quot;|apos;|#\d+;|#x[0-9a-fA-F]+;)")]
+    private static partial Regex UnescapedAmpersand();
+
+    // Embed clásico + lazy-embed de kudasai (el id vive en el thumbnail /vi/{id}/)
+    // + youtu.be + watch?v=. NO matchea links de canal (youtube.com/c/...).
+    [GeneratedRegex(
+        @"youtube(?:-nocookie)?\.com/embed/([A-Za-z0-9_-]{6,15})" +
+        @"|youtube\.com/vi/([A-Za-z0-9_-]{6,15})" +
+        @"|youtu\.be/([A-Za-z0-9_-]{6,15})" +
+        @"|youtube\.com/watch\?v=([A-Za-z0-9_-]{6,15})",
+        RegexOptions.IgnoreCase)]
+    private static partial Regex YouTubeVideoRegex();
+
+    /// <summary>
+    /// Primer tráiler de YouTube embebido en el artículo (los estudios los
+    /// publican para difusión y las noticias de anime los embeben casi siempre).
+    /// Devuelve la URL watch canónica o null. Público para tests.
+    /// </summary>
+    public static string? ExtractArticleVideoUrl(string html)
+    {
+        var m = YouTubeVideoRegex().Match(html);
+        if (!m.Success) return null;
+
+        var id = m.Groups.Cast<System.Text.RegularExpressions.Group>()
+            .Skip(1).FirstOrDefault(g => g.Success)?.Value;
+        return id is null ? null : $"https://www.youtube.com/watch?v={id}";
+    }
 
     // ── Cross-feed duplicate merge ───────────────────────────────────────────
 

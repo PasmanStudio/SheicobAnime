@@ -56,7 +56,10 @@ public class NewsRewriteService(
             logger.LogWarning("AiRewrite: model output unusable for \"{Title}\" — using heuristic",
                 Truncate(item.Title, 50));
         }
-        catch (Exception ex) when (ex is not TaskCanceledException { CancellationToken.IsCancellationRequested: true })
+        // Solo re-lanza si el CALLER canceló. El timeout de Gemini (HttpClient)
+        // llega como TaskCanceledException con token interno cancelado — se traga
+        // y cae al heurístico (si no, tumbaba TODO el news pipeline por un timeout).
+        catch (Exception ex) when (!ct.IsCancellationRequested)
         {
             logger.LogWarning(ex, "AiRewrite: rewrite failed for \"{Title}\" — using heuristic",
                 Truncate(item.Title, 50));
