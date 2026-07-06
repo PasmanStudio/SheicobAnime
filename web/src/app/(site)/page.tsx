@@ -16,10 +16,11 @@ import type { Metadata } from "next";
 // ISR: el HTML del home se cachea en el edge (Cloudflare KV). La frescura real la
 // da la PURGA on-demand (revalidateTag("content") desde el scraper invalida también
 // el cache de página, no solo los fetches), así que el episodio nuevo aparece al
-// instante. Este `revalidate` es solo el respaldo de fondo: 1800s (antes 120s) para
-// no quemar el free tier de KV (1000 writes/día) — cada regeneración por TTL es un
-// write. Las secciones por-usuario son client components y se mantienen frescas.
-export const revalidate = 1800;
+// instante. Este `revalidate` es solo el respaldo de fondo: 3600s (1h) para no
+// quemar el free tier de KV (1000 writes/día) — cada regeneración por TTL es un
+// write, y el home es de las rutas más golpeadas. Las secciones por-usuario son
+// client components y se mantienen frescas.
+export const revalidate = 3600;
 
 export const metadata: Metadata = {
   title: "SheicobAnime — Mira anime online en español",
