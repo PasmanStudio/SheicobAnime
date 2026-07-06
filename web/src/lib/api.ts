@@ -33,15 +33,20 @@ const FETCH_TIMEOUT_MS = 12_000;
 //   contenido nuevo al instante, sin esperar el TTL. Verificado en prod (log
 //   "✅ Revalidate: tag 'content' purgado"). Requiere el tag cache KV
 //   (NEXT_TAG_CACHE_KV en wrangler.jsonc + open-next.config.ts).
-// - `revalidate: 900` → TTL de RESPALDO (15 min), no la vía de frescura. Solo
-//   importa si la purga on-demand falla. Antes era 60s, pero cada regeneración por
-//   TTL es un write a KV: con 60s + tráfico, cada ruta regeneraba ~1440 veces/día
-//   aunque el contenido no cambiara, reventando el free tier de KV (1000 puts/día).
-//   Como la purga es instantánea, el TTL puede ser alto sin demorar episodios nuevos.
+// - `revalidate: 3600` → TTL de RESPALDO (1h), no la vía de frescura. Solo
+//   importa si la purga on-demand falla, o para ediciones manuales de la DB que
+//   no disparan purga (aparecen dentro de 1h; forzables con POST a /api/revalidate).
+//   Cada regeneración por TTL es un write a KV y el free tier son 1000 puts/día:
+//   a 900s (15 min) los endpoints calientes del home (getRecentEpisodes, getSeries)
+//   regeneraban ~96 veces/día CADA UNO → se agotaba la cuota → 429 en los puts →
+//   ISR sin poder refrescar y el worker cayendo a renders pesados = Error 1102
+//   (peor cerca de las 00:00 UTC, justo antes del reset diario). A 3600s eso baja
+//   4× sin costo de frescura de contenido nuevo, porque la purga on-demand es
+//   instantánea. Se puede subir más (7200/21600) si hace falta más margen.
 //   (En Next, el revalidate más bajo entre página y sus fetches manda, así que
 //   esto fija la regeneración de respaldo de toda la ruta sin tocar cada page.tsx.)
 const CONTENT_CACHE: { next: NextFetchRequestConfig } = {
-  next: { revalidate: 900, tags: ["content"] },
+  next: { revalidate: 3600, tags: ["content"] },
 };
 
 // ─── Error class ─────────────────────────────────────
@@ -241,8 +246,9 @@ export async function getEpisodeSitemapPage(
 }
 
 export async function getEpisodeMirrorsBySlug(slug: string, episodeNumber: number): Promise<Mirror[]> {
-  // Los mirrors cambian cuando el scraper sube a hosts nuevos (player4me, etc.) —
-  // por eso NO se cachean 1h: TTL 60s + tag "content" para refresco on-demand.
+  // Los mirrors cambian cuando el scraper sube a hosts nuevos (player4me, etc.).
+  // Usan CONTENT_CACHE: el tag "content" los refresca on-demand al instante cuando
+  // el scraper purga; el TTL de respaldo (1h) solo aplica a cambios sin purga.
   return request<Mirror[]>(
     `/series/${encodeURIComponent(slug)}/episodes/${episodeNumber}/mirrors`,
     CONTENT_CACHE
