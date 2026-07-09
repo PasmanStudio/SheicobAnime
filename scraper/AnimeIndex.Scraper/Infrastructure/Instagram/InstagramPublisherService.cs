@@ -244,13 +244,21 @@ public class InstagramPublisherService(
 
         try
         {
+            // Música por IA (mood de la serie → track propio/CC). null = reel
+            // silencioso. Va PRIMERO: el crédito CC BY se dibuja como texto
+            // chico dentro del overlay del video (nunca en el caption).
+            var music = settings.ReelMusicEnabled
+                ? await musicService.SelectAndDownloadAsync(episode.Series, ct)
+                : null;
+
             // Capas para motion graphics (fondo + texto animados por separado);
             // si el render por capas falla, tarjeta plana con zoom como fallback.
             byte[] background;
             byte[]? overlay;
             try
             {
-                (background, overlay) = await imageService.GenerateStoryLayersAsync(episode.Series, episode, ct);
+                (background, overlay) = await imageService.GenerateStoryLayersAsync(
+                    episode.Series, episode, music?.Track.Attribution, ct);
             }
             catch (Exception ex) when (!ct.IsCancellationRequested)
             {
@@ -258,11 +266,6 @@ public class InstagramPublisherService(
                 background = await imageService.GenerateStoryAsync(episode.Series, episode, ct);
                 overlay = null;
             }
-
-            // Música por IA (mood de la serie → track propio/CC). null = reel silencioso.
-            var music = settings.ReelMusicEnabled
-                ? await musicService.SelectAndDownloadAsync(episode.Series, ct)
-                : null;
 
             var videoBytes = await videoService.GenerateMotionCardAsync(
                 background, overlay, music?.Mp3, music?.Track.StartSeconds ?? 0, ct);
@@ -272,10 +275,6 @@ public class InstagramPublisherService(
 
             var items   = new List<(Series, Episode)> { (episode.Series, episode) };
             var caption = captionGen.GenerateCarouselCaption(items);
-            // Última línea del caption: atribución CC BY (obligatoria) o el
-            // sello "música original" de los tracks propios
-            if (music?.Track.Attribution is { } attribution)
-                caption = $"{caption}\n\n{attribution}";
 
             var containerId = await api.CreateReelContainerAsync(videoUrl, caption, shareToFeed: true, ct: ct);
             await api.WaitForContainerReadyAsync(containerId, ct, VideoProcessingTimeout);

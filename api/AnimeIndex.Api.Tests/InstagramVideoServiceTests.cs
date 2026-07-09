@@ -242,8 +242,15 @@ public class ReelMusicServiceTests
 
     [Fact]
     public void Library_CcTracksCarryRequiredAttribution()
-        => Assert.All(ReelMusicService.Library,
-            t => Assert.Contains("CC BY 4.0", t.Attribution));
+    {
+        // El crédito CC BY es obligatorio — va como texto chico DENTRO del
+        // video (nunca en el caption), sin emoji (SkiaSharp no tiene el glifo).
+        Assert.All(ReelMusicService.Library, t =>
+        {
+            Assert.Contains("CC BY 4.0", t.Attribution);
+            Assert.DoesNotContain("🎵", t.Attribution);
+        });
+    }
 
     [Theory]
     // Convención {mood}-{n} desde el public id de Cloudinary
@@ -257,8 +264,8 @@ public class ReelMusicServiceTests
 
         Assert.NotNull(track);
         Assert.Equal(expectedMood, track.Mood);
-        // Track propio → sello de marca, no CC
-        Assert.Equal(ReelMusicService.OwnMusicAttribution, track.Attribution);
+        // Track propio → sin crédito (no hay obligación legal ni línea de marca)
+        Assert.Null(track.Attribution);
     }
 
     [Fact]
@@ -391,5 +398,123 @@ public class NewsRelevanceTests
 
         Assert.True(estreno > figura, $"estreno ({estreno}) debería superar a figura ({figura})");
         Assert.True(fallecido > figura, $"luto ({fallecido}) debería superar a figura ({figura})");
+    }
+}
+
+public class TrailerSearchTests
+{
+    private static string Line(string id, string duration, string title, string channel) =>
+        $"{id}|~|{duration}|~|{title}|~|{channel}";
+
+    [Fact]
+    public void PickBestSearchResult_PrefersOfficialTrailerOverFanContent()
+    {
+        var best = TrailerDownloadService.PickBestSearchResult(
+        [
+            Line("fanvid00001", "600", "Sword Art Online explicado en 10 minutos", "OtakuFan"),
+            Line("official0001", "95", "Sword Art Online Integral Domain Official Trailer", "Aniplex"),
+            Line("reaction001", "120", "REACCIÓN al trailer de Sword Art Online", "ReactBro"),
+        ]);
+
+        Assert.Equal("official0001", best);
+    }
+
+    [Fact]
+    public void PickBestSearchResult_RejectsLongVideosEvenWithTrailerInTitle()
+    {
+        // >6 min no es un tráiler (episodio/compilado/live), aunque el título diga trailer
+        Assert.Null(TrailerDownloadService.PickBestSearchResult(
+            [Line("longvideo001", "1800", "Todos los trailers de anime 2028", "Recopilador")]));
+    }
+
+    [Fact]
+    public void PickBestSearchResult_RequiresTrailerSignalInTitle()
+    {
+        // Sin señal de tráiler en el título no hay confianza — mejor slideshow
+        // que incrustar el video equivocado
+        Assert.Null(TrailerDownloadService.PickBestSearchResult(
+            [Line("randomvid001", "90", "Sword Art Online opening full", "MusicChannel")]));
+        Assert.Null(TrailerDownloadService.PickBestSearchResult([]));
+    }
+
+    [Fact]
+    public void PickBestSearchResult_RealWorldSearch_PicksOfficialUploadWithoutTrailerWord()
+    {
+        // Resultados REALES de "ytsearch6:Sword Art Online Integral Domain official
+        // trailer" (jul-2026). El teaser oficial de Aniplex NO dice "trailer" en el
+        // título — el bonus por canal oficial + el orden de relevancia lo rescatan
+        // frente al re-upload y al trailer fan-made.
+        var best = TrailerDownloadService.PickBestSearchResult(
+        [
+            Line("UHWMxtRivt8", "17", "Sword Art Online the Movie - Integral Domain -  |  COMING 2028", "Aniplex USA"),
+            Line("FwKFcfPK4m8", "238", "SWORD ART ONLINE : INTEGRAL DOMAIN TO RELEASE IN 2028", "Adam's Anime World"),
+            Line("a2_XZColIY4", "17", "Sword Art Online Integral Domain Anime Movie - Official Teaser", "Anime Officials Trailer"),
+            Line("jcsFEbam_aY", "16", "Sword Art Online the Movie: Integral Domain Official Trailer #anime", "KingYan Animation Studio"),
+            Line("tYiugIxhRLA", "484", "EVERYTHING about the NEW SAO MOVIE | Integral Domain", "iFedeLima YT"),
+            Line("Q0C91P7q5iM", "97", "Sword Art Online New Movie Integral Domain Release Date & Latest Update", "ANIKINGZ"),
+        ]);
+
+        Assert.Equal("UHWMxtRivt8", best);
+    }
+
+    [Fact]
+    public void PickBestSearchResult_AcceptsJapanesePvMarkers()
+    {
+        var best = TrailerDownloadService.PickBestSearchResult(
+        [
+            Line("japanesepv01", "NA", "TVアニメ『葬送のフリーレン』本予告", "TOHO animation チャンネル"),
+        ]);
+
+        Assert.Equal("japanesepv01", best);
+    }
+
+    [Theory]
+    // Titulares que anuncian material audiovisual → buscar
+    [InlineData("Sword Art Online anuncia nueva película para 2028", true)]
+    [InlineData("Frieren confirma su segunda temporada con un tráiler", true)]
+    [InlineData("El live-action de One Piece ya tiene fecha de estreno", true)]
+    // Titulares sin video que buscar → null (queda el slideshow)
+    [InlineData("Sword Art Online anuncia una nueva novela sobre Kirito y Asuna", false)]
+    [InlineData("Fallece reconocido animador del estudio Ghibli", false)]
+    [InlineData("Nueva figura coleccionable de Nezuko agota su preventa", false)]
+    public void HeuristicTrailerQuery_OnlyTriggersOnAudiovisualNews(string title, bool expectsQuery)
+    {
+        var query = AnimeNewsPublisherService.HeuristicTrailerQuery(title);
+
+        if (expectsQuery)
+        {
+            Assert.NotNull(query);
+            Assert.Contains("trailer", query);
+            Assert.Contains(title, query);   // el nombre de la obra viaja en el titular
+        }
+        else
+        {
+            Assert.Null(query);
+        }
+    }
+}
+
+public class PhotoQualityGateTests
+{
+    private static SkiaSharp.SKBitmap Bmp(int w, int h) => new(w, h);
+
+    [Fact]
+    public void IsUsablePhoto_AcceptsTypicalOgImageAndRejectsSmallLogos()
+    {
+        // og:image típico de WordPress (featured image)
+        using var ogImage = Bmp(1200, 630);
+        Assert.True(AnimeNewsImageService.IsUsablePhoto(ogImage));
+
+        // Logo chico in-body (el caso real: se estiraba a 1080px y quedaba pixelado)
+        using var logo = Bmp(300, 200);
+        Assert.False(AnimeNewsImageService.IsUsablePhoto(logo));
+    }
+
+    [Fact]
+    public void IsUsablePhoto_RejectsExtremeBanners()
+    {
+        // Banner ultra ancho: pasa la resolución mínima pero el aspecto lo delata
+        using var banner = Bmp(1920, 500);
+        Assert.False(AnimeNewsImageService.IsUsablePhoto(banner));
     }
 }

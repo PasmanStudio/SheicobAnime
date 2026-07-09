@@ -140,6 +140,24 @@ public static class TestImageGenerator
                 foreach (var line in BuildPreviewCaption(content).Split('\n'))
                     Console.WriteLine($"  {line}");
                 Console.WriteLine("  ─────────────────────────────────────────────\n");
+
+                // ── Piezas del reel (crédito de música EN el video) ──
+                const string sampleCredit =
+                    "Música: Hyperfun — Kevin MacLeod (incompetech.com) · CC BY 4.0";
+
+                sw.Restart();
+                var reelSlides = await newsService.GenerateReelSlidesAsync(
+                    newsItem, content, [], maxKeyPoints: 3, musicCredit: sampleCredit);
+                sw.Stop();
+                for (var i = 0; i < reelSlides.Count; i++)
+                    await File.WriteAllBytesAsync(
+                        Path.Combine(outDir, $"news-{slug}-reel-slide{i + 1}.jpg"), reelSlides[i]);
+                Console.WriteLine($"  [reel slides ×{reelSlides.Count}, crédito CC en la última]  ({sw.ElapsedMilliseconds} ms)");
+
+                var (trailerBg, trailerOv) = newsService.GenerateVideoReelLayers(content, sampleCredit);
+                await File.WriteAllBytesAsync(Path.Combine(outDir, $"news-{slug}-trailer-bg.jpg"), trailerBg);
+                await File.WriteAllBytesAsync(Path.Combine(outDir, $"news-{slug}-trailer-overlay.png"), trailerOv);
+                Console.WriteLine("  [trailer-reel layers: bg + overlay con crédito]");
             }
         }
 
