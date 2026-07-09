@@ -151,12 +151,12 @@ public static class TestImageGenerator
                 sw.Stop();
                 for (var i = 0; i < reelSlides.Count; i++)
                     await File.WriteAllBytesAsync(
-                        Path.Combine(outDir, $"news-{slug}-reel-slide{i + 1}.jpg"), reelSlides[i]);
+                        Path.Join(outDir, $"news-{slug}-reel-slide{i + 1}.jpg"), reelSlides[i]);
                 Console.WriteLine($"  [reel slides ×{reelSlides.Count}, crédito CC en la última]  ({sw.ElapsedMilliseconds} ms)");
 
                 var (trailerBg, trailerOv) = newsService.GenerateVideoReelLayers(content, sampleCredit);
-                await File.WriteAllBytesAsync(Path.Combine(outDir, $"news-{slug}-trailer-bg.jpg"), trailerBg);
-                await File.WriteAllBytesAsync(Path.Combine(outDir, $"news-{slug}-trailer-overlay.png"), trailerOv);
+                await File.WriteAllBytesAsync(Path.Join(outDir, $"news-{slug}-trailer-bg.jpg"), trailerBg);
+                await File.WriteAllBytesAsync(Path.Join(outDir, $"news-{slug}-trailer-overlay.png"), trailerOv);
                 Console.WriteLine("  [trailer-reel layers: bg + overlay con crédito]");
             }
         }
