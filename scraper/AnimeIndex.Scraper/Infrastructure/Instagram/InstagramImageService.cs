@@ -43,7 +43,7 @@ public class InstagramImageService(
     /// nítido siempre (nunca se zoomea).
     /// </summary>
     public async Task<(byte[] Background, byte[] OverlayPng)> GenerateStoryLayersAsync(
-        Series series, Episode episode, CancellationToken ct = default)
+        Series series, Episode episode, string? musicCredit = null, CancellationToken ct = default)
     {
         const int width = 1080, height = 1920;
         var coverBitmap = await TryDownloadCoverAsync(episode.ThumbnailUrl ?? series.CoverUrl, ct);
@@ -68,6 +68,7 @@ public class InstagramImageService(
         var ov = ovSurface.Canvas;
         ov.Clear(SKColors.Transparent);
         DrawTextContent(ov, series, episode, width, height, isStory: true);
+        if (musicCredit is not null) DrawMusicCredit(ov, musicCredit, width, height);
         using var ovImage = ovSurface.Snapshot();
         using var ovData  = ovImage.Encode(SKEncodedImageFormat.Png, 100);
 
@@ -279,6 +280,30 @@ public class InstagramImageService(
             float textWidth = font.MeasureText(brand);
             canvas.DrawText(brand, width - textWidth - 36 * scale, y, font, paint);
         }
+    }
+
+    /// <summary>
+    /// Crédito de la música (CC BY) como texto chico al borde inferior del
+    /// overlay — la atribución vive EN el video, nunca en el caption.
+    /// </summary>
+    private static void DrawMusicCredit(SKCanvas canvas, string credit, int width, int height)
+    {
+        float scale    = width / 1080f;
+        float x        = width * 0.08f;
+        float maxWidth = width * 0.84f;
+        float size     = 20 * scale;
+
+        using (var probe = CreateFont(size))
+        {
+            var w = probe.MeasureText(credit);
+            if (w > maxWidth) size *= maxWidth / w;
+        }
+
+        using var font   = CreateFont(size);
+        using var paint  = new SKPaint { Color = new SKColor(0x9F, 0xB0, 0xC0, 0xB4), IsAntialias = true };
+        using var shadow = new SKPaint { Color = new SKColor(0, 0, 0, 150), IsAntialias = true };
+        canvas.DrawText(credit, x + 2, height - 26 * scale + 2, font, shadow);
+        canvas.DrawText(credit, x, height - 26 * scale, font, paint);
     }
 
     private static SKFont CreateFont(float size, bool bold = false)

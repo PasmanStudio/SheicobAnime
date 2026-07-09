@@ -48,7 +48,7 @@ public class AnimeNewsImageService(
     public async Task<byte[]> GenerateStoryAsync(
         AnimeNewsItem item, NewsContent content, IReadOnlyList<string> imageUrls, CancellationToken ct = default)
     {
-        using var photo = await TryDownloadPhotoAsync(PrimaryImage(item, imageUrls), ct);
+        using var photo = await TryDownloadFirstUsableAsync(BuildImageList(item, imageUrls), ct);
         return RenderCover(content, photo, 1080, 1920, swipeHint: false);
     }
 
@@ -57,10 +57,12 @@ public class AnimeNewsImageService(
     /// hasta <paramref name="maxKeyPoints"/> puntos clave + CTA de cierre —
     /// el mismo contenido editorial del carrusel pero en formato vertical.
     /// ffmpeg las encadena con Ken Burns alternado y crossfades.
+    /// <paramref name="musicCredit"/> (tracks CC) va como texto chico en la
+    /// slide de cierre — la atribución vive en el video, no en el caption.
     /// </summary>
     public async Task<List<byte[]>> GenerateReelSlidesAsync(
         AnimeNewsItem item, NewsContent content, IReadOnlyList<string> imageUrls,
-        int maxKeyPoints = 3, CancellationToken ct = default)
+        int maxKeyPoints = 3, string? musicCredit = null, CancellationToken ct = default)
     {
         const int width = 1080, height = 1920;
         var urls   = BuildImageList(item, imageUrls);
@@ -82,7 +84,7 @@ public class AnimeNewsImageService(
                 slides.Add(RenderKeyPoint(keyPoints[i], photo, focus, width, height));
             }
 
-            slides.Add(RenderCta(width, height));
+            slides.Add(RenderCta(width, height, musicCredit));
             return slides;
         }
         finally { foreach (var p in photos) p.Dispose(); }
@@ -94,7 +96,8 @@ public class AnimeNewsImageService(
     /// overlay de texto de marca. El tráiler va como banda central encima del
     /// fondo, el texto encima de todo.
     /// </summary>
-    public (byte[] Background, byte[] OverlayPng) GenerateVideoReelLayers(NewsContent content)
+    public (byte[] Background, byte[] OverlayPng) GenerateVideoReelLayers(
+        NewsContent content, string? musicCredit = null)
     {
         const int width = 1080, height = 1920;
 
@@ -110,6 +113,7 @@ public class AnimeNewsImageService(
         var ov = ovSurface.Canvas;
         ov.Clear(SKColors.Transparent);
         DrawCoverText(ov, content, width, height, swipeHint: false);
+        if (musicCredit is not null) DrawMusicCredit(ov, musicCredit, width, height);
 
         return (Encode(bgSurface), EncodePng(ovSurface));
     }
@@ -121,10 +125,11 @@ public class AnimeNewsImageService(
     /// Burns en la foto, slide-in con fade en el texto, que queda siempre nítido.
     /// </summary>
     public async Task<(byte[] Background, byte[] OverlayPng)> GenerateStoryLayersAsync(
-        AnimeNewsItem item, NewsContent content, IReadOnlyList<string> imageUrls, CancellationToken ct = default)
+        AnimeNewsItem item, NewsContent content, IReadOnlyList<string> imageUrls,
+        string? musicCredit = null, CancellationToken ct = default)
     {
         const int width = 1080, height = 1920;
-        using var photo = await TryDownloadPhotoAsync(PrimaryImage(item, imageUrls), ct);
+        using var photo = await TryDownloadFirstUsableAsync(BuildImageList(item, imageUrls), ct);
 
         // ── Fondo ──
         using var bgSurface = SKSurface.Create(new SKImageInfo(width, height));
@@ -140,6 +145,7 @@ public class AnimeNewsImageService(
         var ov = ovSurface.Canvas;
         ov.Clear(SKColors.Transparent);
         DrawCoverText(ov, content, width, height, swipeHint: false);
+        if (musicCredit is not null) DrawMusicCredit(ov, musicCredit, width, height);
 
         return (Encode(bgSurface), EncodePng(ovSurface));
     }
@@ -294,7 +300,7 @@ public class AnimeNewsImageService(
 
     // ── Closing CTA slide ────────────────────────────────────────────────────────
 
-    private static byte[] RenderCta(int width = 1080, int height = 1080)
+    private static byte[] RenderCta(int width = 1080, int height = 1080, string? musicCredit = null)
     {
         using var surface = SKSurface.Create(new SKImageInfo(width, height));
         var canvas = surface.Canvas;
@@ -320,7 +326,29 @@ public class AnimeNewsImageService(
         DrawMono(canvas, "LINK EN LA BIO  →", x, barY + 70 * scale, 30 * scale, Accent, bold: true);
 
         DrawBrandingMark(canvas, width, height - height * 0.07f, scale);
+        if (musicCredit is not null) DrawMusicCredit(canvas, musicCredit, width, height);
         return Encode(surface);
+    }
+
+    /// <summary>
+    /// Crédito de la música como texto chico y discreto al borde inferior —
+    /// la atribución CC BY es obligatoria, pero vive EN el video (estilo
+    /// créditos de cierre), nunca más como línea del caption.
+    /// </summary>
+    private static void DrawMusicCredit(SKCanvas canvas, string credit, int width, int height)
+    {
+        float scale    = width / 1080f;
+        float x        = width * 0.08f;
+        float maxWidth = width * 0.84f;
+        float size     = 20 * scale;
+
+        using (var probe = CreateMonoFont(size, bold: false))
+        {
+            var w = probe.MeasureText(credit);
+            if (w > maxWidth) size *= maxWidth / w;   // que nunca se salga del canvas
+        }
+
+        DrawMono(canvas, credit, x, height - 26 * scale, size, TextGray.WithAlpha(0xB4), bold: false);
     }
 
     // ── Shared chrome ────────────────────────────────────────────────────────────
@@ -578,9 +606,19 @@ public class AnimeNewsImageService(
 
     // ── Photo download ───────────────────────────────────────────────────────────
 
-    private static string? PrimaryImage(AnimeNewsItem item, IReadOnlyList<string> imageUrls) =>
-        !string.IsNullOrWhiteSpace(item.ImageUrl) ? item.ImageUrl
-        : imageUrls.FirstOrDefault(u => !string.IsNullOrWhiteSpace(u));
+    // Gate de calidad para fondos: una imagen chica estirada a 1080px se
+    // pixela y arruina la slide (pasó con logos/banners de la página fuente).
+    // Mejor SIN foto (panel abismo de marca) que con una foto fea.
+    internal const int MinPhotoWidth = 500;
+    internal const int MinPhotoHeight = 350;
+    private const float MaxPhotoAspectRatio = 3.2f;   // banners ultra anchos/altos
+
+    /// <summary>True si la imagen aguanta ser fondo de slide sin pixelarse ni
+    /// ser un banner. Público estático para tests.</summary>
+    public static bool IsUsablePhoto(SKBitmap photo) =>
+        photo.Width >= MinPhotoWidth && photo.Height >= MinPhotoHeight
+        && photo.Width <= photo.Height * MaxPhotoAspectRatio
+        && photo.Height <= photo.Width * MaxPhotoAspectRatio;
 
     /// <summary>Primary image first, then any extras, deduped — capped at 6.</summary>
     private static List<string> BuildImageList(AnimeNewsItem item, IReadOnlyList<string> imageUrls)
@@ -611,9 +649,31 @@ public class AnimeNewsImageService(
         foreach (var url in urls)
         {
             var bmp = await TryDownloadPhotoAsync(url, ct);
-            if (bmp is not null) photos.Add(bmp);
+            if (bmp is null) continue;
+            if (!IsUsablePhoto(bmp))
+            {
+                logger.LogDebug("AnimeNews: descarto imagen de baja calidad ({W}×{H}) de {Url}",
+                    bmp.Width, bmp.Height, url);
+                bmp.Dispose();
+                continue;
+            }
+            photos.Add(bmp);
         }
         return photos;
+    }
+
+    /// <summary>Primera foto de la lista que pasa el gate de calidad, o null
+    /// (el cover cae al panel abismo — mejor que una foto pixelada).</summary>
+    private async Task<SKBitmap?> TryDownloadFirstUsableAsync(IReadOnlyList<string> urls, CancellationToken ct)
+    {
+        foreach (var url in urls)
+        {
+            var bmp = await TryDownloadPhotoAsync(url, ct);
+            if (bmp is null) continue;
+            if (IsUsablePhoto(bmp)) return bmp;
+            bmp.Dispose();
+        }
+        return null;
     }
 
     private async Task<SKBitmap?> TryDownloadPhotoAsync(string? imageUrl, CancellationToken ct)
