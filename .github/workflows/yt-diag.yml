@@ -53,21 +53,45 @@ jobs:
             echo "SIN secret YOUTUBE_COOKIES — los casos 'cookies' van a correr sin ellas"
           fi
 
+      # ── Cloudflare WARP como salida (wgcf + wireproxy → SOCKS5 local) ──
+      # Ronda 1 (21 intentos, jul-2026): TODOS los clientes de yt-dlp fallaron
+      # con "Sign in to confirm you're not a bot", con y sin cookies — YouTube
+      # bloquea por IP a los runners (datacenter). WARP saca el tráfico por IPs
+      # de Cloudflare (clasificadas como VPN de consumo, no datacenter) — es la
+      # vía conocida en la comunidad yt-dlp para CI. wireproxy expone un SOCKS5
+      # local SOLO para yt-dlp (no toca el resto del job).
+      - name: Setup Cloudflare WARP proxy (wgcf + wireproxy)
+        run: |
+          cd "$RUNNER_TEMP"
+          WGCF_URL=$(curl -s https://api.github.com/repos/ViRb3/wgcf/releases/latest \
+            | jq -r '.assets[] | select(.name | endswith("linux_amd64")) | .browser_download_url')
+          curl -sL -o wgcf "$WGCF_URL" && chmod +x wgcf
+          ./wgcf register --accept-tos
+          ./wgcf generate
+          WP_URL=$(curl -s https://api.github.com/repos/whyvl/wireproxy/releases/latest \
+            | jq -r '.assets[] | select(.name | test("linux_amd64")) | .browser_download_url' | head -1)
+          curl -sL -o wireproxy.tar.gz "$WP_URL"
+          tar -xzf wireproxy.tar.gz
+          cat wgcf-profile.conf > wp.conf
+          printf '\n[Socks5]\nBindAddress = 127.0.0.1:1080\n' >> wp.conf
+          ./wireproxy -c wp.conf &
+          sleep 3
+          echo "IP directa:  $(curl -s -m 10 ifconfig.me || echo '?')"
+          echo "IP vía WARP: $(curl -s -m 15 --proxy socks5h://127.0.0.1:1080 ifconfig.me || echo 'FALLO')"
+
       - name: Matriz de descargas
         run: |
           COOKIES="$RUNNER_TEMP/yt-cookies.txt"
-          # Videos: el PUBG×Naruto que falló en prod, el teaser de Aniplex (SAO),
-          # y un tráiler doblado de Crunchyroll en Español (Solo Leveling).
-          VIDEOS="KhHDIpHwpkw UHWMxtRivt8 dR7DW4ykE8k"
-          # Configs: nombre|player_client (vacío = default de yt-dlp)|cookies(si/no)
+          # Videos: el PUBG×Naruto que falló en prod y un tráiler doblado de
+          # Crunchyroll en Español (Solo Leveling).
+          VIDEOS="KhHDIpHwpkw dR7DW4ykE8k"
+          # Configs: nombre|player_client (vacío = default)|cookies|proxy
           CONFIGS=(
-            "android_vr-sin-cookies|android_vr|no"
-            "web_embedded-sin-cookies|web_embedded|no"
-            "tv-sin-cookies|tv|no"
-            "tv-con-cookies|tv|si"
-            "PROD-web_safari,tv-con-cookies|web_safari,tv|si"
-            "default-sin-cookies||no"
-            "default-con-cookies||si"
+            "CONTROL-default-directo||no|no"
+            "warp-default-sin-cookies||no|si"
+            "warp-android_vr|android_vr|no|si"
+            "warp-tv|tv|no|si"
+            "warp-web_safari,tv-cookies|web_safari,tv|si|si"
           )
 
           SUMMARY="$RUNNER_TEMP/summary.txt"
@@ -75,19 +99,17 @@ jobs:
 
           for video in $VIDEOS; do
             for entry in "${CONFIGS[@]}"; do
-              name="${entry%%|*}"
-              rest="${entry#*|}"
-              clients="${rest%%|*}"
-              usecookies="${rest##*|}"
+              IFS='|' read -r name clients usecookies useproxy <<< "$entry"
 
               args=(-f "bv*[height<=720][ext=mp4]/bv*[height<=720]/best[height<=720]/best"
                     --no-playlist --max-filesize 30M --socket-timeout 20 --no-warnings)
               [ -n "$clients" ] && args+=(--extractor-args "youtube:player_client=$clients")
               [ "$usecookies" = "si" ] && [ -f "$COOKIES" ] && args+=(--cookies "$COOKIES")
+              [ "$useproxy" = "si" ] && args+=(--proxy "socks5h://127.0.0.1:1080")
 
               out="$RUNNER_TEMP/dl-$video-$name.mp4"
               echo "::group::[$video] $name"
-              if timeout 90 yt-dlp "${args[@]}" -o "$out" "https://www.youtube.com/watch?v=$video" 2>&1; then
+              if timeout 120 yt-dlp "${args[@]}" -o "$out" "https://www.youtube.com/watch?v=$video" 2>&1; then
                 size=$(stat -c%s "$out" 2>/dev/null || echo 0)
                 echo "RESULT: OK ($((size / 1024)) KB)"
                 printf '%-14s %-36s OK    %6d KB\n' "$video" "$name" "$((size / 1024))" >> "$SUMMARY"
@@ -104,12 +126,3 @@ jobs:
           echo "================= RESUMEN ================="
           cat "$SUMMARY"
           echo "==========================================="
-
-      # ¿El teaser japonés de Aniplex tiene subtítulos en español disponibles?
-      # (para el requisito de idioma: quemar subs es-419 cuando el tráiler
-      # elegido no está en español)
-      - name: Listar subtítulos disponibles (teaser JP)
-        run: |
-          yt-dlp --list-subs --no-warnings --socket-timeout 20 \
-            --extractor-args "youtube:player_client=android_vr" \
-            "https://www.youtube.com/watch?v=UHWMxtRivt8" 2>&1 | head -60 || true
