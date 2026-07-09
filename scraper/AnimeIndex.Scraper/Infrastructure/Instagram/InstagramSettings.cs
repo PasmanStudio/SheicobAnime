@@ -49,6 +49,12 @@ public class InstagramSettings
     // yt-dlp falla (IP bloqueada, video region-locked), cae al slideshow.
     public bool TrailerReelEnabled { get; set; } = true;
 
+    // Búsqueda ACTIVA del tráiler en YouTube cuando el artículo no embebe
+    // ninguno (el caso típico): Gemini decide si la noticia amerita video
+    // (anuncio de tráiler/temporada/película) y arma la query; yt-dlp busca
+    // (ytsearch) y se descarga el mejor candidato. Best-effort → slideshow.
+    public bool TrailerSearchEnabled { get; set; } = true;
+
     // Binario de yt-dlp (el workflow lo instala con pipx; en dev local puede faltar).
     public string YtDlpPath { get; set; } = "yt-dlp";
 
