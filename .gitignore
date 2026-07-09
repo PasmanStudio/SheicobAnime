@@ -85,3 +85,6 @@ infra/supabase.exe
 
 # Claude Code worktrees/locals
 .claude/worktrees/
+
+# Salida local del harness visual --images
+test-output/

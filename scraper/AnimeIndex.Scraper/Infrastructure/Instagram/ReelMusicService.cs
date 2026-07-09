@@ -12,7 +12,9 @@ namespace AnimeIndex.Scraper.Infrastructure.Instagram;
 /// <param name="Url">Audio público (MP3/M4A).</param>
 /// <param name="Mood">epic | dark | upbeat | chill | emotional.</param>
 /// <param name="StartSeconds">Offset de arranque (saltea intros largas).</param>
-/// <param name="Attribution">Línea final del caption; null = sin línea.</param>
+/// <param name="Attribution">Crédito CC BY que va como texto chico DENTRO del
+/// video (nunca en el caption — pedido del usuario); null = sin crédito
+/// (tracks propios, que no tienen obligación legal).</param>
 public record ReelTrack(
     string Title, string Url, string Mood, int StartSeconds = 0, string? Attribution = null);
 
@@ -29,7 +31,8 @@ public record ReelTrack(
 ///      se lee del nombre: epic-1.mp3, dark-2.mp3… Subirlos con
 ///      `dotnet run -- --upload-music ./carpeta`.
 ///   2. FALLBACK: Kevin MacLeod (incompetech.com), CC BY 4.0 — libre para uso
-///      comercial CON atribución (va al caption).
+///      comercial CON atribución. El crédito va como texto chico DENTRO del
+///      video (estilo créditos de cierre), nunca como línea del caption.
 /// NUNCA música comercial/OSTs: Rights Manager de Meta la detecta y da strikes.
 /// </summary>
 public class ReelMusicService(
@@ -40,11 +43,9 @@ public class ReelMusicService(
     AiSettings aiSettings,
     ILogger<ReelMusicService> logger)
 {
+    // Sin emoji: el crédito se dibuja con SkiaSharp (fuente mono, sin glifos emoji)
     private static ReelTrack Cc(string title, string url, string mood, int start = 0) =>
-        new(title, url, mood, start, $"🎵 {title} — Kevin MacLeod (incompetech.com) · CC BY 4.0");
-
-    /// <summary>Atribución de los tracks propios — flex de marca, no obligación legal.</summary>
-    public const string OwnMusicAttribution = "🎵 Música original · SheicobAnime";
+        new(title, url, mood, start, $"Música: {title} — Kevin MacLeod (incompetech.com) · CC BY 4.0");
 
     // 63 tracks, URLs verificadas 2026-07 (HTTP 200, HEAD uno por uno). Con
     // PickTrackRotating (rotación diaria por mood) un reel diario tarda ~2
@@ -179,6 +180,8 @@ public class ReelMusicService(
     /// <summary>
     /// Convención de nombres: "{mood}-{loquesea}" (epic-1, dark-taiko…). Público
     /// estático para tests. Devuelve null si la URL falta; mood desconocido → chill.
+    /// Los tracks propios no llevan crédito: no hay obligación legal y el
+    /// usuario no quiere líneas de música en las publicaciones.
     /// </summary>
     public static ReelTrack? ParseTrackFromPublicId(string publicId, string? secureUrl)
     {
@@ -188,7 +191,7 @@ public class ReelMusicService(
         var mood = name.Split('-')[0].Trim().ToLowerInvariant();
         if (!ValidMoods.Contains(mood)) mood = "chill";
 
-        return new ReelTrack(name, secureUrl, mood, 0, OwnMusicAttribution);
+        return new ReelTrack(name, secureUrl, mood);
     }
 
     /// <summary>
@@ -272,7 +275,7 @@ public class ReelMusicService(
                 if (fresh is not null)
                 {
                     await SeedLibraryAsync(title, fresh, ct);
-                    return (new ReelTrack(title, "suno://fresh", mood, 0, OwnMusicAttribution), fresh);
+                    return (new ReelTrack(title, "suno://fresh", mood), fresh);
                 }
                 logger.LogInformation("Suno no disponible esta corrida — uso biblioteca ({Mood})", mood);
             }

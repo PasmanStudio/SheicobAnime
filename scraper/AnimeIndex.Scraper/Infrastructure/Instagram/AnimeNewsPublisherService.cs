@@ -110,6 +110,8 @@ public class AnimeNewsPublisherService(
                     "Sos el editor jefe de un medio de anime en español para LATAM. De la lista, elegí LA noticia " +
                     "más relevante/viral para el video destacado del día (estrenos grandes, anuncios bomba, " +
                     "fallecimientos de figuras, polémicas fuertes pesan más que curiosidades menores). " +
+                    "A igual peso, preferí noticias con material audiovisual oficial (anuncio de tráiler, " +
+                    "teaser, nueva temporada o película): el video destacado puede incrustar ese tráiler. " +
                     "Respondé SOLO un JSON: {\"index\": <número de la lista>}",
                     list, useWebSearch: false, ct);
 
@@ -298,26 +300,34 @@ public class AnimeNewsPublisherService(
         {
             var music = await musicService.SelectAndDownloadForNewsAsync(
                 content.Headline, content.Lede, item.RssGuid, ct);
+            // Crédito CC BY: va como texto chico DENTRO del video (nunca más en
+            // el caption). Tracks propios no traen atribución → sin crédito.
+            var musicCredit = music?.Track.Attribution;
 
             // Cadena de formatos, de mejor a más simple:
-            //   1. Tráiler + titular (si el artículo embebe un PV y se pudo bajar)
+            //   1. Tráiler + titular (embebido en el artículo, o ENCONTRADO por
+            //      búsqueda IA en YouTube cuando la noticia amerita video)
             //   2. Slideshow de escenas (cover + puntos clave + CTA)
             //   3. Motion-card de capas (tarjeta única)
             byte[]? videoBytes = null;
             byte[] coverJpeg;
 
-            if (igSettings.TrailerReelEnabled && trailerUrl is not null)
+            if (igSettings.TrailerReelEnabled)
             {
-                var clipPath = await trailerService.DownloadAsync(trailerUrl, ct);
+                var trailerVideoUrl = trailerUrl;
+                if (trailerVideoUrl is null && igSettings.TrailerSearchEnabled)
+                    trailerVideoUrl = await SearchTrailerUrlAsync(item, content, ct);
+
+                var clipPath = trailerVideoUrl is null ? null : await trailerService.DownloadAsync(trailerVideoUrl, ct);
                 if (clipPath is not null)
                 {
                     try
                     {
-                        var (bg, overlay) = imageService.GenerateVideoReelLayers(content);
+                        var (bg, overlay) = imageService.GenerateVideoReelLayers(content, musicCredit);
                         videoBytes = await videoService.GenerateTrailerReelAsync(
                             clipPath, bg, overlay, music?.Mp3, music?.Track.StartSeconds ?? 0, ct);
                         logger.LogInformation("AnimeNews: reel con TRÁILER para \"{Title}\" ({Url})",
-                            Truncate(item.Title, 60), trailerUrl);
+                            Truncate(item.Title, 60), trailerVideoUrl);
                     }
                     catch (Exception ex) when (!ct.IsCancellationRequested && ex is not FfmpegNotAvailableException)
                     {
@@ -335,7 +345,7 @@ public class AnimeNewsPublisherService(
                 try
                 {
                     var slides = await imageService.GenerateReelSlidesAsync(
-                        item, content, images, maxKeyPoints: 3, ct);
+                        item, content, images, maxKeyPoints: 3, musicCredit: musicCredit, ct: ct);
                     coverJpeg  = slides[0];
                     videoBytes = await videoService.GenerateSlideshowAsync(
                         slides, music?.Mp3, music?.Track.StartSeconds ?? 0, ct);
@@ -343,7 +353,8 @@ public class AnimeNewsPublisherService(
                 catch (Exception ex) when (!ct.IsCancellationRequested && ex is not FfmpegNotAvailableException)
                 {
                     logger.LogWarning(ex, "Slideshow render failed — falling back to single motion card");
-                    var (background, overlay) = await imageService.GenerateStoryLayersAsync(item, content, images, ct);
+                    var (background, overlay) = await imageService.GenerateStoryLayersAsync(
+                        item, content, images, musicCredit: musicCredit, ct: ct);
                     coverJpeg  = await imageService.GenerateStoryAsync(item, content, images, ct);
                     videoBytes = await videoService.GenerateMotionCardAsync(
                         background, overlay, music?.Mp3, music?.Track.StartSeconds ?? 0, ct);
@@ -367,14 +378,6 @@ public class AnimeNewsPublisherService(
             }
 
             var caption = BuildCaption(content);
-            if (music?.Track.Attribution is { } attribution)
-            {
-                // Que la atribución nunca empuje el caption sobre el límite de IG
-                var budget = IgCaptionMaxChars - attribution.Length - 2;
-                if (caption.Length > budget) caption = caption[..budget].TrimEnd();
-                caption = $"{caption}\n\n{attribution}";
-            }
-
             var containerId = await api.CreateReelContainerAsync(videoUrl, caption, shareToFeed: true, coverUrl, ct);
             await api.WaitForContainerReadyAsync(containerId, ct, VideoProcessingTimeout);
             var mediaId = await api.PublishContainerAsync(containerId, ct);
@@ -395,6 +398,72 @@ public class AnimeNewsPublisherService(
         }
     }
 
+    // ── Búsqueda del tráiler por IA ──────────────────────────────────────────
+
+    /// <summary>
+    /// Cuando el artículo no embebe un tráiler (el caso típico), lo BUSCA en
+    /// YouTube: Gemini decide si la noticia amerita video (anuncio de tráiler/
+    /// teaser/temporada/película — NO novelas, manga, figuras o luto) y arma la
+    /// query; sin IA cae a la heurística por keywords. Best-effort → null.
+    /// </summary>
+    private async Task<string?> SearchTrailerUrlAsync(
+        AnimeNewsItem item, NewsContent content, CancellationToken ct)
+    {
+        string? query = null;
+
+        if (!string.IsNullOrWhiteSpace(aiSettings.ApiKey))
+        {
+            try
+            {
+                var response = await gemini.GenerateAsync(
+                    "Sos productor de video de un noticiero de anime. Decidí si para esta noticia corresponde " +
+                    "buscar un tráiler oficial en YouTube para usarlo de fondo en el reel. Corresponde SOLO " +
+                    "cuando la noticia anuncia material audiovisual: nuevo tráiler/teaser/PV, nueva temporada, " +
+                    "película, adaptación a anime o fecha de estreno. NO corresponde para novelas o manga sin " +
+                    "anime confirmado, figuras, eventos, rankings, fallecimientos ni polémicas. Si corresponde, " +
+                    "armá la búsqueda de YouTube: nombre de la obra en romaji + qué video es " +
+                    "(ej.: \"Sword Art Online Integral Domain official trailer\"). " +
+                    "Respondé SOLO un JSON: {\"buscar\": true|false, \"query\": \"...\"}",
+                    $"Titular: {item.Title}\nResumen: {Truncate(item.Summary ?? content.Lede ?? string.Empty, 400)}",
+                    useWebSearch: false, ct);
+
+                using var doc = System.Text.Json.JsonDocument.Parse(response);
+                if (!doc.RootElement.TryGetProperty("buscar", out var buscar) || !buscar.GetBoolean())
+                {
+                    // La IA decidió que la noticia no amerita video — respetarla,
+                    // no caer a la heurística (es menos precisa).
+                    logger.LogInformation("AnimeNews: la noticia no amerita tráiler según IA — slideshow");
+                    return null;
+                }
+                if (doc.RootElement.TryGetProperty("query", out var q))
+                    query = q.GetString();
+            }
+            catch (Exception ex) when (!ct.IsCancellationRequested)
+            {
+                logger.LogDebug(ex, "Gemini trailer decision failed — using heuristic");
+            }
+        }
+
+        query ??= HeuristicTrailerQuery(item.Title);
+        if (string.IsNullOrWhiteSpace(query)) return null;
+
+        logger.LogInformation("AnimeNews: buscando tráiler en YouTube → \"{Query}\"", query);
+        return await trailerService.SearchAsync(query!, ct);
+    }
+
+    /// <summary>
+    /// Fallback sin IA: solo busca cuando el titular anuncia material
+    /// audiovisual; la query es el titular + "trailer" (el nombre de la obra ya
+    /// viene en el titular). Público estático para tests.
+    /// </summary>
+    public static string? HeuristicTrailerQuery(string title)
+    {
+        var t = title.ToLowerInvariant();
+        var audiovisual = new[] { "tráiler", "trailer", "teaser", "avance", "temporada",
+                                  "película", "pelicula", "live-action", "adaptación", "adaptacion", "estreno" };
+        return audiovisual.Any(t.Contains) ? $"{title} trailer" : null;
+    }
+
     // ── Caption ──────────────────────────────────────────────────────────────
 
     // Instagram caption limit is 2200 characters.
@@ -408,8 +477,8 @@ public class AnimeNewsPublisherService(
     /// Builds the Instagram caption from the already-rewritten content: a headline line, the
     /// original editorial body (the rewrite — never the source text; ahora más largo/profundo
     /// que las slides), a CTA, smart hashtags and the handle. El cuerpo se presupuesta para que
-    /// los hashtags y el @ nunca queden fuera del límite de IG (2200), incluso con la atribución
-    /// de música que se agrega después.
+    /// los hashtags y el @ nunca queden fuera del límite de IG (2200). La música no lleva línea
+    /// en el caption: el crédito CC va como texto chico dentro del video.
     /// </summary>
     private string BuildCaption(NewsContent content)
     {
@@ -417,8 +486,7 @@ public class AnimeNewsPublisherService(
 
         // El "pie" fijo (CTA + hashtags + handle) se arma primero para saber cuánto
         // espacio real queda para el cuerpo — así un caption largo nunca corta los
-        // hashtags. Reservamos además un margen para la atribución de música que
-        // PublishReelAsync agrega al final cuando el track es CC.
+        // hashtags.
         var tail = new StringBuilder();
         tail.Append("🔔 Seguinos para más noticias de anime\n");
         tail.Append("▶️ Mirá anime gratis · Link en la bio\n\n");
@@ -426,8 +494,7 @@ public class AnimeNewsPublisherService(
         if (!string.IsNullOrWhiteSpace(igSettings.Handle))
             tail.Append("\n\n@").Append(igSettings.Handle);
 
-        const int attributionMargin = 90;
-        var bodyBudget = IgCaptionMaxChars - header.Length - tail.Length - attributionMargin;
+        var bodyBudget = IgCaptionMaxChars - header.Length - tail.Length;
 
         var body = content.Caption?.Trim() ?? string.Empty;
         if (bodyBudget > 0 && body.Length > bodyBudget)
