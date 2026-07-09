@@ -60,25 +60,26 @@ jobs:
       # de Cloudflare (clasificadas como VPN de consumo, no datacenter) — es la
       # vía conocida en la comunidad yt-dlp para CI. wireproxy expone un SOCKS5
       # local SOLO para yt-dlp (no toca el resto del job).
-      - name: Setup Cloudflare WARP proxy (wgcf + wireproxy)
+      # El perfil WireGuard de WARP se registra UNA sola vez fuera de CI y vive
+      # en el secret WARP_WIREGUARD_CONFIG: `wgcf register` desde el runner
+      # devuelve 429 (Cloudflare rate-limitea los registros de IPs de datacenter,
+      # confirmado jul-2026). Las credenciales no vencen solas.
+      - name: Setup Cloudflare WARP proxy (wireproxy)
         env:
           GH_API_TOKEN: ${{ github.token }}
+          WARP_WIREGUARD_CONFIG: ${{ secrets.WARP_WIREGUARD_CONFIG }}
         run: |
           cd "$RUNNER_TEMP"
+          if [ -z "$WARP_WIREGUARD_CONFIG" ]; then
+            echo "::error::falta el secret WARP_WIREGUARD_CONFIG"; exit 1
+          fi
           # API con token del runner: sin auth el rate-limit por IP devuelve null
-          WGCF_URL=$(curl -s -H "Authorization: Bearer $GH_API_TOKEN" \
-              https://api.github.com/repos/ViRb3/wgcf/releases/latest \
-            | jq -r '.assets[] | select(.name | endswith("linux_amd64")) | .browser_download_url')
-          curl -sL -o wgcf "$WGCF_URL" && chmod +x wgcf
-          ./wgcf register --accept-tos
-          ./wgcf generate
           WP_URL=$(curl -s -H "Authorization: Bearer $GH_API_TOKEN" \
               https://api.github.com/repos/whyvl/wireproxy/releases/latest \
             | jq -r '.assets[] | select(.name | test("linux_amd64")) | .browser_download_url' | head -1)
           curl -sL -o wireproxy.tar.gz "$WP_URL"
           tar -xzf wireproxy.tar.gz
-          cat wgcf-profile.conf > wp.conf
-          printf '\n[Socks5]\nBindAddress = 127.0.0.1:1080\n' >> wp.conf
+          printf '%s\n\n[Socks5]\nBindAddress = 127.0.0.1:1080\n' "$WARP_WIREGUARD_CONFIG" > wp.conf
           ./wireproxy -c wp.conf &
           sleep 3
           echo "IP directa:  $(curl -s -m 10 ifconfig.me || echo '?')"
