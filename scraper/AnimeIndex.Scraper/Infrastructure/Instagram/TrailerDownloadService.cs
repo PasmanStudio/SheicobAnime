@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging;
 using System.Diagnostics;
 using System.Globalization;
+using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
 
@@ -226,9 +227,8 @@ public partial class TrailerDownloadService(
         string? bestId = null;
         var bestScore = -1;
 
-        foreach (var line in printedLines)
+        foreach (var parts in printedLines.Select(line => line.Split(FieldSeparator)))
         {
-            var parts = line.Split(FieldSeparator);
             if (parts.Length < 4) continue;
 
             var id = parts[0].Trim();
