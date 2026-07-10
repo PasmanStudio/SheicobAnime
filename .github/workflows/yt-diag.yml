@@ -1,0 +1,142 @@
+name: Diag — yt-dlp desde GitHub Actions
+
+# Workflow de DIAGNÓSTICO manual: prueba qué configuración de yt-dlp logra
+# descargar video de YouTube desde las IPs de datacenter de GitHub Actions
+# (bot-check "Sign in to confirm you're not a bot"). NO publica nada en
+# Instagram — solo intenta descargas y arma una tabla resumen.
+#
+# Contexto (jul-2026): el reel-tráiler cayó a slideshow en prod porque
+# web_safari,tv + cookies + PO token igual recibió el bot-check. Según la
+# PO-Token-Guide de yt-dlp, los clientes tv / android_vr / web_embedded NO
+# requieren PO token — acá se prueban todos con y sin cookies.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  diag:
+    name: Probar clientes de yt-dlp
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Install yt-dlp + PO token plugin
+        run: |
+          pipx install yt-dlp
+          pipx inject yt-dlp bgutil-ytdlp-pot-provider==1.3.1
+          yt-dlp --version
+
+      - name: Start PO token provider (bgutil)
+        run: |
+          docker run --name bgutil-provider -d -p 4416:4416 \
+            brainicism/bgutil-ytdlp-pot-provider:1.3.1
+          for i in $(seq 1 15); do
+            if curl -sf http://127.0.0.1:4416/ping >/dev/null 2>&1; then
+              echo "bgutil provider ready"; break
+            fi
+            echo "waiting for bgutil provider ($i/15)..."; sleep 1
+          done
+
+      - name: Write YouTube cookies
+        env:
+          YOUTUBE_COOKIES: ${{ secrets.YOUTUBE_COOKIES }}
+        run: |
+          if [ -n "$YOUTUBE_COOKIES" ]; then
+            printf '%s' "$YOUTUBE_COOKIES" > "$RUNNER_TEMP/yt-cookies.txt"
+            echo "cookies escritas ($(wc -l < "$RUNNER_TEMP/yt-cookies.txt") líneas)"
+          else
+            echo "SIN secret YOUTUBE_COOKIES — los casos 'cookies' van a correr sin ellas"
+          fi
+
+      # ── Cloudflare WARP como salida (wgcf + wireproxy → SOCKS5 local) ──
+      # Ronda 1 (21 intentos, jul-2026): TODOS los clientes de yt-dlp fallaron
+      # con "Sign in to confirm you're not a bot", con y sin cookies — YouTube
+      # bloquea por IP a los runners (datacenter). WARP saca el tráfico por IPs
+      # de Cloudflare (clasificadas como VPN de consumo, no datacenter) — es la
+      # vía conocida en la comunidad yt-dlp para CI. wireproxy expone un SOCKS5
+      # local SOLO para yt-dlp (no toca el resto del job).
+      # El perfil WireGuard de WARP se registra UNA sola vez fuera de CI y vive
+      # en el secret WARP_WIREGUARD_CONFIG: `wgcf register` desde el runner
+      # devuelve 429 (Cloudflare rate-limitea los registros de IPs de datacenter,
+      # confirmado jul-2026). Las credenciales no vencen solas.
+      - name: Setup Cloudflare WARP proxy (wireproxy)
+        env:
+          WARP_WIREGUARD_CONFIG: ${{ secrets.WARP_WIREGUARD_CONFIG }}
+        run: |
+          cd "$RUNNER_TEMP"
+          if [ -z "$WARP_WIREGUARD_CONFIG" ]; then
+            echo "::error::falta el secret WARP_WIREGUARD_CONFIG"; exit 1
+          fi
+          # Versión pineada con URL directa (la API de releases devolvía null desde CI)
+          curl -sL -o wireproxy.tar.gz \
+            "https://github.com/whyvl/wireproxy/releases/download/v1.1.2/wireproxy_linux_amd64.tar.gz"
+          tar -xzf wireproxy.tar.gz
+          printf '%s\n\n[Socks5]\nBindAddress = 127.0.0.1:1080\n' "$WARP_WIREGUARD_CONFIG" > wp.conf
+          ./wireproxy -c wp.conf &
+          sleep 3
+          echo "IP directa:  $(curl -s -m 10 ifconfig.me || echo '?')"
+          echo "IP vía WARP: $(curl -s -m 15 --proxy socks5h://127.0.0.1:1080 ifconfig.me || echo 'FALLO')"
+
+      - name: Matriz de descargas
+        run: |
+          COOKIES="$RUNNER_TEMP/yt-cookies.txt"
+          # Videos: el PUBG×Naruto que falló en prod y un tráiler doblado de
+          # Crunchyroll en Español (Solo Leveling).
+          VIDEOS="KhHDIpHwpkw dR7DW4ykE8k"
+          # Ronda 5: WARP+android_vr fue 2/2 — ¿las cookies lo rompen?
+          # Configs: nombre|player_client (vacío = default)|cookies|proxy
+          CONFIGS=(
+            "warp-android_vr-sin-cookies|android_vr|no|si"
+            "warp-android_vr-CON-cookies|android_vr|si|si"
+          )
+
+          SUMMARY="$RUNNER_TEMP/summary.txt"
+          : > "$SUMMARY"
+
+          for video in $VIDEOS; do
+            for entry in "${CONFIGS[@]}"; do
+              IFS='|' read -r name clients usecookies useproxy <<< "$entry"
+
+              args=(-f "bv*[height<=720][ext=mp4]/bv*[height<=720]/best[height<=720]/best"
+                    --no-playlist --max-filesize 30M --socket-timeout 20 --no-warnings)
+              [ -n "$clients" ] && args+=(--extractor-args "youtube:player_client=$clients")
+              [ "$usecookies" = "si" ] && [ -f "$COOKIES" ] && args+=(--cookies "$COOKIES")
+              [ "$useproxy" = "si" ] && args+=(--proxy "socks5h://127.0.0.1:1080")
+
+              out="$RUNNER_TEMP/dl-$video-$name.mp4"
+              echo "::group::[$video] $name"
+              if timeout 120 yt-dlp "${args[@]}" -o "$out" "https://www.youtube.com/watch?v=$video" 2>&1; then
+                size=$(stat -c%s "$out" 2>/dev/null || echo 0)
+                echo "RESULT: OK ($((size / 1024)) KB)"
+                printf '%-14s %-36s OK    %6d KB\n' "$video" "$name" "$((size / 1024))" >> "$SUMMARY"
+                rm -f "$out"
+              else
+                echo "RESULT: FAIL"
+                printf '%-14s %-36s FAIL\n' "$video" "$name" >> "$SUMMARY"
+              fi
+              echo "::endgroup::"
+            done
+          done
+
+          echo ""
+          echo "================= RESUMEN ================="
+          cat "$SUMMARY"
+          echo "==========================================="
+
+      # Los otros dos comandos del pipeline: búsqueda (ytsearch, flat) y
+      # validación (--print de metadata de un video puntual), ambos vía WARP.
+      - name: Búsqueda y validación vía WARP
+        run: |
+          echo "── ytsearch (SearchAsync) ──"
+          yt-dlp "ytsearch3:Solo Leveling tráiler oficial español latino" \
+            --flat-playlist --print "%(id)s|~|%(duration)s|~|%(title)s|~|%(channel)s" \
+            --extractor-args "youtube:player_client=android_vr" \
+            --proxy "socks5h://127.0.0.1:1080" \
+            --no-warnings --socket-timeout 20 || echo "SEARCH FAIL"
+          echo "── print metadata (ValidateAsync) ──"
+          yt-dlp --skip-download \
+            --print "%(id)s|~|%(duration)s|~|%(title)s|~|%(channel)s" \
+            --extractor-args "youtube:player_client=android_vr" \
+            --proxy "socks5h://127.0.0.1:1080" \
+            --no-warnings --socket-timeout 20 \
+            "https://www.youtube.com/watch?v=dR7DW4ykE8k" || echo "VALIDATE FAIL"

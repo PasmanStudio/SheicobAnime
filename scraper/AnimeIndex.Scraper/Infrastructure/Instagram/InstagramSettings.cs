@@ -58,24 +58,27 @@ public class InstagramSettings
     // Binario de yt-dlp (el workflow lo instala con pipx; en dev local puede faltar).
     public string YtDlpPath { get; set; } = "yt-dlp";
 
-    // player_client de yt-dlp. YouTube bloquea las IPs de datacenter (GitHub
-    // Actions) con "confirm you're not a bot"; el workflow levanta el provider
-    // de PO token (bgutil) para evadirlo. Los PO tokens los consumen los clientes
-    // web, por eso 'web_safari' va primero; 'tv' queda de fallback (a veces pasa
-    // sin token). Si YouTube endurece el bloqueo, ajustar acá sin redeploy
-    // (probar "web_safari", "mweb", "tv", etc.) — requiere el provider corriendo.
-    public string YtDlpPlayerClients { get; set; } = "web_safari,tv";
+    // player_client de yt-dlp. Matriz probada en vivo desde GitHub Actions
+    // (jul-2026, workflow yt-diag): SOLO "android_vr" + salida por WARP descarga
+    // (2/2 videos); tv / web_safari / web_embedded / default fallan con el
+    // bot-check incluso vía WARP y con cookies. android_vr no requiere PO token
+    // ni login. Si YouTube lo endurece, ajustar acá sin redeploy.
+    public string YtDlpPlayerClients { get; set; } = "android_vr";
 
-    // Cookies de YouTube (formato Netscape cookies.txt). El PO token solo NO evade
-    // el check anti-bot desde IPs de datacenter (confirmado en vivo jul-2026); la
-    // combinación que SÍ funciona desde CI es cookies de una sesión logueada +
-    // el PO token provider. El workflow escribe el secret YOUTUBE_COOKIES a un
-    // archivo y pasa su ruta acá; si el archivo existe, yt-dlp lo usa con --cookies.
-    // Vacío o archivo inexistente → sin cookies (best-effort, cae al slideshow).
-    public string YtDlpCookiesPath { get; set; } = string.Empty;
+    // Proxy de salida para yt-dlp (p. ej. "socks5h://127.0.0.1:1080"). YouTube
+    // bloquea por IP a los runners de GitHub — confirmado jul-2026: las 21
+    // combinaciones cliente×cookies fallaron con "Sign in to confirm you're not
+    // a bot". El workflow levanta Cloudflare WARP (wgcf + wireproxy) y pasa el
+    // SOCKS5 local acá; la descarga sale por IP de WARP (no-datacenter).
+    // Vacío = conexión directa (dev local, donde la IP residencial no está
+    // bloqueada).
+    public string YtDlpProxy { get; set; } = string.Empty;
 
-    // Duración del reel de tráiler en segundos (≤60 por si se reusa como story).
-    public int TrailerClipSeconds { get; set; } = 18;
+    // Máximo de segundos de TRÁILER en el reel (la gente quiere VER el tráiler
+    // — cortarlo a los 18s era matar el formato). Si el tráiler dura menos, se
+    // usa lo que haya; el total del reel (tráiler + slides informativas + CTA)
+    // se capa solo a ~60s.
+    public int TrailerClipSeconds { get; set; } = 45;
 
     // ── Suno (música generada FRESCA por reel, vía sunoapi.org — tercero) ──
     // Con la key configurada, cada reel de noticias genera un track instrumental

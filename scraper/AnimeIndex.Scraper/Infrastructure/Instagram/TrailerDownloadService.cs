@@ -8,11 +8,19 @@ using System.Text.RegularExpressions;
 namespace AnimeIndex.Scraper.Infrastructure.Instagram;
 
 /// <summary>
-/// Descarga un tráiler/PV de YouTube con yt-dlp para usarlo de fondo en el
-/// Reel de noticias (formato "video + titular" — los PV son material
-/// promocional que los estudios publican para difusión; va MUTEADO con
-/// nuestra música encima). También BUSCA el tráiler en YouTube (ytsearch)
-/// cuando el artículo no embebe ninguno — que es el caso típico.
+/// Tráiler elegido: URL watch + duración (para armar el reel).
+/// <paramref name="SubtitlesPath"/>: archivo .vtt con subtítulos MANUALES en
+/// español para quemar en el video — solo cuando el tráiler no está en español
+/// pero tiene subs oficiales (el caller lo limpia con CleanUp al terminar).
+/// </summary>
+public sealed record TrailerCandidate(string Url, double DurationSeconds, string? SubtitlesPath = null);
+
+/// <summary>
+/// Descarga un tráiler/PV de YouTube con yt-dlp para usarlo en el Reel de
+/// noticias (formato "video + titular" — los PV son material promocional que
+/// los estudios publican para difusión; va CON SU AUDIO ORIGINAL, que es lo
+/// que la gente quiere escuchar). También BUSCA el tráiler en YouTube
+/// (ytsearch) cuando el artículo no embebe ninguno — que es el caso típico.
 ///
 /// Best-effort por diseño: yt-dlp puede faltar (dev local), YouTube puede
 /// bloquear IPs de datacenter, el video puede estar region-locked — TODO
@@ -35,8 +43,9 @@ public partial class TrailerDownloadService(
     private const string FieldSeparator = "|~|";
 
     /// <summary>
-    /// Descarga el video (solo stream de video, ≤720p — el audio se descarta
-    /// igual) y devuelve la ruta del MP4, o null si algo falló.
+    /// Descarga el video CON su audio original (≤720p — el sonido del tráiler
+    /// es parte del atractivo del reel) y devuelve la ruta del MP4, o null si
+    /// algo falló.
     /// </summary>
     public async Task<string?> DownloadAsync(string videoUrl, CancellationToken ct = default)
     {
@@ -47,16 +56,18 @@ public partial class TrailerDownloadService(
         var psi = new ProcessStartInfo
         {
             FileName = string.IsNullOrWhiteSpace(settings.YtDlpPath) ? "yt-dlp" : settings.YtDlpPath,
-            // Solo video H.264 ≤720p (sin audio: se mutea igual y baja más rápido);
-            // fallbacks progresivos por si el formato exacto no existe.
-            // --extractor-args player_client=...: YouTube tira "confirm you're not a
-            // bot" contra IPs de datacenter (GitHub Actions). El fix real es --cookies
-            // (arriba); el PO token provider (bgutil) + los clientes web complementan.
-            // Configurable vía Instagram__YtDlpPlayerClients (default "web_safari,tv").
+            // Video H.264 ≤720p + su pista de audio (yt-dlp los muxea con el
+            // ffmpeg del sistema); fallbacks progresivos por si el formato
+            // exacto no existe. player_client=android_vr + salida por WARP
+            // (ProxyArg): la ÚNICA combinación que pasa el bot-check de YouTube
+            // desde GitHub Actions (matriz probada en vivo jul-2026 — ojo: las
+            // cookies ROMPEN a android_vr, no agregarlas). Configurable vía
+            // Instagram__YtDlpPlayerClients.
             Arguments =
-                "-f \"bv*[height<=720][ext=mp4]/bv*[height<=720]/best[height<=720]/best\" " +
+                "-f \"bv*[height<=720][ext=mp4]+ba[ext=m4a]/bv*[height<=720]+ba/b[height<=720]/best\" " +
+                "--merge-output-format mp4 " +
                 $"--extractor-args \"youtube:player_client={settings.YtDlpPlayerClients}\" " +
-                CookiesArg() +
+                ProxyArg() +
                 "--no-playlist --max-filesize 150M --socket-timeout 20 " +
                 $"-o \"{outputPath}\" \"{videoUrl}\"",
             RedirectStandardError = true,
@@ -125,10 +136,13 @@ public partial class TrailerDownloadService(
 
     /// <summary>
     /// Busca el tráiler en YouTube (ytsearch de yt-dlp, sin descargar nada) y
-    /// devuelve la URL watch del mejor candidato, o null si ninguno da
-    /// confianza. Mismo best-effort que la descarga: cualquier fallo → null.
+    /// devuelve el mejor candidato (URL + duración), o null si ninguno da
+    /// confianza. <paramref name="requireSpanish"/>=false relaja el requisito
+    /// de idioma (2do intento: tráiler oficial en cualquier idioma al que
+    /// después se le queman subtítulos es). Mismo best-effort que la descarga.
     /// </summary>
-    public async Task<string?> SearchAsync(string query, CancellationToken ct = default)
+    public async Task<TrailerCandidate?> SearchAsync(
+        string query, bool requireSpanish = true, CancellationToken ct = default)
     {
         // Las comillas romperían el parseo de argumentos del proceso
         var sanitized = query.Replace('"', ' ').Trim();
@@ -143,7 +157,7 @@ public partial class TrailerDownloadService(
                 $"\"ytsearch{SearchResults}:{sanitized}\" " +
                 $"--flat-playlist --print \"%(id)s{FieldSeparator}%(duration)s{FieldSeparator}%(title)s{FieldSeparator}%(channel)s\" " +
                 $"--extractor-args \"youtube:player_client={settings.YtDlpPlayerClients}\" " +
-                CookiesArg() +
+                ProxyArg() +
                 "--no-warnings --socket-timeout 20",
             RedirectStandardError = true,
             RedirectStandardOutput = true,
@@ -190,17 +204,19 @@ public partial class TrailerDownloadService(
                 return null;
             }
 
-            var videoId = PickBestSearchResult(lines);
-            if (videoId is null)
+            var best = PickBestSearchResult(lines, requireSpanish);
+            if (best is null)
             {
                 logger.LogInformation(
-                    "Búsqueda de tráiler sin candidato confiable para \"{Query}\" ({Count} resultados)",
-                    query, lines.Length);
+                    "Búsqueda de tráiler sin candidato confiable{Lang} para \"{Query}\" ({Count} resultados)",
+                    requireSpanish ? " en español" : "", query, lines.Length);
                 return null;
             }
 
-            logger.LogInformation("Tráiler encontrado por búsqueda: {Id} para \"{Query}\"", videoId, query);
-            return $"https://www.youtube.com/watch?v={videoId}";
+            logger.LogInformation("Tráiler encontrado por búsqueda: {Id} ({Dur}s) para \"{Query}\"",
+                best.Value.Id, best.Value.DurationSeconds, query);
+            return new TrailerCandidate(
+                $"https://www.youtube.com/watch?v={best.Value.Id}", best.Value.DurationSeconds);
         }
         catch (System.ComponentModel.Win32Exception)
         {
@@ -216,15 +232,21 @@ public partial class TrailerDownloadService(
 
     /// <summary>
     /// Elige el mejor resultado de búsqueda (líneas "id|~|duración|~|título|~|canal"
-    /// del --print de yt-dlp). Exige señal de tráiler en el título O canal oficial
-    /// (verificado en vivo: el teaser oficial de Aniplex decía solo "COMING 2028",
-    /// sin la palabra trailer). Sin confianza suficiente devuelve null y el reel
-    /// cae al slideshow: mejor sin video que con el video equivocado. Público
-    /// estático para tests.
+    /// del --print de yt-dlp). REQUISITO DE IDIOMA (pedido del usuario): el video
+    /// tiene que estar en español (doblaje latino o subtítulos incrustados) — la
+    /// audiencia es LATAM y el audio del tráiler va muteado, así que lo que importa
+    /// es el texto en pantalla. Los canales tipo "Crunchyroll en Español" suben la
+    /// versión doblada/subtitulada de casi todos los tráilers grandes. Además exige
+    /// señal de tráiler en el título o canal oficial. Sin candidato confiable EN
+    /// ESPAÑOL devuelve null y el reel cae al slideshow: mejor sin video que con
+    /// el video equivocado o en japonés. <paramref name="requireSpanish"/>=false
+    /// relaja SOLO el idioma (2do intento con subs quemados); el resto de las
+    /// reglas se mantiene. Público estático para tests.
     /// </summary>
-    public static string? PickBestSearchResult(IReadOnlyList<string> printedLines)
+    public static (string Id, double DurationSeconds)? PickBestSearchResult(
+        IReadOnlyList<string> printedLines, bool requireSpanish = true)
     {
-        string? bestId = null;
+        (string Id, double Duration)? best = null;
         var bestScore = -1;
 
         foreach (var parts in printedLines.Select(line => line.Split(FieldSeparator)))
@@ -237,6 +259,8 @@ public partial class TrailerDownloadService(
             var title = parts[2].ToLowerInvariant();
             var channel = parts[3].ToLowerInvariant();
 
+            // Requisito de idioma: sin señal de español en título o canal, afuera
+            if (requireSpanish && !SpanishRegex().IsMatch(title) && !SpanishRegex().IsMatch(channel)) continue;
             // Contenido de fans (reacciones/reviews/resúmenes/trailers falsos): nunca
             if (FanContentRegex().IsMatch(title)) continue;
             // Más de 6 min no es un tráiler: episodio completo, compilado, live
@@ -249,25 +273,33 @@ public partial class TrailerDownloadService(
             // desempata (el primero se queda).
             if (OfficialChannelRegex().IsMatch(channel)) score += 6;
             else if (title.Contains("official") || title.Contains("oficial")
-                     || channel.Contains("official") || title.Contains("公式") || channel.Contains("公式"))
+                     || channel.Contains("official"))
                 score += 2;
             if (duration is >= 10 and <= 300) score += 2;  // teasers arrancan en ~15s
 
             if (score > bestScore)
             {
                 bestScore = score;
-                bestId = id;
+                best = (id, duration);
             }
         }
 
         // Sin keyword de tráiler NI canal oficial (score < 4) no hay confianza
-        return bestScore >= 4 ? bestId : null;
+        return bestScore >= 4 ? best : null;
     }
 
     // trailer/teaser/PV/avance en varios idiomas; \b evita falsos positivos
     // (p. ej. "pvp"). 予告/特報/ティザー son los usos japoneses estándar.
     [GeneratedRegex(@"\b(trailer|tráiler|teaser|avance|pv|promo)\b|予告|特報|ティザー", RegexOptions.IgnoreCase)]
     private static partial Regex TrailerWordRegex();
+
+    // Señal de que el video está en español: doblaje latino o subtítulos
+    // incrustados ("Crunchyroll en Español", "TRÁILER OFICIAL (Doblaje latino)",
+    // "en español", "subtitulado"…). "Anime Onegai" es distribuidor LATAM.
+    // "spanish": YouTube traduce los nombres de canal según la región del
+    // requester (visto en vivo vía WARP: "Crunchyroll in Spanish").
+    [GeneratedRegex(@"españ|espanol|spanish|castellano|latino|latam|doblaje|doblad|subtitulad|sub\.? esp|onegai|tráiler|avance", RegexOptions.IgnoreCase)]
+    private static partial Regex SpanishRegex();
 
     [GeneratedRegex(@"\b(reaction|reacci[oó]n|review|rese[ñn]a|an[aá]lisis|analysis|explicado|explained|resumen|recap|amv|cosplay|theory|teor[ií]a|concept|fan[ -]?made)\b", RegexOptions.IgnoreCase)]
     private static partial Regex FanContentRegex();
@@ -278,14 +310,164 @@ public partial class TrailerDownloadService(
     private static partial Regex OfficialChannelRegex();
 
     /// <summary>
-    /// Cookies de una sesión logueada: es lo que realmente evade el "confirm
-    /// you're not a bot" desde IPs de datacenter (el PO token solo no alcanza).
-    /// El workflow escribe el secret a un archivo; solo lo pasamos si existe
-    /// (sin secret cargado → sin --cookies, best-effort como siempre).
+    /// Valida que un video puntual (p. ej. el embebido en el artículo fuente)
+    /// cumpla las MISMAS reglas que los resultados de búsqueda — en particular
+    /// el requisito de español: kudasai suele embeber el PV japonés, y ese ya
+    /// no sirve. Devuelve el candidato (URL + duración) si pasa, null si no
+    /// (→ se busca la versión latina, o slideshow).
     /// </summary>
-    private string CookiesArg() =>
-        !string.IsNullOrWhiteSpace(settings.YtDlpCookiesPath) && File.Exists(settings.YtDlpCookiesPath)
-            ? $"--cookies \"{settings.YtDlpCookiesPath}\" "
+    public async Task<TrailerCandidate?> ValidateAsync(string videoUrl, CancellationToken ct = default)
+    {
+        var line = await RunYtDlpPrintAsync(
+            $"--skip-download --print \"%(id)s{FieldSeparator}%(duration)s{FieldSeparator}%(title)s{FieldSeparator}%(channel)s\" " +
+            $"--extractor-args \"youtube:player_client={settings.YtDlpPlayerClients}\" " +
+            ProxyArg() +
+            $"--no-warnings --socket-timeout 20 \"{videoUrl}\"", ct);
+
+        if (line is null) return null;
+
+        var best = PickBestSearchResult([line]);
+        if (best is null)
+        {
+            logger.LogInformation(
+                "Tráiler embebido descartado (sin señal de español/tráiler): {Line}",
+                line.Length > 120 ? line[..120] : line);
+            return null;
+        }
+        return new TrailerCandidate(videoUrl, best.Value.DurationSeconds);
+    }
+
+    /// <summary>
+    /// Baja los subtítulos MANUALES en español de un video (es, es-419, es-ES…)
+    /// como .vtt para quemarlos en el reel. Los subtítulos AUTOMÁTICOS
+    /// (traducción por ASR) se ignoran a propósito: su calidad no da para un
+    /// post publicado. Devuelve la ruta del .vtt o null; el caller limpia el
+    /// directorio con <see cref="CleanUp"/>.
+    /// </summary>
+    public async Task<string?> DownloadSpanishSubtitlesAsync(string videoUrl, CancellationToken ct = default)
+    {
+        var workDir = Path.Join(Path.GetTempPath(), $"ig-subs-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(workDir);
+
+        var psi = new ProcessStartInfo
+        {
+            FileName = string.IsNullOrWhiteSpace(settings.YtDlpPath) ? "yt-dlp" : settings.YtDlpPath,
+            // --write-subs = SOLO subtítulos manuales (sin --write-auto-subs)
+            Arguments =
+                "--skip-download --write-subs --sub-langs \"es.*\" --sub-format vtt " +
+                $"--extractor-args \"youtube:player_client={settings.YtDlpPlayerClients}\" " +
+                ProxyArg() +
+                $"--no-warnings --socket-timeout 20 -P \"{workDir}\" -o subs \"{videoUrl}\"",
+            RedirectStandardError = true,
+            RedirectStandardOutput = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+
+        try
+        {
+            using var process = Process.Start(psi)
+                ?? throw new InvalidOperationException("Process.Start returned null");
+            process.ErrorDataReceived += (_, _) => { };
+            process.OutputDataReceived += (_, _) => { };
+            process.BeginErrorReadLine();
+            process.BeginOutputReadLine();
+
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeoutCts.CancelAfter(TimeSpan.FromSeconds(60));
+            try
+            {
+                await process.WaitForExitAsync(timeoutCts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                try { process.Kill(entireProcessTree: true); }
+                catch (InvalidOperationException) { /* ya salió */ }
+                catch (System.ComponentModel.Win32Exception) { /* best-effort */ }
+                CleanUp(workDir);
+                return null;
+            }
+
+            // es-419 (LATAM) primero si hay varias variantes
+            var subs = Directory.GetFiles(workDir, "*.vtt")
+                .OrderByDescending(f => f.Contains("es-419") ? 1 : 0)
+                .FirstOrDefault();
+            if (subs is null)
+            {
+                CleanUp(workDir);
+                return null;
+            }
+
+            logger.LogInformation("Subtítulos en español encontrados para {Url}: {File}",
+                videoUrl, Path.GetFileName(subs));
+            return subs;
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            logger.LogDebug(ex, "Descarga de subtítulos falló para {Url}", videoUrl);
+            CleanUp(workDir);
+            return null;
+        }
+    }
+
+    /// <summary>Corre yt-dlp esperando UNA línea por stdout; null si falla.</summary>
+    private async Task<string?> RunYtDlpPrintAsync(string arguments, CancellationToken ct)
+    {
+        var psi = new ProcessStartInfo
+        {
+            FileName = string.IsNullOrWhiteSpace(settings.YtDlpPath) ? "yt-dlp" : settings.YtDlpPath,
+            Arguments = arguments,
+            RedirectStandardError = true,
+            RedirectStandardOutput = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+
+        try
+        {
+            using var process = Process.Start(psi)
+                ?? throw new InvalidOperationException("Process.Start returned null");
+
+            var stdout = new StringBuilder();
+            process.OutputDataReceived += (_, e) => { if (e.Data is not null) stdout.AppendLine(e.Data); };
+            process.ErrorDataReceived += (_, _) => { };
+            process.BeginOutputReadLine();
+            process.BeginErrorReadLine();
+
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeoutCts.CancelAfter(TimeSpan.FromSeconds(45));
+            try
+            {
+                await process.WaitForExitAsync(timeoutCts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                try { process.Kill(entireProcessTree: true); }
+                catch (InvalidOperationException) { /* ya salió */ }
+                catch (System.ComponentModel.Win32Exception) { /* best-effort */ }
+                return null;
+            }
+
+            var line = stdout.ToString().Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .FirstOrDefault();
+            return process.ExitCode == 0 ? line : null;
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            logger.LogDebug(ex, "yt-dlp print falló");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Proxy de salida para TODOS los comandos de yt-dlp. YouTube bloquea por IP
+    /// a los runners de GitHub (confirmado jul-2026: 21/21 configuraciones
+    /// cliente×cookies fallaron con el bot-check); el workflow levanta Cloudflare
+    /// WARP (wgcf + wireproxy → SOCKS5 local) y pasa la URL acá. Vacío = directo.
+    /// </summary>
+    private string ProxyArg() =>
+        !string.IsNullOrWhiteSpace(settings.YtDlpProxy)
+            ? $"--proxy \"{settings.YtDlpProxy}\" "
             : string.Empty;
 
     /// <summary>Borra el directorio temporal del clip (llamar al terminar de usarlo).</summary>

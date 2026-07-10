@@ -298,36 +298,45 @@ public class AnimeNewsPublisherService(
     {
         try
         {
-            var music = await musicService.SelectAndDownloadForNewsAsync(
-                content.Headline, content.Lede, item.RssGuid, ct);
-            // Crédito CC BY: va como texto chico DENTRO del video (nunca más en
-            // el caption). Tracks propios no traen atribución → sin crédito.
-            var musicCredit = music?.Track.Attribution;
-
             // Cadena de formatos, de mejor a más simple:
-            //   1. Tráiler + titular (embebido en el artículo, o ENCONTRADO por
-            //      búsqueda IA en YouTube cuando la noticia amerita video)
-            //   2. Slideshow de escenas (cover + puntos clave + CTA)
-            //   3. Motion-card de capas (tarjeta única)
+            //   1. Tráiler CON SU AUDIO ORIGINAL + titular + slides informativas
+            //      (el embebido del artículo si pasa la validación de español,
+            //      o el ENCONTRADO por búsqueda IA en YouTube)
+            //   2. Slideshow de escenas (cover + puntos clave + CTA, con música)
+            //   3. Motion-card de capas (tarjeta única, con música)
             byte[]? videoBytes = null;
             byte[] coverJpeg;
 
             if (igSettings.TrailerReelEnabled)
             {
-                var trailerVideoUrl = trailerUrl;
-                if (trailerVideoUrl is null && igSettings.TrailerSearchEnabled)
-                    trailerVideoUrl = await SearchTrailerUrlAsync(item, content, ct);
+                // El embebido del artículo se valida (kudasai suele embeber el PV
+                // japonés — el requisito es español latino); si no pasa, se busca
+                // la versión latina en YouTube.
+                var candidate = trailerUrl is null
+                    ? null
+                    : await trailerService.ValidateAsync(trailerUrl, ct);
+                if (candidate is null && igSettings.TrailerSearchEnabled)
+                    candidate = await SearchTrailerAsync(item, content, ct);
 
-                var clipPath = trailerVideoUrl is null ? null : await trailerService.DownloadAsync(trailerVideoUrl, ct);
+                var clipPath = candidate is null ? null : await trailerService.DownloadAsync(candidate.Url, ct);
                 if (clipPath is not null)
                 {
                     try
                     {
-                        var (bg, overlay) = imageService.GenerateVideoReelLayers(content, musicCredit);
+                        // Slides informativas para DESPUÉS del tráiler: puntos
+                        // clave + CTA (sin cover — el tráiler es la apertura).
+                        // Sin crédito de música: suena el audio del tráiler.
+                        var allSlides = await imageService.GenerateReelSlidesAsync(
+                            item, content, images, maxKeyPoints: 2, musicCredit: null, ct: ct);
+                        var infoSlides = allSlides.Skip(1).ToList();
+
+                        var (bg, overlay) = imageService.GenerateVideoReelLayers(content);
                         videoBytes = await videoService.GenerateTrailerReelAsync(
-                            clipPath, bg, overlay, music?.Mp3, music?.Track.StartSeconds ?? 0, ct);
-                        logger.LogInformation("AnimeNews: reel con TRÁILER para \"{Title}\" ({Url})",
-                            Truncate(item.Title, 60), trailerVideoUrl);
+                            clipPath, bg, overlay, infoSlides, candidate!.DurationSeconds,
+                            candidate.SubtitlesPath, ct);
+                        logger.LogInformation("AnimeNews: reel con TRÁILER para \"{Title}\" ({Url}{Subs})",
+                            Truncate(item.Title, 60), candidate.Url,
+                            candidate.SubtitlesPath is null ? "" : ", subs es quemados");
                     }
                     catch (Exception ex) when (!ct.IsCancellationRequested && ex is not FfmpegNotAvailableException)
                     {
@@ -336,12 +345,24 @@ public class AnimeNewsPublisherService(
                     finally
                     {
                         TrailerDownloadService.CleanUp(clipPath);
+                        // candidate no puede ser null acá: clipPath solo se obtiene de
+                        // candidate.Url (línea 321). El compilador no extiende esa
+                        // garantía al bloque finally, de ahí el null-forgiving.
+                        if (candidate!.SubtitlesPath is not null)
+                            TrailerDownloadService.CleanUp(candidate.SubtitlesPath);
                     }
                 }
             }
 
             if (videoBytes is null)
             {
+                // La música CC/propia es SOLO para el slideshow — el reel de
+                // tráiler usa el audio original del video. El crédito CC BY va
+                // como texto chico dentro del video (nunca en el caption).
+                var music = await musicService.SelectAndDownloadForNewsAsync(
+                    content.Headline, content.Lede, item.RssGuid, ct);
+                var musicCredit = music?.Track.Attribution;
+
                 try
                 {
                     var slides = await imageService.GenerateReelSlidesAsync(
@@ -406,7 +427,7 @@ public class AnimeNewsPublisherService(
     /// teaser/temporada/película — NO novelas, manga, figuras o luto) y arma la
     /// query; sin IA cae a la heurística por keywords. Best-effort → null.
     /// </summary>
-    private async Task<string?> SearchTrailerUrlAsync(
+    private async Task<TrailerCandidate?> SearchTrailerAsync(
         AnimeNewsItem item, NewsContent content, CancellationToken ct)
     {
         string? query = null;
@@ -421,8 +442,10 @@ public class AnimeNewsPublisherService(
                     "cuando la noticia anuncia material audiovisual: nuevo tráiler/teaser/PV, nueva temporada, " +
                     "película, adaptación a anime o fecha de estreno. NO corresponde para novelas o manga sin " +
                     "anime confirmado, figuras, eventos, rankings, fallecimientos ni polémicas. Si corresponde, " +
-                    "armá la búsqueda de YouTube: nombre de la obra en romaji + qué video es " +
-                    "(ej.: \"Sword Art Online Integral Domain official trailer\"). " +
+                    "armá la búsqueda de YouTube apuntando a la VERSIÓN EN ESPAÑOL LATINO (doblada o subtitulada " +
+                    "— la audiencia es LATAM y canales como Crunchyroll en Español suben esa versión): " +
+                    "nombre de la obra + \"tráiler oficial español latino\" " +
+                    "(ej.: \"Solo Leveling temporada 2 tráiler oficial español latino\"). " +
                     "Respondé SOLO un JSON: {\"buscar\": true|false, \"query\": \"...\"}",
                     $"Titular: {item.Title}\nResumen: {Truncate(item.Summary ?? content.Lede ?? string.Empty, 400)}",
                     useWebSearch: false, ct);
@@ -448,20 +471,41 @@ public class AnimeNewsPublisherService(
         if (string.IsNullOrWhiteSpace(query)) return null;
 
         logger.LogInformation("AnimeNews: buscando tráiler en YouTube → \"{Query}\"", query);
-        return await trailerService.SearchAsync(query!, ct);
+        var candidate = await trailerService.SearchAsync(query!, requireSpanish: true, ct: ct);
+        if (candidate is not null) return candidate;
+
+        // 2do intento (pedido del usuario): sin versión latina, sirve el tráiler
+        // oficial en cualquier idioma SI tiene subtítulos manuales en español
+        // para quemar en el video. Sin subs manuales → slideshow.
+        var anyQuery = query!.Replace("español latino", "", StringComparison.OrdinalIgnoreCase).Trim();
+        var any = await trailerService.SearchAsync(anyQuery, requireSpanish: false, ct: ct);
+        if (any is null) return null;
+
+        var subs = await trailerService.DownloadSpanishSubtitlesAsync(any.Url, ct);
+        if (subs is null)
+        {
+            logger.LogInformation(
+                "AnimeNews: tráiler {Url} sin versión latina ni subtítulos manuales en español — slideshow",
+                any.Url);
+            return null;
+        }
+
+        logger.LogInformation("AnimeNews: tráiler {Url} con subtítulos es para quemar", any.Url);
+        return any with { SubtitlesPath = subs };
     }
 
     /// <summary>
     /// Fallback sin IA: solo busca cuando el titular anuncia material
-    /// audiovisual; la query es el titular + "trailer" (el nombre de la obra ya
-    /// viene en el titular). Público estático para tests.
+    /// audiovisual; la query es el titular + "tráiler oficial español latino"
+    /// (el nombre de la obra ya viene en el titular, y el sufijo apunta a la
+    /// versión doblada/subtitulada para LATAM). Público estático para tests.
     /// </summary>
     public static string? HeuristicTrailerQuery(string title)
     {
         var t = title.ToLowerInvariant();
         var audiovisual = new[] { "tráiler", "trailer", "teaser", "avance", "temporada",
                                   "película", "pelicula", "live-action", "adaptación", "adaptacion", "estreno" };
-        return audiovisual.Any(t.Contains) ? $"{title} trailer" : null;
+        return audiovisual.Any(t.Contains) ? $"{title} tráiler oficial español latino" : null;
     }
 
     // ── Caption ──────────────────────────────────────────────────────────────
