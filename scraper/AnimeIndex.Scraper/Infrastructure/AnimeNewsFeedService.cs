@@ -45,7 +45,7 @@ public partial class AnimeNewsFeedService(
                 allFetched.AddRange(items);
                 logger.LogDebug("AnimeNews: fetched {Count} items from {Key}", items.Count, feed.Key);
             }
-            catch (Exception ex) when (ex is not TaskCanceledException { CancellationToken.IsCancellationRequested: true })
+            catch (Exception ex) when (!ct.IsCancellationRequested)
             {
                 logger.LogWarning(ex, "AnimeNews: failed to fetch feed {Key} ({Url})", feed.Key, feed.Url);
             }
@@ -92,7 +92,7 @@ public partial class AnimeNewsFeedService(
                 if (!string.IsNullOrWhiteSpace(fullBody))
                     item.Summary = fullBody; // replace RSS excerpt with full article text
             }
-            catch (Exception ex) when (ex is not TaskCanceledException { CancellationToken.IsCancellationRequested: true })
+            catch (Exception ex) when (!ct.IsCancellationRequested)
             {
                 logger.LogDebug(ex, "AnimeNews: could not fetch article page for {Url}", item.ArticleUrl);
             }
