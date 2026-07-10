@@ -74,8 +74,11 @@ public class InstagramSettings
     // bloqueada).
     public string YtDlpProxy { get; set; } = string.Empty;
 
-    // Duración del reel de tráiler en segundos (≤60 por si se reusa como story).
-    public int TrailerClipSeconds { get; set; } = 18;
+    // Máximo de segundos de TRÁILER en el reel (la gente quiere VER el tráiler
+    // — cortarlo a los 18s era matar el formato). Si el tráiler dura menos, se
+    // usa lo que haya; el total del reel (tráiler + slides informativas + CTA)
+    // se capa solo a ~60s.
+    public int TrailerClipSeconds { get; set; } = 45;
 
     // ── Suno (música generada FRESCA por reel, vía sunoapi.org — tercero) ──
     // Con la key configurada, cada reel de noticias genera un track instrumental

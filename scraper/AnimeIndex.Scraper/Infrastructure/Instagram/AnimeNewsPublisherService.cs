@@ -298,17 +298,12 @@ public class AnimeNewsPublisherService(
     {
         try
         {
-            var music = await musicService.SelectAndDownloadForNewsAsync(
-                content.Headline, content.Lede, item.RssGuid, ct);
-            // Crédito CC BY: va como texto chico DENTRO del video (nunca más en
-            // el caption). Tracks propios no traen atribución → sin crédito.
-            var musicCredit = music?.Track.Attribution;
-
             // Cadena de formatos, de mejor a más simple:
-            //   1. Tráiler + titular (embebido en el artículo, o ENCONTRADO por
-            //      búsqueda IA en YouTube cuando la noticia amerita video)
-            //   2. Slideshow de escenas (cover + puntos clave + CTA)
-            //   3. Motion-card de capas (tarjeta única)
+            //   1. Tráiler CON SU AUDIO ORIGINAL + titular + slides informativas
+            //      (el embebido del artículo si pasa la validación de español,
+            //      o el ENCONTRADO por búsqueda IA en YouTube)
+            //   2. Slideshow de escenas (cover + puntos clave + CTA, con música)
+            //   3. Motion-card de capas (tarjeta única, con música)
             byte[]? videoBytes = null;
             byte[] coverJpeg;
 
@@ -317,22 +312,29 @@ public class AnimeNewsPublisherService(
                 // El embebido del artículo se valida (kudasai suele embeber el PV
                 // japonés — el requisito es español latino); si no pasa, se busca
                 // la versión latina en YouTube.
-                var trailerVideoUrl = trailerUrl is null
+                var candidate = trailerUrl is null
                     ? null
                     : await trailerService.ValidateAsync(trailerUrl, ct);
-                if (trailerVideoUrl is null && igSettings.TrailerSearchEnabled)
-                    trailerVideoUrl = await SearchTrailerUrlAsync(item, content, ct);
+                if (candidate is null && igSettings.TrailerSearchEnabled)
+                    candidate = await SearchTrailerAsync(item, content, ct);
 
-                var clipPath = trailerVideoUrl is null ? null : await trailerService.DownloadAsync(trailerVideoUrl, ct);
+                var clipPath = candidate is null ? null : await trailerService.DownloadAsync(candidate.Url, ct);
                 if (clipPath is not null)
                 {
                     try
                     {
-                        var (bg, overlay) = imageService.GenerateVideoReelLayers(content, musicCredit);
+                        // Slides informativas para DESPUÉS del tráiler: puntos
+                        // clave + CTA (sin cover — el tráiler es la apertura).
+                        // Sin crédito de música: suena el audio del tráiler.
+                        var allSlides = await imageService.GenerateReelSlidesAsync(
+                            item, content, images, maxKeyPoints: 2, musicCredit: null, ct: ct);
+                        var infoSlides = allSlides.Skip(1).ToList();
+
+                        var (bg, overlay) = imageService.GenerateVideoReelLayers(content);
                         videoBytes = await videoService.GenerateTrailerReelAsync(
-                            clipPath, bg, overlay, music?.Mp3, music?.Track.StartSeconds ?? 0, ct);
+                            clipPath, bg, overlay, infoSlides, candidate!.DurationSeconds, ct);
                         logger.LogInformation("AnimeNews: reel con TRÁILER para \"{Title}\" ({Url})",
-                            Truncate(item.Title, 60), trailerVideoUrl);
+                            Truncate(item.Title, 60), candidate.Url);
                     }
                     catch (Exception ex) when (!ct.IsCancellationRequested && ex is not FfmpegNotAvailableException)
                     {
@@ -347,6 +349,13 @@ public class AnimeNewsPublisherService(
 
             if (videoBytes is null)
             {
+                // La música CC/propia es SOLO para el slideshow — el reel de
+                // tráiler usa el audio original del video. El crédito CC BY va
+                // como texto chico dentro del video (nunca en el caption).
+                var music = await musicService.SelectAndDownloadForNewsAsync(
+                    content.Headline, content.Lede, item.RssGuid, ct);
+                var musicCredit = music?.Track.Attribution;
+
                 try
                 {
                     var slides = await imageService.GenerateReelSlidesAsync(
@@ -411,7 +420,7 @@ public class AnimeNewsPublisherService(
     /// teaser/temporada/película — NO novelas, manga, figuras o luto) y arma la
     /// query; sin IA cae a la heurística por keywords. Best-effort → null.
     /// </summary>
-    private async Task<string?> SearchTrailerUrlAsync(
+    private async Task<TrailerCandidate?> SearchTrailerAsync(
         AnimeNewsItem item, NewsContent content, CancellationToken ct)
     {
         string? query = null;

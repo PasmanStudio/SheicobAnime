@@ -96,18 +96,28 @@ public class InstagramVideoService(
         }
     }
 
+    // ── Reel de tráiler ──
+    // El tráiler entra desde el segundo 1.5 (saltea logos/negro inicial); las
+    // slides informativas de después duran 3.5s cada una; el audio ORIGINAL
+    // del tráiler suena de fondo durante todo el reel con fade-out al cierre.
+    private const double TrailerStartSkip = 1.5;
+    private const double InfoSlideSeconds = 3.5;
+    private const double TrailerAudioFadeOut = 1.8;
+
     /// <summary>
-    /// Renders el Reel "tráiler + titular": el PV muteado como banda central
-    /// sobre el fondo abismo, con el overlay de texto de marca entrando con
-    /// fade/slide y nuestra música. El formato de las cuentas grandes de
+    /// Renders el Reel "tráiler + titular": el PV como banda central sobre el
+    /// fondo abismo CON SU AUDIO ORIGINAL (el sonido del tráiler es lo que la
+    /// gente quiere escuchar), overlay de texto de marca, y a continuación las
+    /// slides informativas de la noticia (puntos clave + CTA) con el audio del
+    /// tráiler siguiendo de fondo. El formato de las cuentas grandes de
     /// noticias de anime.
     /// </summary>
     public async Task<byte[]> GenerateTrailerReelAsync(
         string trailerPath,
         byte[] backgroundJpeg,
         byte[] overlayPng,
-        byte[]? musicMp3 = null,
-        int musicStartSeconds = 0,
+        IReadOnlyList<byte[]> infoSlides,
+        double trailerDurationSeconds,
         CancellationToken ct = default)
     {
         var workDir = Path.Join(Path.GetTempPath(), $"ig-reel-{Guid.NewGuid():N}");
@@ -115,26 +125,36 @@ public class InstagramVideoService(
         var bgPath = Path.Join(workDir, "bg.jpg");
         var overlayPath = Path.Join(workDir, "overlay.png");
         var outputPath = Path.Join(workDir, "reel.mp4");
-        string? musicPath = null;
 
         try
         {
             await File.WriteAllBytesAsync(bgPath, backgroundJpeg, ct);
             await File.WriteAllBytesAsync(overlayPath, overlayPng, ct);
-            if (musicMp3 is not null)
+            var slidePaths = new List<string>(infoSlides.Count);
+            for (var i = 0; i < infoSlides.Count; i++)
             {
-                musicPath = Path.Join(workDir, "music.mp3");
-                await File.WriteAllBytesAsync(musicPath, musicMp3, ct);
+                var p = Path.Join(workDir, $"info-{i}.jpg");
+                await File.WriteAllBytesAsync(p, infoSlides[i], ct);
+                slidePaths.Add(p);
             }
 
+            // Cuánto tráiler mostrar: lo disponible tras saltear la intro, capado
+            // por settings y porque el reel completo no debería pasar de ~60s.
+            var maxForBudget = 59.0 - slidePaths.Count * InfoSlideSeconds;
+            var available = trailerDurationSeconds > TrailerStartSkip + 4
+                ? trailerDurationSeconds - TrailerStartSkip
+                : settings.TrailerClipSeconds;   // duración desconocida → usar el cap
+            var trailerSeconds = Math.Round(
+                Math.Min(Math.Min(available, settings.TrailerClipSeconds), maxForBudget), 1);
+
             var args = BuildTrailerReelArguments(
-                trailerPath, bgPath, overlayPath, outputPath,
-                settings.TrailerClipSeconds, musicPath, musicStartSeconds);
+                trailerPath, bgPath, overlayPath, slidePaths, outputPath, trailerSeconds);
             await RunFfmpegAsync(args, ct);
 
             var bytes = await File.ReadAllBytesAsync(outputPath, ct);
-            logger.LogInformation("Generated trailer reel: {Seconds}s, {Mb:F1} MB",
-                settings.TrailerClipSeconds, bytes.Length / 1024.0 / 1024.0);
+            logger.LogInformation(
+                "Generated trailer reel: {Trailer}s de tráiler + {Slides} slides, {Mb:F1} MB",
+                trailerSeconds, slidePaths.Count, bytes.Length / 1024.0 / 1024.0);
             return bytes;
         }
         finally
@@ -147,63 +167,83 @@ public class InstagramVideoService(
 
     /// <summary>
     /// Público + static para poder testear sin ffmpeg. Inputs: 0 = fondo (imagen
-    /// loopeada), 1 = tráiler (MUTEADO — nunca se mapea su audio), 2 = overlay
-    /// de texto, 3 = música/anullsrc. El tráiler entra desde el segundo 1.5
-    /// (saltea logos/negro inicial), escalado a 1080 de ancho, banda centrada en
-    /// y=240; si es más corto que el reel, congela el último frame (tpad).
+    /// loopeada), 1 = tráiler (video + SU AUDIO — nunca música nuestra), 2 =
+    /// overlay de texto, 3.. = slides informativas. El tráiler entra desde el
+    /// segundo 1.5 (saltea logos/negro inicial), escalado a 1080 de ancho, banda
+    /// centrada en y=240; después se concatenan las slides (Ken Burns suave)
+    /// mientras el audio del tráiler sigue sonando, con fade-out al cierre.
     /// </summary>
     public static string BuildTrailerReelArguments(
-        string trailerPath, string backgroundPath, string overlayPath, string outputPath,
-        int durationSeconds, string? musicPath = null, int musicStartSeconds = 0)
+        string trailerPath, string backgroundPath, string overlayPath,
+        IReadOnlyList<string> infoSlidePaths, string outputPath, double trailerSeconds)
     {
         var inv = System.Globalization.CultureInfo.InvariantCulture;
-        var durArg = durationSeconds.ToString(inv);
+        var totalSeconds = trailerSeconds + infoSlidePaths.Count * InfoSlideSeconds;
+        var trailArg = trailerSeconds.ToString("0.0#", inv);
+        var totalArg = totalSeconds.ToString("0.0#", inv);
+        var slideArg = InfoSlideSeconds.ToString("0.0#", inv);
 
-        var filter =
+        var inputs = new List<string>
+        {
+            $"-loop 1 -framerate {Fps} -t {trailArg} -i \"{backgroundPath}\"",
+            // -ss antes de -i: seek rápido; trae video Y audio del tráiler
+            $"-ss {TrailerStartSkip.ToString("0.0#", inv)} -i \"{trailerPath}\"",
+            $"-loop 1 -framerate {Fps} -t {trailArg} -i \"{overlayPath}\"",
+        };
+        // Slides: input de UN frame (sin -loop) + zoompan de d frames — mismo
+        // patrón del slideshow (con -loop+d se multiplican los frames).
+        foreach (var p in infoSlidePaths)
+            inputs.Add($"-i \"{p}\"");
+
+        var filters = new List<string>
+        {
             // Tráiler: 1080 de ancho, banda capada a 900px de alto (por si es
-            // vertical), congelado al final si el clip es corto
+            // vertical), congelado al final si el clip quedó corto
             "[1:v]scale=1080:-2,setsar=1,fps=30," +
             "crop=1080:'min(ih,900)':0:'(ih-min(ih,900))/2'," +
-            $"tpad=stop_mode=clone:stop_duration={durArg}[tr];" +
+            $"tpad=stop_mode=clone:stop_duration={totalArg}[tr]",
             // Fondo abismo + tráiler como banda superior-central
-            "[0:v][tr]overlay=x='(W-w)/2':y=240[base];" +
+            "[0:v][tr]overlay=x='(W-w)/2':y=240[base]",
             // Overlay de texto de marca: mismo slide-up + fade del motion-card
-            "[2:v]format=rgba,fade=t=in:st=0.5:d=0.8:alpha=1[ov];" +
+            "[2:v]format=rgba,fade=t=in:st=0.5:d=0.8:alpha=1[ov]",
             "[base][ov]overlay=x=0:y='pow(1-min(1,max(0,(t-0.5)/0.9)),3)*80'," +
-            "fade=t=in:st=0:d=0.4,format=yuv420p[v]";
+            $"fade=t=in:st=0:d=0.4,trim=duration={trailArg},setpts=PTS-STARTPTS[seg0]",
+        };
 
-        string audioInput, fullFilter, audioMap;
-        if (musicPath is not null)
+        // Cada slide informativa: Ken Burns suave y duración fija
+        var slideFrames = (int)(InfoSlideSeconds * Fps);
+        var zoomStep = ((SlideMaxZoom - 1.0) / slideFrames).ToString("0.00000000", inv);
+        for (var i = 0; i < infoSlidePaths.Count; i++)
         {
-            var fadeOutStart = Math.Max(0, durationSeconds - 1.5).ToString("0.0#", inv);
-            audioInput = $"-ss {musicStartSeconds} -t {durArg} -i \"{musicPath}\"";
-            fullFilter = filter + ";" +
-                $"[3:a]afade=t=in:st=0:d=0.8,afade=t=out:st={fadeOutStart}:d=1.5," +
-                "loudnorm=I=-16:TP=-1.5:LRA=11[a]";
-            audioMap = "-map [a]";
+            filters.Add(
+                $"[{i + 3}:v]scale={OutWidth * 2}:{OutHeight * 2}:flags=lanczos," +
+                $"zoompan=z='min(1+on*{zoomStep},{SlideMaxZoom.ToString("0.00", inv)})':d={slideFrames}" +
+                $":x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s={OutWidth}x{OutHeight}:fps={Fps}[info{i}]");
         }
-        else
-        {
-            audioInput = $"-f lavfi -t {durArg} -i anullsrc=channel_layout=stereo:sample_rate=44100";
-            fullFilter = filter;
-            audioMap = "-map 3:a";
-        }
+
+        // Tráiler + slides en una sola línea de tiempo
+        var segments = "[seg0]" + string.Concat(
+            Enumerable.Range(0, infoSlidePaths.Count).Select(i => $"[info{i}]"));
+        filters.Add($"{segments}concat=n={infoSlidePaths.Count + 1}:v=1:a=0,format=yuv420p[v]");
+
+        // Audio: el ORIGINAL del tráiler, sonando también de fondo durante las
+        // slides; apad cubre tráilers más cortos que el reel; fade-out al cierre.
+        var fadeOutStart = Math.Max(0, totalSeconds - TrailerAudioFadeOut).ToString("0.0#", inv);
+        filters.Add(
+            $"[1:a]apad,atrim=0:{totalArg}," +
+            $"afade=t=out:st={fadeOutStart}:d={TrailerAudioFadeOut.ToString("0.0#", inv)}," +
+            "loudnorm=I=-16:TP=-1.5:LRA=11[a]");
 
         return string.Join(' ',
             "-y",
-            $"-loop 1 -framerate {Fps} -t {durArg} -i \"{backgroundPath}\"",
-            // -ss antes de -i: seek rápido; el tráiler entra sin su audio
-            $"-ss 1.5 -i \"{trailerPath}\"",
-            $"-loop 1 -framerate {Fps} -t {durArg} -i \"{overlayPath}\"",
-            audioInput,
-            $"-filter_complex \"{fullFilter}\"",
-            $"-map [v] {audioMap}",
-            $"-t {durArg} -r {Fps}",
+            string.Join(' ', inputs),
+            $"-filter_complex \"{string.Join(';', filters)}\"",
+            "-map [v] -map [a]",
+            $"-t {totalArg} -r {Fps}",
             "-c:v libx264 -profile:v high -preset medium -flags +cgop -g 60 -sc_threshold 0",
             "-b:v 6M -maxrate 8M -bufsize 12M",
             "-c:a aac -b:a 128k -ar 44100",
             "-movflags +faststart",
-            "-shortest",
             $"\"{outputPath}\"");
     }
 

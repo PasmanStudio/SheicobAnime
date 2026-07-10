@@ -7,12 +7,15 @@ using System.Text.RegularExpressions;
 
 namespace AnimeIndex.Scraper.Infrastructure.Instagram;
 
+/// <summary>Tráiler elegido: URL watch + duración (para armar el reel).</summary>
+public sealed record TrailerCandidate(string Url, double DurationSeconds);
+
 /// <summary>
-/// Descarga un tráiler/PV de YouTube con yt-dlp para usarlo de fondo en el
-/// Reel de noticias (formato "video + titular" — los PV son material
-/// promocional que los estudios publican para difusión; va MUTEADO con
-/// nuestra música encima). También BUSCA el tráiler en YouTube (ytsearch)
-/// cuando el artículo no embebe ninguno — que es el caso típico.
+/// Descarga un tráiler/PV de YouTube con yt-dlp para usarlo en el Reel de
+/// noticias (formato "video + titular" — los PV son material promocional que
+/// los estudios publican para difusión; va CON SU AUDIO ORIGINAL, que es lo
+/// que la gente quiere escuchar). También BUSCA el tráiler en YouTube
+/// (ytsearch) cuando el artículo no embebe ninguno — que es el caso típico.
 ///
 /// Best-effort por diseño: yt-dlp puede faltar (dev local), YouTube puede
 /// bloquear IPs de datacenter, el video puede estar region-locked — TODO
@@ -35,8 +38,9 @@ public partial class TrailerDownloadService(
     private const string FieldSeparator = "|~|";
 
     /// <summary>
-    /// Descarga el video (solo stream de video, ≤720p — el audio se descarta
-    /// igual) y devuelve la ruta del MP4, o null si algo falló.
+    /// Descarga el video CON su audio original (≤720p — el sonido del tráiler
+    /// es parte del atractivo del reel) y devuelve la ruta del MP4, o null si
+    /// algo falló.
     /// </summary>
     public async Task<string?> DownloadAsync(string videoUrl, CancellationToken ct = default)
     {
@@ -47,14 +51,16 @@ public partial class TrailerDownloadService(
         var psi = new ProcessStartInfo
         {
             FileName = string.IsNullOrWhiteSpace(settings.YtDlpPath) ? "yt-dlp" : settings.YtDlpPath,
-            // Solo video H.264 ≤720p (sin audio: se mutea igual y baja más rápido);
-            // fallbacks progresivos por si el formato exacto no existe.
-            // player_client=android_vr + salida por WARP (ProxyArg): la ÚNICA
-            // combinación que pasa el bot-check de YouTube desde GitHub Actions
-            // (matriz probada en vivo jul-2026 — ojo: las cookies ROMPEN a
-            // android_vr, no agregarlas). Configurable vía Instagram__YtDlpPlayerClients.
+            // Video H.264 ≤720p + su pista de audio (yt-dlp los muxea con el
+            // ffmpeg del sistema); fallbacks progresivos por si el formato
+            // exacto no existe. player_client=android_vr + salida por WARP
+            // (ProxyArg): la ÚNICA combinación que pasa el bot-check de YouTube
+            // desde GitHub Actions (matriz probada en vivo jul-2026 — ojo: las
+            // cookies ROMPEN a android_vr, no agregarlas). Configurable vía
+            // Instagram__YtDlpPlayerClients.
             Arguments =
-                "-f \"bv*[height<=720][ext=mp4]/bv*[height<=720]/best[height<=720]/best\" " +
+                "-f \"bv*[height<=720][ext=mp4]+ba[ext=m4a]/bv*[height<=720]+ba/b[height<=720]/best\" " +
+                "--merge-output-format mp4 " +
                 $"--extractor-args \"youtube:player_client={settings.YtDlpPlayerClients}\" " +
                 ProxyArg() +
                 "--no-playlist --max-filesize 150M --socket-timeout 20 " +
@@ -125,10 +131,10 @@ public partial class TrailerDownloadService(
 
     /// <summary>
     /// Busca el tráiler en YouTube (ytsearch de yt-dlp, sin descargar nada) y
-    /// devuelve la URL watch del mejor candidato, o null si ninguno da
+    /// devuelve el mejor candidato (URL + duración), o null si ninguno da
     /// confianza. Mismo best-effort que la descarga: cualquier fallo → null.
     /// </summary>
-    public async Task<string?> SearchAsync(string query, CancellationToken ct = default)
+    public async Task<TrailerCandidate?> SearchAsync(string query, CancellationToken ct = default)
     {
         // Las comillas romperían el parseo de argumentos del proceso
         var sanitized = query.Replace('"', ' ').Trim();
@@ -190,17 +196,19 @@ public partial class TrailerDownloadService(
                 return null;
             }
 
-            var videoId = PickBestSearchResult(lines);
-            if (videoId is null)
+            var best = PickBestSearchResult(lines);
+            if (best is null)
             {
                 logger.LogInformation(
-                    "Búsqueda de tráiler sin candidato confiable para \"{Query}\" ({Count} resultados)",
+                    "Búsqueda de tráiler sin candidato confiable en español para \"{Query}\" ({Count} resultados)",
                     query, lines.Length);
                 return null;
             }
 
-            logger.LogInformation("Tráiler encontrado por búsqueda: {Id} para \"{Query}\"", videoId, query);
-            return $"https://www.youtube.com/watch?v={videoId}";
+            logger.LogInformation("Tráiler encontrado por búsqueda: {Id} ({Dur}s) para \"{Query}\"",
+                best.Value.Id, best.Value.DurationSeconds, query);
+            return new TrailerCandidate(
+                $"https://www.youtube.com/watch?v={best.Value.Id}", best.Value.DurationSeconds);
         }
         catch (System.ComponentModel.Win32Exception)
         {
@@ -225,9 +233,9 @@ public partial class TrailerDownloadService(
     /// ESPAÑOL devuelve null y el reel cae al slideshow: mejor sin video que con
     /// el video equivocado o en japonés. Público estático para tests.
     /// </summary>
-    public static string? PickBestSearchResult(IReadOnlyList<string> printedLines)
+    public static (string Id, double DurationSeconds)? PickBestSearchResult(IReadOnlyList<string> printedLines)
     {
-        string? bestId = null;
+        (string Id, double Duration)? best = null;
         var bestScore = -1;
 
         foreach (var parts in printedLines.Select(line => line.Split(FieldSeparator)))
@@ -261,12 +269,12 @@ public partial class TrailerDownloadService(
             if (score > bestScore)
             {
                 bestScore = score;
-                bestId = id;
+                best = (id, duration);
             }
         }
 
         // Sin keyword de tráiler NI canal oficial (score < 4) no hay confianza
-        return bestScore >= 4 ? bestId : null;
+        return bestScore >= 4 ? best : null;
     }
 
     // trailer/teaser/PV/avance en varios idiomas; \b evita falsos positivos
@@ -294,10 +302,10 @@ public partial class TrailerDownloadService(
     /// Valida que un video puntual (p. ej. el embebido en el artículo fuente)
     /// cumpla las MISMAS reglas que los resultados de búsqueda — en particular
     /// el requisito de español: kudasai suele embeber el PV japonés, y ese ya
-    /// no sirve. Devuelve la URL si pasa, null si no (→ se busca la versión
-    /// latina, o slideshow).
+    /// no sirve. Devuelve el candidato (URL + duración) si pasa, null si no
+    /// (→ se busca la versión latina, o slideshow).
     /// </summary>
-    public async Task<string?> ValidateAsync(string videoUrl, CancellationToken ct = default)
+    public async Task<TrailerCandidate?> ValidateAsync(string videoUrl, CancellationToken ct = default)
     {
         var line = await RunYtDlpPrintAsync(
             $"--skip-download --print \"%(id)s{FieldSeparator}%(duration)s{FieldSeparator}%(title)s{FieldSeparator}%(channel)s\" " +
@@ -307,12 +315,15 @@ public partial class TrailerDownloadService(
 
         if (line is null) return null;
 
-        var ok = PickBestSearchResult([line]) is not null;
-        if (!ok)
+        var best = PickBestSearchResult([line]);
+        if (best is null)
+        {
             logger.LogInformation(
                 "Tráiler embebido descartado (sin señal de español/tráiler): {Line}",
                 line.Length > 120 ? line[..120] : line);
-        return ok ? videoUrl : null;
+            return null;
+        }
+        return new TrailerCandidate(videoUrl, best.Value.DurationSeconds);
     }
 
     /// <summary>Corre yt-dlp esperando UNA línea por stdout; null si falla.</summary>
