@@ -158,6 +158,34 @@ public class InstagramVideoServiceTests
     }
 
     [Fact]
+    public void BuildTrailerReelArguments_BurnsSpanishSubtitlesWhenProvided()
+    {
+        var args = InstagramVideoService.BuildTrailerReelArguments(
+            "t.mp4", "bg.jpg", "ov.png", [], "out.mp4", 30,
+            subtitlesPath: @"C:\temp\subs.vtt");
+
+        // El filtro subtitles va sobre la banda del tráiler, con la ruta
+        // escapada para el parser de filtros (C: rompería sin escapar)
+        Assert.Contains(@"subtitles='C\:/temp/subs.vtt'", args);
+        Assert.Contains("force_style=", args);
+
+        // Sin subs no hay filtro
+        var noSubs = InstagramVideoService.BuildTrailerReelArguments(
+            "t.mp4", "bg.jpg", "ov.png", [], "out.mp4", 30);
+        Assert.DoesNotContain("subtitles=", noSubs);
+    }
+
+    [Theory]
+    // El tráiler entra al reel desde el segundo 1.5 → los subs se adelantan 1.5s
+    [InlineData("00:00:02.000 --> 00:00:04.500", -1.5, "00:00:00.500 --> 00:00:03.000")]
+    // Tiempos que caerían en negativo se clampean a cero
+    [InlineData("00:00:01.000 --> 00:00:02.000", -1.5, "00:00:00.000 --> 00:00:00.500")]
+    // Formato con horas se preserva
+    [InlineData("01:02:03.250 --> 01:02:05.750", -1.5, "01:02:01.750 --> 01:02:04.250")]
+    public void ShiftVttTimestamps_ShiftsAndClamps(string cue, double shift, string expected)
+        => Assert.Equal(expected, InstagramVideoService.ShiftVttTimestamps(cue, shift));
+
+    [Fact]
     public void BuildTrailerReelArguments_AppendsInfoSlidesAfterTrailer()
     {
         var args = InstagramVideoService.BuildTrailerReelArguments(
@@ -451,6 +479,21 @@ public class TrailerSearchTests
         ]);
 
         Assert.Null(best);
+    }
+
+    [Fact]
+    public void PickBestSearchResult_RelaxedLanguage_PicksOfficialUpload()
+    {
+        // 2do intento (sin versión latina): se relaja SOLO el idioma para buscar
+        // un tráiler oficial al que quemarle subtítulos es manuales. El upload
+        // de Aniplex gana aunque el título no diga "trailer" (bonus por canal).
+        var best = TrailerDownloadService.PickBestSearchResult(
+        [
+            Line("UHWMxtRivt8", "17", "Sword Art Online the Movie - Integral Domain -  |  COMING 2028", "Aniplex USA"),
+            Line("fanmade00001", "16", "SAO Integral Domain Official Trailer concept", "KingYan Animation Studio"),
+        ], requireSpanish: false);
+
+        Assert.Equal("UHWMxtRivt8", best?.Id);
     }
 
     [Fact]
