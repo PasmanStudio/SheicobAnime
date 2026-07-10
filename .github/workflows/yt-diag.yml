@@ -88,13 +88,11 @@ jobs:
           # Videos: el PUBG×Naruto que falló en prod y un tráiler doblado de
           # Crunchyroll en Español (Solo Leveling).
           VIDEOS="KhHDIpHwpkw dR7DW4ykE8k"
+          # Ronda 5: WARP+android_vr fue 2/2 — ¿las cookies lo rompen?
           # Configs: nombre|player_client (vacío = default)|cookies|proxy
           CONFIGS=(
-            "CONTROL-default-directo||no|no"
-            "warp-default-sin-cookies||no|si"
-            "warp-android_vr|android_vr|no|si"
-            "warp-tv|tv|no|si"
-            "warp-web_safari,tv-cookies|web_safari,tv|si|si"
+            "warp-android_vr-sin-cookies|android_vr|no|si"
+            "warp-android_vr-CON-cookies|android_vr|si|si"
           )
 
           SUMMARY="$RUNNER_TEMP/summary.txt"
@@ -129,3 +127,21 @@ jobs:
           echo "================= RESUMEN ================="
           cat "$SUMMARY"
           echo "==========================================="
+
+      # Los otros dos comandos del pipeline: búsqueda (ytsearch, flat) y
+      # validación (--print de metadata de un video puntual), ambos vía WARP.
+      - name: Búsqueda y validación vía WARP
+        run: |
+          echo "── ytsearch (SearchAsync) ──"
+          yt-dlp "ytsearch3:Solo Leveling tráiler oficial español latino" \
+            --flat-playlist --print "%(id)s|~|%(duration)s|~|%(title)s|~|%(channel)s" \
+            --extractor-args "youtube:player_client=android_vr" \
+            --proxy "socks5h://127.0.0.1:1080" \
+            --no-warnings --socket-timeout 20 || echo "SEARCH FAIL"
+          echo "── print metadata (ValidateAsync) ──"
+          yt-dlp --skip-download \
+            --print "%(id)s|~|%(duration)s|~|%(title)s|~|%(channel)s" \
+            --extractor-args "youtube:player_client=android_vr" \
+            --proxy "socks5h://127.0.0.1:1080" \
+            --no-warnings --socket-timeout 20 \
+            "https://www.youtube.com/watch?v=dR7DW4ykE8k" || echo "VALIDATE FAIL"
