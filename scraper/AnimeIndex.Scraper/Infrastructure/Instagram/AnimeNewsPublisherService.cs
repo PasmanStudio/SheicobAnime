@@ -345,7 +345,10 @@ public class AnimeNewsPublisherService(
                     finally
                     {
                         TrailerDownloadService.CleanUp(clipPath);
-                        if (candidate?.SubtitlesPath is not null)
+                        // candidate no puede ser null acá: clipPath solo se obtiene de
+                        // candidate.Url (línea 321). El compilador no extiende esa
+                        // garantía al bloque finally, de ahí el null-forgiving.
+                        if (candidate!.SubtitlesPath is not null)
                             TrailerDownloadService.CleanUp(candidate.SubtitlesPath);
                     }
                 }
