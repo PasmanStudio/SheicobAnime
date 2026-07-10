@@ -194,7 +194,6 @@ public class InstagramVideoService(
         var totalSeconds = trailerSeconds + infoSlidePaths.Count * InfoSlideSeconds;
         var trailArg = trailerSeconds.ToString("0.0#", inv);
         var totalArg = totalSeconds.ToString("0.0#", inv);
-        var slideArg = InfoSlideSeconds.ToString("0.0#", inv);
 
         var inputs = new List<string>
         {
