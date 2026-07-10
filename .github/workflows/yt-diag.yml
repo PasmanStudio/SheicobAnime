@@ -66,18 +66,15 @@ jobs:
       # confirmado jul-2026). Las credenciales no vencen solas.
       - name: Setup Cloudflare WARP proxy (wireproxy)
         env:
-          GH_API_TOKEN: ${{ github.token }}
           WARP_WIREGUARD_CONFIG: ${{ secrets.WARP_WIREGUARD_CONFIG }}
         run: |
           cd "$RUNNER_TEMP"
           if [ -z "$WARP_WIREGUARD_CONFIG" ]; then
             echo "::error::falta el secret WARP_WIREGUARD_CONFIG"; exit 1
           fi
-          # API con token del runner: sin auth el rate-limit por IP devuelve null
-          WP_URL=$(curl -s -H "Authorization: Bearer $GH_API_TOKEN" \
-              https://api.github.com/repos/whyvl/wireproxy/releases/latest \
-            | jq -r '.assets[] | select(.name | test("linux_amd64")) | .browser_download_url' | head -1)
-          curl -sL -o wireproxy.tar.gz "$WP_URL"
+          # Versión pineada con URL directa (la API de releases devolvía null desde CI)
+          curl -sL -o wireproxy.tar.gz \
+            "https://github.com/whyvl/wireproxy/releases/download/v1.1.2/wireproxy_linux_amd64.tar.gz"
           tar -xzf wireproxy.tar.gz
           printf '%s\n\n[Socks5]\nBindAddress = 127.0.0.1:1080\n' "$WARP_WIREGUARD_CONFIG" > wp.conf
           ./wireproxy -c wp.conf &
