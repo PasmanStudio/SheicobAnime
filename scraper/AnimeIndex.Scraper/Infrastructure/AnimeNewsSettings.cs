@@ -39,6 +39,15 @@ public class AnimeNewsSettings
         // MangaLatam — noticias de anime/manga (LATAM), español. Blogspot RSS 2.0;
         // la portada se resuelve vía og:image del artículo.
         new() { Key = "mangalatam", Url = "https://www.mangalatam.com/feeds/posts/default?alt=rss" },
+
+        // Crunchyroll Noticias — oficial, español LATAM (es-419). RSS del API
+        // service (la URL "bonita" /es/news/rss devuelve la SPA, no XML). Trae
+        // media:thumbnail y content:encoded completo; la página del artículo es
+        // una SPA de 14KB sin contenido (og:image = favicon 96px, que el gate de
+        // calidad de fotos descarta solo). Los tráilers NO vienen embebidos en el
+        // RSS — los encuentra la búsqueda de YouTube (el canal "Crunchyroll en
+        // Español" sube la versión latina de casi todo).
+        new() { Key = "crunchyroll", Url = "https://cr-news-api-service.prd.crunchyrollsvc.com/v1/es-419/rss" },
     ];
 
     public bool IsEnabled => Feeds.Count > 0;

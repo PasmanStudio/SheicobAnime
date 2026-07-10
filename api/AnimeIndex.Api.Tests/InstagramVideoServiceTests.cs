@@ -130,16 +130,21 @@ public class InstagramVideoServiceTests
     }
 
     [Fact]
-    public void BuildTrailerReelArguments_MutesTrailerAndOverlaysBrandText()
+    public void BuildTrailerReelArguments_UsesOriginalTrailerAudio()
     {
         var args = InstagramVideoService.BuildTrailerReelArguments(
-            "trailer.mp4", "bg.jpg", "overlay.png", "out.mp4", 18);
+            "trailer.mp4", "bg.jpg", "overlay.png", [], "out.mp4", 40);
 
-        // El tráiler entra salteando el arranque (logos/negro) y NUNCA su audio:
-        // el único mapeo de audio es la pista propia (input 3)
+        // El tráiler entra salteando el arranque (logos/negro) CON su audio
+        // original — nada de música nuestra ni pista silenciosa
         Assert.Contains("-ss 1.5 -i \"trailer.mp4\"", args);
-        Assert.DoesNotContain("[1:a]", args);
-        Assert.Contains("-map 3:a", args);
+        Assert.Contains("[1:a]apad,atrim=0:40", args);
+        Assert.Contains("-map [v] -map [a]", args);
+        Assert.DoesNotContain("anullsrc", args);
+        Assert.DoesNotContain("music", args);
+        // Fade-out del audio al cierre (40 − 1.8 = 38.2) y nivel social estándar
+        Assert.Contains("afade=t=out:st=38.2", args);
+        Assert.Contains("loudnorm=I=-16", args);
         // Banda de video capada y congelada si el clip es corto
         Assert.Contains("crop=1080:'min(ih,900)'", args);
         Assert.Contains("tpad=stop_mode=clone", args);
@@ -149,20 +154,28 @@ public class InstagramVideoServiceTests
         // Specs de Reels intactas
         Assert.Contains("-movflags +faststart", args);
         Assert.Contains("format=yuv420p", args);
-        Assert.Contains("-t 18", args);
+        Assert.Contains("-t 40", args);
     }
 
     [Fact]
-    public void BuildTrailerReelArguments_WithMusic_MapsOwnTrackOnly()
+    public void BuildTrailerReelArguments_AppendsInfoSlidesAfterTrailer()
     {
         var args = InstagramVideoService.BuildTrailerReelArguments(
-            "t.mp4", "bg.jpg", "ov.png", "out.mp4", 18, musicPath: "music.mp3");
+            "t.mp4", "bg.jpg", "ov.png", ["kp1.jpg", "cta.jpg"], "out.mp4", 30);
 
-        Assert.DoesNotContain("anullsrc", args);
-        Assert.Contains("[3:a]afade", args);
-        Assert.Contains("-map [a]", args);
-        // Fade-out en 18 − 1.5 = 16.5
-        Assert.Contains("afade=t=out:st=16.5", args);
+        // Las 2 slides entran como inputs 3 y 4 y se concatenan tras el tráiler
+        Assert.Contains("-i \"kp1.jpg\"", args);
+        Assert.Contains("-i \"cta.jpg\"", args);
+        Assert.Contains("[3:v]", args);
+        Assert.Contains("[4:v]", args);
+        Assert.Contains("[seg0][info0][info1]concat=n=3:v=1:a=0", args);
+        // El segmento del tráiler se recorta a sus 30s antes del concat
+        Assert.Contains("trim=duration=30", args);
+        // Total = 30 + 2×3.5 = 37s; el audio del tráiler cubre TODO el reel
+        Assert.Contains("-t 37", args);
+        Assert.Contains("[1:a]apad,atrim=0:37", args);
+        // Fade-out del audio al final de las slides (37 − 1.8 = 35.2)
+        Assert.Contains("afade=t=out:st=35.2", args);
     }
 }
 
@@ -418,7 +431,9 @@ public class TrailerSearchTests
             Line("fanexplica01", "600", "Solo Leveling temporada 2 explicado en español", "OtakuFan"),
         ]);
 
-        Assert.Equal("dR7DW4ykE8k", best);
+        Assert.Equal("dR7DW4ykE8k", best?.Id);
+        // La duración viaja con el candidato: define cuánto tráiler muestra el reel
+        Assert.Equal(131, best?.DurationSeconds);
     }
 
     [Fact]
