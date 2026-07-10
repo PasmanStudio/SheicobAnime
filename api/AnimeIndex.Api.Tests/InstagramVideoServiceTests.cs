@@ -130,16 +130,21 @@ public class InstagramVideoServiceTests
     }
 
     [Fact]
-    public void BuildTrailerReelArguments_MutesTrailerAndOverlaysBrandText()
+    public void BuildTrailerReelArguments_UsesOriginalTrailerAudio()
     {
         var args = InstagramVideoService.BuildTrailerReelArguments(
-            "trailer.mp4", "bg.jpg", "overlay.png", "out.mp4", 18);
+            "trailer.mp4", "bg.jpg", "overlay.png", [], "out.mp4", 40);
 
-        // El tráiler entra salteando el arranque (logos/negro) y NUNCA su audio:
-        // el único mapeo de audio es la pista propia (input 3)
+        // El tráiler entra salteando el arranque (logos/negro) CON su audio
+        // original — nada de música nuestra ni pista silenciosa
         Assert.Contains("-ss 1.5 -i \"trailer.mp4\"", args);
-        Assert.DoesNotContain("[1:a]", args);
-        Assert.Contains("-map 3:a", args);
+        Assert.Contains("[1:a]apad,atrim=0:40", args);
+        Assert.Contains("-map [v] -map [a]", args);
+        Assert.DoesNotContain("anullsrc", args);
+        Assert.DoesNotContain("music", args);
+        // Fade-out del audio al cierre (40 − 1.8 = 38.2) y nivel social estándar
+        Assert.Contains("afade=t=out:st=38.2", args);
+        Assert.Contains("loudnorm=I=-16", args);
         // Banda de video capada y congelada si el clip es corto
         Assert.Contains("crop=1080:'min(ih,900)'", args);
         Assert.Contains("tpad=stop_mode=clone", args);
@@ -149,20 +154,56 @@ public class InstagramVideoServiceTests
         // Specs de Reels intactas
         Assert.Contains("-movflags +faststart", args);
         Assert.Contains("format=yuv420p", args);
-        Assert.Contains("-t 18", args);
+        Assert.Contains("-t 40", args);
     }
 
     [Fact]
-    public void BuildTrailerReelArguments_WithMusic_MapsOwnTrackOnly()
+    public void BuildTrailerReelArguments_BurnsSpanishSubtitlesWhenProvided()
     {
         var args = InstagramVideoService.BuildTrailerReelArguments(
-            "t.mp4", "bg.jpg", "ov.png", "out.mp4", 18, musicPath: "music.mp3");
+            "t.mp4", "bg.jpg", "ov.png", [], "out.mp4", 30,
+            subtitlesPath: @"C:\temp\subs.vtt");
 
-        Assert.DoesNotContain("anullsrc", args);
-        Assert.Contains("[3:a]afade", args);
-        Assert.Contains("-map [a]", args);
-        // Fade-out en 18 − 1.5 = 16.5
-        Assert.Contains("afade=t=out:st=16.5", args);
+        // El filtro subtitles va sobre la banda del tráiler, con la ruta
+        // escapada para el parser de filtros (C: rompería sin escapar)
+        Assert.Contains(@"subtitles='C\:/temp/subs.vtt'", args);
+        Assert.Contains("force_style=", args);
+
+        // Sin subs no hay filtro
+        var noSubs = InstagramVideoService.BuildTrailerReelArguments(
+            "t.mp4", "bg.jpg", "ov.png", [], "out.mp4", 30);
+        Assert.DoesNotContain("subtitles=", noSubs);
+    }
+
+    [Theory]
+    // El tráiler entra al reel desde el segundo 1.5 → los subs se adelantan 1.5s
+    [InlineData("00:00:02.000 --> 00:00:04.500", -1.5, "00:00:00.500 --> 00:00:03.000")]
+    // Tiempos que caerían en negativo se clampean a cero
+    [InlineData("00:00:01.000 --> 00:00:02.000", -1.5, "00:00:00.000 --> 00:00:00.500")]
+    // Formato con horas se preserva
+    [InlineData("01:02:03.250 --> 01:02:05.750", -1.5, "01:02:01.750 --> 01:02:04.250")]
+    public void ShiftVttTimestamps_ShiftsAndClamps(string cue, double shift, string expected)
+        => Assert.Equal(expected, InstagramVideoService.ShiftVttTimestamps(cue, shift));
+
+    [Fact]
+    public void BuildTrailerReelArguments_AppendsInfoSlidesAfterTrailer()
+    {
+        var args = InstagramVideoService.BuildTrailerReelArguments(
+            "t.mp4", "bg.jpg", "ov.png", ["kp1.jpg", "cta.jpg"], "out.mp4", 30);
+
+        // Las 2 slides entran como inputs 3 y 4 y se concatenan tras el tráiler
+        Assert.Contains("-i \"kp1.jpg\"", args);
+        Assert.Contains("-i \"cta.jpg\"", args);
+        Assert.Contains("[3:v]", args);
+        Assert.Contains("[4:v]", args);
+        Assert.Contains("[seg0][info0][info1]concat=n=3:v=1:a=0", args);
+        // El segmento del tráiler se recorta a sus 30s antes del concat
+        Assert.Contains("trim=duration=30", args);
+        // Total = 30 + 2×3.5 = 37s; el audio del tráiler cubre TODO el reel
+        Assert.Contains("-t 37", args);
+        Assert.Contains("[1:a]apad,atrim=0:37", args);
+        // Fade-out del audio al final de las slides (37 − 1.8 = 35.2)
+        Assert.Contains("afade=t=out:st=35.2", args);
     }
 }
 
@@ -407,69 +448,74 @@ public class TrailerSearchTests
         $"{id}|~|{duration}|~|{title}|~|{channel}";
 
     [Fact]
-    public void PickBestSearchResult_PrefersOfficialTrailerOverFanContent()
+    public void PickBestSearchResult_PicksSpanishOfficialTrailerOverFanContent()
     {
+        // Resultados REALES de la búsqueda "Crunchyroll en español trailer doblaje
+        // español latino" (jul-2026) + contenido fan que debe quedar afuera.
         var best = TrailerDownloadService.PickBestSearchResult(
         [
-            Line("fanvid00001", "600", "Sword Art Online explicado en 10 minutos", "OtakuFan"),
-            Line("official0001", "95", "Sword Art Online Integral Domain Official Trailer", "Aniplex"),
-            Line("reaction001", "120", "REACCIÓN al trailer de Sword Art Online", "ReactBro"),
+            Line("dR7DW4ykE8k", "131", "Solo Leveling en ESPAÑOL | TRÁILER OFICIAL", "Crunchyroll en Español"),
+            Line("fanreaccion1", "300", "REACCIÓN al tráiler de Solo Leveling en español", "ReactBro LATAM"),
+            Line("fanexplica01", "600", "Solo Leveling temporada 2 explicado en español", "OtakuFan"),
         ]);
 
-        Assert.Equal("official0001", best);
+        Assert.Equal("dR7DW4ykE8k", best?.Id);
+        // La duración viaja con el candidato: define cuánto tráiler muestra el reel
+        Assert.Equal(131, best?.DurationSeconds);
+    }
+
+    [Fact]
+    public void PickBestSearchResult_RejectsNonSpanishResults_LanguageRule()
+    {
+        // Resultados REALES de "Sword Art Online Integral Domain official trailer"
+        // (jul-2026): TODO en inglés/japonés, incluido el teaser oficial de Aniplex.
+        // Requisito del usuario: el video tiene que estar en español (doblaje o
+        // subs incrustados) — sin versión latina, mejor slideshow que PV japonés.
+        var best = TrailerDownloadService.PickBestSearchResult(
+        [
+            Line("UHWMxtRivt8", "17", "Sword Art Online the Movie - Integral Domain -  |  COMING 2028", "Aniplex USA"),
+            Line("a2_XZColIY4", "17", "Sword Art Online Integral Domain Anime Movie - Official Teaser", "Anime Officials Trailer"),
+            Line("japanesepv01", "NA", "TVアニメ『葬送のフリーレン』本予告", "TOHO animation チャンネル"),
+        ]);
+
+        Assert.Null(best);
+    }
+
+    [Fact]
+    public void PickBestSearchResult_RelaxedLanguage_PicksOfficialUpload()
+    {
+        // 2do intento (sin versión latina): se relaja SOLO el idioma para buscar
+        // un tráiler oficial al que quemarle subtítulos es manuales. El upload
+        // de Aniplex gana aunque el título no diga "trailer" (bonus por canal).
+        var best = TrailerDownloadService.PickBestSearchResult(
+        [
+            Line("UHWMxtRivt8", "17", "Sword Art Online the Movie - Integral Domain -  |  COMING 2028", "Aniplex USA"),
+            Line("fanmade00001", "16", "SAO Integral Domain Official Trailer concept", "KingYan Animation Studio"),
+        ], requireSpanish: false);
+
+        Assert.Equal("UHWMxtRivt8", best?.Id);
     }
 
     [Fact]
     public void PickBestSearchResult_RejectsLongVideosEvenWithTrailerInTitle()
     {
-        // >6 min no es un tráiler (episodio/compilado/live), aunque el título diga trailer
+        // >6 min no es un tráiler (episodio/compilado/live), aunque el título diga tráiler
         Assert.Null(TrailerDownloadService.PickBestSearchResult(
-            [Line("longvideo001", "1800", "Todos los trailers de anime 2028", "Recopilador")]));
+            [Line("longvideo001", "1800", "Todos los tráilers de anime en español 2028", "Recopilador")]));
     }
 
     [Fact]
-    public void PickBestSearchResult_RequiresTrailerSignalInTitle()
+    public void PickBestSearchResult_RequiresTrailerSignal()
     {
-        // Sin señal de tráiler en el título no hay confianza — mejor slideshow
-        // que incrustar el video equivocado
+        // En español pero sin señal de tráiler (score < 4) → sin confianza,
+        // mejor slideshow que incrustar el video equivocado
         Assert.Null(TrailerDownloadService.PickBestSearchResult(
-            [Line("randomvid001", "90", "Sword Art Online opening full", "MusicChannel")]));
+            [Line("randomvid001", "90", "Sword Art Online opening completo en español", "MusicChannel")]));
         Assert.Null(TrailerDownloadService.PickBestSearchResult([]));
     }
 
-    [Fact]
-    public void PickBestSearchResult_RealWorldSearch_PicksOfficialUploadWithoutTrailerWord()
-    {
-        // Resultados REALES de "ytsearch6:Sword Art Online Integral Domain official
-        // trailer" (jul-2026). El teaser oficial de Aniplex NO dice "trailer" en el
-        // título — el bonus por canal oficial + el orden de relevancia lo rescatan
-        // frente al re-upload y al trailer fan-made.
-        var best = TrailerDownloadService.PickBestSearchResult(
-        [
-            Line("UHWMxtRivt8", "17", "Sword Art Online the Movie - Integral Domain -  |  COMING 2028", "Aniplex USA"),
-            Line("FwKFcfPK4m8", "238", "SWORD ART ONLINE : INTEGRAL DOMAIN TO RELEASE IN 2028", "Adam's Anime World"),
-            Line("a2_XZColIY4", "17", "Sword Art Online Integral Domain Anime Movie - Official Teaser", "Anime Officials Trailer"),
-            Line("jcsFEbam_aY", "16", "Sword Art Online the Movie: Integral Domain Official Trailer #anime", "KingYan Animation Studio"),
-            Line("tYiugIxhRLA", "484", "EVERYTHING about the NEW SAO MOVIE | Integral Domain", "iFedeLima YT"),
-            Line("Q0C91P7q5iM", "97", "Sword Art Online New Movie Integral Domain Release Date & Latest Update", "ANIKINGZ"),
-        ]);
-
-        Assert.Equal("UHWMxtRivt8", best);
-    }
-
-    [Fact]
-    public void PickBestSearchResult_AcceptsJapanesePvMarkers()
-    {
-        var best = TrailerDownloadService.PickBestSearchResult(
-        [
-            Line("japanesepv01", "NA", "TVアニメ『葬送のフリーレン』本予告", "TOHO animation チャンネル"),
-        ]);
-
-        Assert.Equal("japanesepv01", best);
-    }
-
     [Theory]
-    // Titulares que anuncian material audiovisual → buscar
+    // Titulares que anuncian material audiovisual → buscar (versión latina)
     [InlineData("Sword Art Online anuncia nueva película para 2028", true)]
     [InlineData("Frieren confirma su segunda temporada con un tráiler", true)]
     [InlineData("El live-action de One Piece ya tiene fecha de estreno", true)]
@@ -484,7 +530,8 @@ public class TrailerSearchTests
         if (expectsQuery)
         {
             Assert.NotNull(query);
-            Assert.Contains("trailer", query);
+            // La query apunta a la versión doblada/subtitulada para LATAM
+            Assert.Contains("español latino", query);
             Assert.Contains(title, query);   // el nombre de la obra viaja en el titular
         }
         else
