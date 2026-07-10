@@ -12,11 +12,6 @@ name: Diag — yt-dlp desde GitHub Actions
 
 on:
   workflow_dispatch:
-  # Trigger por push SOLO en la rama de diagnóstico: workflow_dispatch no
-  # funciona hasta que el workflow exista en main.
-  push:
-    branches: [fix/reels-yt-download]
-    paths: ['.github/workflows/yt-diag.yml']
 
 jobs:
   diag:
