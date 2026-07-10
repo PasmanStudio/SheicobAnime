@@ -118,6 +118,7 @@ public class InstagramVideoService(
         byte[] overlayPng,
         IReadOnlyList<byte[]> infoSlides,
         double trailerDurationSeconds,
+        string? subtitlesPath = null,
         CancellationToken ct = default)
     {
         var workDir = Path.Join(Path.GetTempPath(), $"ig-reel-{Guid.NewGuid():N}");
@@ -138,6 +139,17 @@ public class InstagramVideoService(
                 slidePaths.Add(p);
             }
 
+            // El tráiler entra desde el segundo 1.5 → los subtítulos se
+            // re-timean para que no queden corridos respecto del video.
+            string? subsWorkPath = null;
+            if (subtitlesPath is not null)
+            {
+                var shifted = ShiftVttTimestamps(
+                    await File.ReadAllTextAsync(subtitlesPath, ct), -TrailerStartSkip);
+                subsWorkPath = Path.Join(workDir, "subs.vtt");
+                await File.WriteAllTextAsync(subsWorkPath, shifted, ct);
+            }
+
             // Cuánto tráiler mostrar: lo disponible tras saltear la intro, capado
             // por settings y porque el reel completo no debería pasar de ~60s.
             var maxForBudget = 59.0 - slidePaths.Count * InfoSlideSeconds;
@@ -148,7 +160,7 @@ public class InstagramVideoService(
                 Math.Min(Math.Min(available, settings.TrailerClipSeconds), maxForBudget), 1);
 
             var args = BuildTrailerReelArguments(
-                trailerPath, bgPath, overlayPath, slidePaths, outputPath, trailerSeconds);
+                trailerPath, bgPath, overlayPath, slidePaths, outputPath, trailerSeconds, subsWorkPath);
             await RunFfmpegAsync(args, ct);
 
             var bytes = await File.ReadAllBytesAsync(outputPath, ct);
@@ -175,7 +187,8 @@ public class InstagramVideoService(
     /// </summary>
     public static string BuildTrailerReelArguments(
         string trailerPath, string backgroundPath, string overlayPath,
-        IReadOnlyList<string> infoSlidePaths, string outputPath, double trailerSeconds)
+        IReadOnlyList<string> infoSlidePaths, string outputPath, double trailerSeconds,
+        string? subtitlesPath = null)
     {
         var inv = System.Globalization.CultureInfo.InvariantCulture;
         var totalSeconds = trailerSeconds + infoSlidePaths.Count * InfoSlideSeconds;
@@ -195,12 +208,21 @@ public class InstagramVideoService(
         foreach (var p in infoSlidePaths)
             inputs.Add($"-i \"{p}\"");
 
+        // Subtítulos MANUALES en español quemados sobre la banda del tráiler
+        // (cuando el tráiler no está en español pero tiene subs oficiales).
+        // Se aplican DESPUÉS del scale/crop → se renderizan a 1080 de ancho.
+        var subsFilter = subtitlesPath is null
+            ? ""
+            : $"subtitles='{EscapeForFilter(subtitlesPath)}'" +
+              ":force_style='FontName=Arial,FontSize=16,Bold=1,Outline=2,MarginV=30',";
+
         var filters = new List<string>
         {
             // Tráiler: 1080 de ancho, banda capada a 900px de alto (por si es
             // vertical), congelado al final si el clip quedó corto
             "[1:v]scale=1080:-2,setsar=1,fps=30," +
             "crop=1080:'min(ih,900)':0:'(ih-min(ih,900))/2'," +
+            subsFilter +
             $"tpad=stop_mode=clone:stop_duration={totalArg}[tr]",
             // Fondo abismo + tráiler como banda superior-central
             "[0:v][tr]overlay=x='(W-w)/2':y=240[base]",
@@ -466,6 +488,36 @@ public class InstagramVideoService(
             "-shortest",
             $"\"{outputPath}\"");
     }
+
+    /// <summary>
+    /// Corre las marcas de tiempo de un WebVTT en <paramref name="shiftSeconds"/>
+    /// (negativo = adelantar). Necesario porque el tráiler entra al reel desde
+    /// el segundo 1.5 y los subs vienen timeados contra el video original.
+    /// Tiempos que caen antes de cero se clampean a 00:00:00.000. Público
+    /// estático para tests.
+    /// </summary>
+    public static string ShiftVttTimestamps(string vttContent, double shiftSeconds)
+    {
+        return System.Text.RegularExpressions.Regex.Replace(
+            vttContent,
+            @"(?:(\d{2,}):)?(\d{2}):(\d{2})\.(\d{3})",
+            m =>
+            {
+                var hours = m.Groups[1].Success ? int.Parse(m.Groups[1].Value) : 0;
+                var t = new TimeSpan(0, hours, int.Parse(m.Groups[2].Value), int.Parse(m.Groups[3].Value),
+                        int.Parse(m.Groups[4].Value))
+                    + TimeSpan.FromSeconds(shiftSeconds);
+                if (t < TimeSpan.Zero) t = TimeSpan.Zero;
+                return $"{(int)t.TotalHours:00}:{t.Minutes:00}:{t.Seconds:00}.{t.Milliseconds:000}";
+            });
+    }
+
+    /// <summary>
+    /// Escapa una ruta para usarla dentro de un filtro de ffmpeg (subtitles=…):
+    /// separadores a "/" y ":" escapado (en Windows "C:" rompería el parseo).
+    /// </summary>
+    private static string EscapeForFilter(string path) =>
+        path.Replace('\\', '/').Replace(":", "\\:");
 
     private async Task RunFfmpegAsync(string arguments, CancellationToken ct)
     {

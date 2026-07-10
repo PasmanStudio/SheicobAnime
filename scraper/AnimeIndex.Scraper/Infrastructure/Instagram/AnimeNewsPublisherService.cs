@@ -332,9 +332,11 @@ public class AnimeNewsPublisherService(
 
                         var (bg, overlay) = imageService.GenerateVideoReelLayers(content);
                         videoBytes = await videoService.GenerateTrailerReelAsync(
-                            clipPath, bg, overlay, infoSlides, candidate!.DurationSeconds, ct);
-                        logger.LogInformation("AnimeNews: reel con TRÁILER para \"{Title}\" ({Url})",
-                            Truncate(item.Title, 60), candidate.Url);
+                            clipPath, bg, overlay, infoSlides, candidate!.DurationSeconds,
+                            candidate.SubtitlesPath, ct);
+                        logger.LogInformation("AnimeNews: reel con TRÁILER para \"{Title}\" ({Url}{Subs})",
+                            Truncate(item.Title, 60), candidate.Url,
+                            candidate.SubtitlesPath is null ? "" : ", subs es quemados");
                     }
                     catch (Exception ex) when (!ct.IsCancellationRequested && ex is not FfmpegNotAvailableException)
                     {
@@ -343,6 +345,8 @@ public class AnimeNewsPublisherService(
                     finally
                     {
                         TrailerDownloadService.CleanUp(clipPath);
+                        if (candidate?.SubtitlesPath is not null)
+                            TrailerDownloadService.CleanUp(candidate.SubtitlesPath);
                     }
                 }
             }
@@ -464,7 +468,27 @@ public class AnimeNewsPublisherService(
         if (string.IsNullOrWhiteSpace(query)) return null;
 
         logger.LogInformation("AnimeNews: buscando tráiler en YouTube → \"{Query}\"", query);
-        return await trailerService.SearchAsync(query!, ct);
+        var candidate = await trailerService.SearchAsync(query!, requireSpanish: true, ct: ct);
+        if (candidate is not null) return candidate;
+
+        // 2do intento (pedido del usuario): sin versión latina, sirve el tráiler
+        // oficial en cualquier idioma SI tiene subtítulos manuales en español
+        // para quemar en el video. Sin subs manuales → slideshow.
+        var anyQuery = query!.Replace("español latino", "", StringComparison.OrdinalIgnoreCase).Trim();
+        var any = await trailerService.SearchAsync(anyQuery, requireSpanish: false, ct: ct);
+        if (any is null) return null;
+
+        var subs = await trailerService.DownloadSpanishSubtitlesAsync(any.Url, ct);
+        if (subs is null)
+        {
+            logger.LogInformation(
+                "AnimeNews: tráiler {Url} sin versión latina ni subtítulos manuales en español — slideshow",
+                any.Url);
+            return null;
+        }
+
+        logger.LogInformation("AnimeNews: tráiler {Url} con subtítulos es para quemar", any.Url);
+        return any with { SubtitlesPath = subs };
     }
 
     /// <summary>
