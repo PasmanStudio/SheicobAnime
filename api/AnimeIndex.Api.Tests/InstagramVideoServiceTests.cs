@@ -407,69 +407,57 @@ public class TrailerSearchTests
         $"{id}|~|{duration}|~|{title}|~|{channel}";
 
     [Fact]
-    public void PickBestSearchResult_PrefersOfficialTrailerOverFanContent()
+    public void PickBestSearchResult_PicksSpanishOfficialTrailerOverFanContent()
     {
+        // Resultados REALES de la búsqueda "Crunchyroll en español trailer doblaje
+        // español latino" (jul-2026) + contenido fan que debe quedar afuera.
         var best = TrailerDownloadService.PickBestSearchResult(
         [
-            Line("fanvid00001", "600", "Sword Art Online explicado en 10 minutos", "OtakuFan"),
-            Line("official0001", "95", "Sword Art Online Integral Domain Official Trailer", "Aniplex"),
-            Line("reaction001", "120", "REACCIÓN al trailer de Sword Art Online", "ReactBro"),
+            Line("dR7DW4ykE8k", "131", "Solo Leveling en ESPAÑOL | TRÁILER OFICIAL", "Crunchyroll en Español"),
+            Line("fanreaccion1", "300", "REACCIÓN al tráiler de Solo Leveling en español", "ReactBro LATAM"),
+            Line("fanexplica01", "600", "Solo Leveling temporada 2 explicado en español", "OtakuFan"),
         ]);
 
-        Assert.Equal("official0001", best);
+        Assert.Equal("dR7DW4ykE8k", best);
+    }
+
+    [Fact]
+    public void PickBestSearchResult_RejectsNonSpanishResults_LanguageRule()
+    {
+        // Resultados REALES de "Sword Art Online Integral Domain official trailer"
+        // (jul-2026): TODO en inglés/japonés, incluido el teaser oficial de Aniplex.
+        // Requisito del usuario: el video tiene que estar en español (doblaje o
+        // subs incrustados) — sin versión latina, mejor slideshow que PV japonés.
+        var best = TrailerDownloadService.PickBestSearchResult(
+        [
+            Line("UHWMxtRivt8", "17", "Sword Art Online the Movie - Integral Domain -  |  COMING 2028", "Aniplex USA"),
+            Line("a2_XZColIY4", "17", "Sword Art Online Integral Domain Anime Movie - Official Teaser", "Anime Officials Trailer"),
+            Line("japanesepv01", "NA", "TVアニメ『葬送のフリーレン』本予告", "TOHO animation チャンネル"),
+        ]);
+
+        Assert.Null(best);
     }
 
     [Fact]
     public void PickBestSearchResult_RejectsLongVideosEvenWithTrailerInTitle()
     {
-        // >6 min no es un tráiler (episodio/compilado/live), aunque el título diga trailer
+        // >6 min no es un tráiler (episodio/compilado/live), aunque el título diga tráiler
         Assert.Null(TrailerDownloadService.PickBestSearchResult(
-            [Line("longvideo001", "1800", "Todos los trailers de anime 2028", "Recopilador")]));
+            [Line("longvideo001", "1800", "Todos los tráilers de anime en español 2028", "Recopilador")]));
     }
 
     [Fact]
-    public void PickBestSearchResult_RequiresTrailerSignalInTitle()
+    public void PickBestSearchResult_RequiresTrailerSignal()
     {
-        // Sin señal de tráiler en el título no hay confianza — mejor slideshow
-        // que incrustar el video equivocado
+        // En español pero sin señal de tráiler (score < 4) → sin confianza,
+        // mejor slideshow que incrustar el video equivocado
         Assert.Null(TrailerDownloadService.PickBestSearchResult(
-            [Line("randomvid001", "90", "Sword Art Online opening full", "MusicChannel")]));
+            [Line("randomvid001", "90", "Sword Art Online opening completo en español", "MusicChannel")]));
         Assert.Null(TrailerDownloadService.PickBestSearchResult([]));
     }
 
-    [Fact]
-    public void PickBestSearchResult_RealWorldSearch_PicksOfficialUploadWithoutTrailerWord()
-    {
-        // Resultados REALES de "ytsearch6:Sword Art Online Integral Domain official
-        // trailer" (jul-2026). El teaser oficial de Aniplex NO dice "trailer" en el
-        // título — el bonus por canal oficial + el orden de relevancia lo rescatan
-        // frente al re-upload y al trailer fan-made.
-        var best = TrailerDownloadService.PickBestSearchResult(
-        [
-            Line("UHWMxtRivt8", "17", "Sword Art Online the Movie - Integral Domain -  |  COMING 2028", "Aniplex USA"),
-            Line("FwKFcfPK4m8", "238", "SWORD ART ONLINE : INTEGRAL DOMAIN TO RELEASE IN 2028", "Adam's Anime World"),
-            Line("a2_XZColIY4", "17", "Sword Art Online Integral Domain Anime Movie - Official Teaser", "Anime Officials Trailer"),
-            Line("jcsFEbam_aY", "16", "Sword Art Online the Movie: Integral Domain Official Trailer #anime", "KingYan Animation Studio"),
-            Line("tYiugIxhRLA", "484", "EVERYTHING about the NEW SAO MOVIE | Integral Domain", "iFedeLima YT"),
-            Line("Q0C91P7q5iM", "97", "Sword Art Online New Movie Integral Domain Release Date & Latest Update", "ANIKINGZ"),
-        ]);
-
-        Assert.Equal("UHWMxtRivt8", best);
-    }
-
-    [Fact]
-    public void PickBestSearchResult_AcceptsJapanesePvMarkers()
-    {
-        var best = TrailerDownloadService.PickBestSearchResult(
-        [
-            Line("japanesepv01", "NA", "TVアニメ『葬送のフリーレン』本予告", "TOHO animation チャンネル"),
-        ]);
-
-        Assert.Equal("japanesepv01", best);
-    }
-
     [Theory]
-    // Titulares que anuncian material audiovisual → buscar
+    // Titulares que anuncian material audiovisual → buscar (versión latina)
     [InlineData("Sword Art Online anuncia nueva película para 2028", true)]
     [InlineData("Frieren confirma su segunda temporada con un tráiler", true)]
     [InlineData("El live-action de One Piece ya tiene fecha de estreno", true)]
@@ -484,7 +472,8 @@ public class TrailerSearchTests
         if (expectsQuery)
         {
             Assert.NotNull(query);
-            Assert.Contains("trailer", query);
+            // La query apunta a la versión doblada/subtitulada para LATAM
+            Assert.Contains("español latino", query);
             Assert.Contains(title, query);   // el nombre de la obra viaja en el titular
         }
         else

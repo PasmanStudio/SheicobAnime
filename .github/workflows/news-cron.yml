@@ -41,56 +41,48 @@ jobs:
       - name: Install ffmpeg
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
 
-      # yt-dlp para el reel "tráiler + titular" (baja el PV embebido en el
-      # artículo). pipx viene preinstalado en el runner y trae la versión
-      # actual (la de apt queda vieja y YouTube la rompe). Le inyectamos el
-      # plugin de PO token (ver el paso del provider abajo) en el MISMO venv
-      # de pipx para que yt-dlp lo descubra. Best-effort: si igual falla, el
-      # reel cae al slideshow de imágenes.
-      - name: Install yt-dlp + PO token plugin
+      # yt-dlp para el reel "tráiler + titular" (busca y baja la versión en
+      # español latino del tráiler). pipx viene preinstalado en el runner y trae
+      # la versión actual (la de apt queda vieja y YouTube la rompe).
+      # NOTA (jul-2026, matriz probada en vivo en el workflow yt-diag): el PO
+      # token provider (bgutil) y las cookies se ELIMINARON — con android_vr +
+      # WARP no hacen falta, y las cookies directamente ROMPEN a android_vr.
+      - name: Install yt-dlp
         run: |
           pipx install yt-dlp
-          pipx inject yt-dlp bgutil-ytdlp-pot-provider==1.3.1
           yt-dlp --version
 
-      # Provider de PO token (bgutil): YouTube bloquea con "Sign in to confirm
-      # you're not a bot" a las IPs de datacenter (GitHub Actions) y los clientes
-      # tv/ios/web_safari ya no lo evaden solos. El provider genera los PO tokens
-      # (BotGuard) que YouTube exige; yt-dlp los pide vía el plugin de arriba al
-      # server local en :4416 (auto-detectado). El tag del server DEBE coincidir
-      # en major.minor con el plugin (por eso ambos fijados a 1.3.1). Docker viene
-      # preinstalado en ubuntu-latest. Best-effort: si no levanta, cae al slideshow.
-      - name: Start PO token provider (bgutil)
-        run: |
-          docker run --name bgutil-provider -d -p 4416:4416 \
-            brainicism/bgutil-ytdlp-pot-provider:1.3.1
-          # Espera corta a que el server responda (no bloquea el job si tarda:
-          # el build de .NET viene después y le da tiempo de sobra a estar listo).
-          for i in $(seq 1 15); do
-            if curl -sf http://127.0.0.1:4416/ping >/dev/null 2>&1; then
-              echo "bgutil provider ready"; break
-            fi
-            echo "waiting for bgutil provider ($i/15)..."; sleep 1
-          done
-
-      # Cookies de YouTube: el PO token SOLO no evade el "confirm you're not a bot"
-      # desde IPs de datacenter (confirmado en vivo jul-2026). La combinación que
-      # SÍ funciona desde CI es cookies de una sesión logueada (cuenta descartable)
-      # + el PO token de arriba. Escribe el secret YOUTUBE_COOKIES (formato Netscape
-      # cookies.txt, exportado con "Get cookies.txt") a un archivo temporal. Sin el
-      # secret cargado no se escribe nada y yt-dlp corre sin cookies (best-effort:
-      # cae al slideshow como hasta ahora). Tip al exportar: hacerlo en una ventana
-      # de incógnito logueada y CERRARLA sin desloguear, para que YouTube no rote
-      # la sesión y las cookies duren más.
-      - name: Write YouTube cookies
+      # Cloudflare WARP como salida de yt-dlp: YouTube bloquea por IP a los
+      # runners (confirmado jul-2026: las 21 combinaciones cliente×cookies
+      # fallaron con "Sign in to confirm you're not a bot"); las IPs de WARP se
+      # clasifican como VPN de consumo y pasan. El perfil WireGuard se registró
+      # UNA vez fuera de CI (wgcf register desde el runner da 429) y vive en el
+      # secret WARP_WIREGUARD_CONFIG; wireproxy lo expone como SOCKS5 local SOLO
+      # para yt-dlp. Best-effort: si el túnel no levanta, YTDLP_PROXY queda vacío
+      # y el reel cae al slideshow como siempre.
+      - name: Start Cloudflare WARP proxy (wireproxy)
         env:
-          YOUTUBE_COOKIES: ${{ secrets.YOUTUBE_COOKIES }}
+          WARP_WIREGUARD_CONFIG: ${{ secrets.WARP_WIREGUARD_CONFIG }}
         run: |
-          if [ -n "$YOUTUBE_COOKIES" ]; then
-            printf '%s' "$YOUTUBE_COOKIES" > "$RUNNER_TEMP/yt-cookies.txt"
-            echo "cookies escritas ($(wc -l < "$RUNNER_TEMP/yt-cookies.txt") líneas)"
+          if [ -z "$WARP_WIREGUARD_CONFIG" ]; then
+            echo "sin secret WARP_WIREGUARD_CONFIG — yt-dlp corre directo (slideshow probable)"
+            exit 0
+          fi
+          cd "$RUNNER_TEMP"
+          # Versión pineada con URL directa (la API de releases devolvía null desde CI)
+          curl -sL -o wireproxy.tar.gz \
+            "https://github.com/whyvl/wireproxy/releases/download/v1.1.2/wireproxy_linux_amd64.tar.gz"
+          tar -xzf wireproxy.tar.gz
+          printf '%s\n\n[Socks5]\nBindAddress = 127.0.0.1:1080\n' "$WARP_WIREGUARD_CONFIG" > wp.conf
+          nohup ./wireproxy -c wp.conf > wireproxy.log 2>&1 &
+          sleep 3
+          WARP_IP=$(curl -s -m 15 --proxy socks5h://127.0.0.1:1080 ifconfig.me || true)
+          if [ -n "$WARP_IP" ]; then
+            echo "WARP arriba (IP de salida: $WARP_IP)"
+            echo "YTDLP_PROXY=socks5h://127.0.0.1:1080" >> "$GITHUB_ENV"
           else
-            echo "sin secret YOUTUBE_COOKIES — yt-dlp corre sin cookies (slideshow)"
+            echo "WARP no respondió — yt-dlp corre directo (slideshow probable)"
+            tail -5 wireproxy.log || true
           fi
 
       - name: Cache NuGet packages
@@ -115,9 +107,9 @@ jobs:
           Instagram__AccessToken:  ${{ secrets.INSTAGRAM_ACCESS_TOKEN }}
           Instagram__IgUserId:     ${{ secrets.INSTAGRAM_IG_USER_ID }}
           Instagram__ImgBbApiKey:  ${{ secrets.IMGBB_API_KEY }}
-          # Cookies de YouTube para el reel-tráiler (ver paso "Write YouTube cookies").
-          # La ruta se pasa siempre; el código solo usa --cookies si el archivo existe.
-          Instagram__YtDlpCookiesPath: ${{ runner.temp }}/yt-cookies.txt
+          # SOCKS5 de WARP (ver paso "Start Cloudflare WARP proxy") — vacío si el
+          # túnel no levantó; el código solo agrega --proxy cuando no está vacío.
+          Instagram__YtDlpProxy: ${{ env.YTDLP_PROXY }}
           # ── Cloudinary (host de imágenes preferido — key-auth, sin throttle de IP) ──
           Instagram__CloudinaryCloudName:  ${{ secrets.CLOUDINARY_CLOUD_NAME }}
           Instagram__CloudinaryApiKey:     ${{ secrets.CLOUDINARY_API_KEY }}

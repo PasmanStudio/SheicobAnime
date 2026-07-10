@@ -314,7 +314,12 @@ public class AnimeNewsPublisherService(
 
             if (igSettings.TrailerReelEnabled)
             {
-                var trailerVideoUrl = trailerUrl;
+                // El embebido del artículo se valida (kudasai suele embeber el PV
+                // japonés — el requisito es español latino); si no pasa, se busca
+                // la versión latina en YouTube.
+                var trailerVideoUrl = trailerUrl is null
+                    ? null
+                    : await trailerService.ValidateAsync(trailerUrl, ct);
                 if (trailerVideoUrl is null && igSettings.TrailerSearchEnabled)
                     trailerVideoUrl = await SearchTrailerUrlAsync(item, content, ct);
 
@@ -421,8 +426,10 @@ public class AnimeNewsPublisherService(
                     "cuando la noticia anuncia material audiovisual: nuevo tráiler/teaser/PV, nueva temporada, " +
                     "película, adaptación a anime o fecha de estreno. NO corresponde para novelas o manga sin " +
                     "anime confirmado, figuras, eventos, rankings, fallecimientos ni polémicas. Si corresponde, " +
-                    "armá la búsqueda de YouTube: nombre de la obra en romaji + qué video es " +
-                    "(ej.: \"Sword Art Online Integral Domain official trailer\"). " +
+                    "armá la búsqueda de YouTube apuntando a la VERSIÓN EN ESPAÑOL LATINO (doblada o subtitulada " +
+                    "— la audiencia es LATAM y canales como Crunchyroll en Español suben esa versión): " +
+                    "nombre de la obra + \"tráiler oficial español latino\" " +
+                    "(ej.: \"Solo Leveling temporada 2 tráiler oficial español latino\"). " +
                     "Respondé SOLO un JSON: {\"buscar\": true|false, \"query\": \"...\"}",
                     $"Titular: {item.Title}\nResumen: {Truncate(item.Summary ?? content.Lede ?? string.Empty, 400)}",
                     useWebSearch: false, ct);
@@ -453,15 +460,16 @@ public class AnimeNewsPublisherService(
 
     /// <summary>
     /// Fallback sin IA: solo busca cuando el titular anuncia material
-    /// audiovisual; la query es el titular + "trailer" (el nombre de la obra ya
-    /// viene en el titular). Público estático para tests.
+    /// audiovisual; la query es el titular + "tráiler oficial español latino"
+    /// (el nombre de la obra ya viene en el titular, y el sufijo apunta a la
+    /// versión doblada/subtitulada para LATAM). Público estático para tests.
     /// </summary>
     public static string? HeuristicTrailerQuery(string title)
     {
         var t = title.ToLowerInvariant();
         var audiovisual = new[] { "tráiler", "trailer", "teaser", "avance", "temporada",
                                   "película", "pelicula", "live-action", "adaptación", "adaptacion", "estreno" };
-        return audiovisual.Any(t.Contains) ? $"{title} trailer" : null;
+        return audiovisual.Any(t.Contains) ? $"{title} tráiler oficial español latino" : null;
     }
 
     // ── Caption ──────────────────────────────────────────────────────────────
