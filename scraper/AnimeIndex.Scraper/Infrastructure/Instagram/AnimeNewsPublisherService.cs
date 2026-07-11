@@ -10,9 +10,11 @@ namespace AnimeIndex.Scraper.Infrastructure.Instagram;
 
 /// <summary>
 /// Publishes pending anime news items to Instagram as:
-///   • Máx. UN Reel de noticias por día (slideshow: cover + puntos clave + CTA,
-///     con música por IA y share_to_feed) — la noticia MÁS RELEVANTE del pool
-///     lo gana (dedup por ig_reel_media_id en las últimas 24 h). La noticia del
+///   • Reel de noticias (slideshow/tráiler: cover + puntos clave + CTA, con
+///     música por IA y share_to_feed) — la noticia MÁS RELEVANTE del pool lo
+///     gana. El formato de cada corrida lo decide AnimeNews__RunFormat (lo
+///     setea el cron: 5 corridas de reel + 2 de carrusel por día); sin ese env
+///     var rige el dedup original de máx. un reel por 24 h. La noticia del
 ///     reel NO publica además el carrusel: sería la misma noticia dos veces en
 ///     el feed. Si el reel falla, el carrusel actúa de respaldo.
 ///   • A single feed post / carousel (1080×1080) para el resto.
@@ -62,25 +64,33 @@ public class AnimeNewsPublisherService(
         }
     }
 
-    // ── Selección del batch (la más relevante primero si hay reel del día) ────
+    // ── Selección del batch (la más relevante primero si la corrida publica reel) ──
 
     private async Task<IReadOnlyList<AnimeNewsItem>> SelectBatchAsync(
         IReadOnlyList<AnimeNewsItem> items, CancellationToken ct)
     {
-        if (items.Count <= 1 || !igSettings.NewsReelEnabled)
+        if (items.Count <= 1 || !igSettings.NewsReelEnabled || newsSettings.IsPostRun)
             return items.Take(newsSettings.MaxPerRun).ToList();
 
         bool reelAvailable;
-        try
+        if (newsSettings.IsReelRun)
         {
-            reelAvailable = !await db.AnimeNewsItems.AnyAsync(
-                n => n.IgReelMediaId != null && n.IgPostedAt >= DateTime.UtcNow.AddHours(-24), ct);
+            // Corrida de reel del cron: el horario ya espacia los reels, no hay dedup.
+            reelAvailable = true;
         }
-        catch (Exception ex) when (!ct.IsCancellationRequested)
+        else
         {
-            // Ante un fallo de DB, no arriesgar un 2do reel del día
-            logger.LogWarning(ex, "AnimeNews: dedup query falló — asumo reel ya publicado hoy");
-            reelAvailable = false;
+            try
+            {
+                reelAvailable = !await db.AnimeNewsItems.AnyAsync(
+                    n => n.IgReelMediaId != null && n.IgPostedAt >= DateTime.UtcNow.AddHours(-24), ct);
+            }
+            catch (Exception ex) when (!ct.IsCancellationRequested)
+            {
+                // Ante un fallo de DB, no arriesgar un 2do reel del día
+                logger.LogWarning(ex, "AnimeNews: dedup query falló — asumo reel ya publicado hoy");
+                reelAvailable = false;
+            }
         }
 
         if (!reelAvailable)
@@ -176,23 +186,33 @@ public class AnimeNewsPublisherService(
             // Turn the raw item into finished, original content (AI rewrite, or clean fallback).
             var content = await rewriter.RewriteAsync(item, ct);
 
-            // ── Reel diario PRIMERO (máx 1 por 24 h) ──────────────────────
+            // ── Reel PRIMERO ──────────────────────────────────────────────
             // Si esta noticia gana el reel, NO se publica además el carrusel:
             // el reel (share_to_feed=true) ya la muestra en el feed con las
             // mismas slides animadas — dos posts de la misma noticia es spam.
+            // En corridas "reel" del cron se publica directo (el horario ya
+            // espacia); en corridas "post" no se intenta; sin formato rige el
+            // dedup original de máx. 1 reel por 24 h.
             string? reelMediaId = null;
-            if (igSettings.NewsReelEnabled)
+            if (igSettings.NewsReelEnabled && !newsSettings.IsPostRun)
             {
-                try
+                if (newsSettings.IsReelRun)
                 {
-                    var reelRecently = await db.AnimeNewsItems.AnyAsync(
-                        n => n.IgReelMediaId != null && n.IgPostedAt >= DateTime.UtcNow.AddHours(-24), ct);
-                    if (!reelRecently)
-                        reelMediaId = await PublishReelAsync(item, content, images, trailerUrl, ct);
+                    reelMediaId = await PublishReelAsync(item, content, images, trailerUrl, ct);
                 }
-                catch (Exception ex) when (!ct.IsCancellationRequested)
+                else
                 {
-                    logger.LogWarning(ex, "AnimeNews: reel dedup check failed — skipping reel this run");
+                    try
+                    {
+                        var reelRecently = await db.AnimeNewsItems.AnyAsync(
+                            n => n.IgReelMediaId != null && n.IgPostedAt >= DateTime.UtcNow.AddHours(-24), ct);
+                        if (!reelRecently)
+                            reelMediaId = await PublishReelAsync(item, content, images, trailerUrl, ct);
+                    }
+                    catch (Exception ex) when (!ct.IsCancellationRequested)
+                    {
+                        logger.LogWarning(ex, "AnimeNews: reel dedup check failed — skipping reel this run");
+                    }
                 }
             }
 

@@ -12,6 +12,19 @@ public class AnimeNewsSettings
     public int MaxAgeHours { get; set; } = 48;
 
     /// <summary>
+    /// Formato forzado de la corrida — lo setea el workflow según el horario del
+    /// cron (cada franja publica un formato fijo: 5 reels + 2 carruseles por día).
+    ///   "reel" → siempre Reel (sin dedup de 24 h — el cron ya espacia los horarios).
+    ///   "post" → nunca Reel (carrusel/imagen común, como siempre).
+    ///   vacío u otro valor → automático: máx. un reel por 24 h (corridas manuales
+    ///   o entornos sin el env var; era el comportamiento original).
+    /// </summary>
+    public string RunFormat { get; set; } = string.Empty;
+
+    public bool IsReelRun => string.Equals(RunFormat, "reel", StringComparison.OrdinalIgnoreCase);
+    public bool IsPostRun => string.Equals(RunFormat, "post", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
     /// Maximum key-point (headline) slides between the cover and the closing CTA in a news
     /// carousel. Total slides = 1 (cover) + up to MaxContentSlides + 1 (CTA). With the AI
     /// producing 3–5 key points, 5 gives rich carousels of up to 7 slides. Instagram allows 10.
