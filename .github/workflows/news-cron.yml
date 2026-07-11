@@ -1,21 +1,33 @@
 name: News — Anime RSS → Instagram
 
-# 5 corridas curadas por día (antes: cada hora, 13/día → spam + agotaba la cuota
-# de Gemini). Cada corrida elige la noticia MÁS relevante del pool acumulado y
-# publica 1 sola. Menos posts, mejores, y ~9-12 llamadas Gemini/día (dentro del
-# free tier). Horarios pensados para el pico de Argentina (UTC-3).
+# 7 corridas curadas por día: 5 REELS + 2 noticias comunes (carrusel). Los reels
+# traccionan mucho más alcance (medido jul-2026), así que son el formato
+# principal; cada corrida publica 1 sola pieza y el formato lo fija el horario
+# del cron (ver paso "Resolver formato"). Cada corrida elige la noticia MÁS
+# relevante del pool acumulado. ~15-20 llamadas Gemini/día (dentro del free
+# tier). Horarios pensados para el pico de Argentina (UTC-3).
 # Fast job: ~3–5 minutes total (RSS fetch + article scrape + IG API calls).
 # No Hangfire — uses the standalone --news mode that exits after one post.
 
 on:
   schedule:
     # Horarios Argentina (UTC-3) → UTC. GHA cron solo corre en UTC.
-    - cron: '0 15 * * *'   # 12:00 ART
-    - cron: '0 18 * * *'   # 15:00 ART
-    - cron: '0 20 * * *'   # 17:00 ART
-    - cron: '0 22 * * *'   # 19:00 ART
-    - cron: '0 1 * * *'    # 22:00 ART (día anterior en UTC)
+    # REELS (5/día):
+    - cron: '0 13 * * *'   # 10:00 ART → reel
+    - cron: '0 15 * * *'   # 12:00 ART → reel
+    - cron: '0 17 * * *'   # 14:00 ART → reel
+    - cron: '0 21 * * *'   # 18:00 ART → reel
+    - cron: '0 23 * * *'   # 20:00 ART → reel
+    # Noticias comunes (carrusel, 2/día) — mapeadas a "post" en "Resolver formato":
+    - cron: '0 16 * * *'   # 13:00 ART → post
+    - cron: '0 18 * * *'   # 15:00 ART → post
   workflow_dispatch:   # allow manual trigger from Actions tab
+    inputs:
+      format:
+        description: 'Formato a publicar (auto = máx. 1 reel por 24 h, como antes)'
+        type: choice
+        options: [auto, reel, post]
+        default: auto
 
 env:
   DOTNET_NOLOGO: true
@@ -28,6 +40,20 @@ jobs:
     timeout-minutes: 10   # safety cap — normal run is ~3–5 min
 
     steps:
+      # Cada horario del cron publica un formato fijo: los de las 16 y 18 UTC
+      # (13 y 15 ART) salen como noticia común; el resto de los crons, como
+      # reel. Las corridas manuales usan el input (default "auto" = máx. 1 reel
+      # por 24 h, el comportamiento previo del publisher).
+      - name: Resolver formato de la corrida
+        run: |
+          case "${{ github.event.schedule }}" in
+            "0 16 * * *"|"0 18 * * *") FORMAT=post ;;
+            "") FORMAT="${{ inputs.format || 'auto' }}" ;;
+            *) FORMAT=reel ;;
+          esac
+          echo "NEWS_FORMAT=$FORMAT" >> "$GITHUB_ENV"
+          echo "Formato de esta corrida: $FORMAT"
+
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
 
       - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
@@ -38,7 +64,9 @@ jobs:
       # NO lo trae preinstalado (confirmado en vivo: "ffmpeg no encontrado" en el
       # run del 4-jul-2026). Sin este paso el reel cae a "skipped" silenciosamente
       # y el resto del pipeline (feed+story) sigue andando igual.
+      # Las corridas "post" no renderizan video → se saltea (igual que yt-dlp y WARP).
       - name: Install ffmpeg
+        if: env.NEWS_FORMAT != 'post'
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
 
       # yt-dlp para el reel "tráiler + titular" (busca y baja la versión en
@@ -48,6 +76,7 @@ jobs:
       # token provider (bgutil) y las cookies se ELIMINARON — con android_vr +
       # WARP no hacen falta, y las cookies directamente ROMPEN a android_vr.
       - name: Install yt-dlp
+        if: env.NEWS_FORMAT != 'post'
         run: |
           pipx install yt-dlp
           yt-dlp --version
@@ -61,6 +90,7 @@ jobs:
       # para yt-dlp. Best-effort: si el túnel no levanta, YTDLP_PROXY queda vacío
       # y el reel cae al slideshow como siempre.
       - name: Start Cloudflare WARP proxy (wireproxy)
+        if: env.NEWS_FORMAT != 'post'
         env:
           WARP_WIREGUARD_CONFIG: ${{ secrets.WARP_WIREGUARD_CONFIG }}
         run: |
@@ -103,6 +133,9 @@ jobs:
         env:
           ASPNETCORE_ENVIRONMENT: Production
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # Formato de la corrida según el horario del cron (ver "Resolver formato"):
+          # reel | post | auto. Con "auto" rige el dedup de máx. 1 reel por 24 h.
+          AnimeNews__RunFormat: ${{ env.NEWS_FORMAT }}
           # ── Instagram ──────────────────────────────────────────────────────
           Instagram__AccessToken:  ${{ secrets.INSTAGRAM_ACCESS_TOKEN }}
           Instagram__IgUserId:     ${{ secrets.INSTAGRAM_IG_USER_ID }}
