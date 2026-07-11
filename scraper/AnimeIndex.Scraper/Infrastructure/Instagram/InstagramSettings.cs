@@ -38,8 +38,10 @@ public class InstagramSettings
     // quiere el reel diario para las NOTICIAS; prender con Instagram__ReelsEnabled=true.
     public bool ReelsEnabled { get; set; } = false;
 
-    // Reel de NOTICIAS: máx. uno cada 24 h (motion card animada + música por IA
-    // de la noticia más relevante del día). Apagar con Instagram__NewsReelEnabled=false.
+    // Reel de NOTICIAS (slideshow/tráiler + música por IA de la noticia más
+    // relevante del pool). La cadencia la fija el cron vía AnimeNews__RunFormat
+    // (5 corridas "reel" por día); sin ese env var, máx. uno cada 24 h.
+    // Apagar del todo con Instagram__NewsReelEnabled=false.
     public bool NewsReelEnabled { get; set; } = true;
 
     // ── Reel "tráiler + titular" ────────────────────────────────────────
