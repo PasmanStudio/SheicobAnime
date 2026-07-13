@@ -25,7 +25,11 @@ public class GeminiClient(
 
     /// <summary>
     /// Sends one prompt and returns the concatenated text of the first candidate.
-    /// Throws on HTTP error, safety block, or empty response.
+    /// Throws on HTTP error, safety block, or empty response. Si el modelo
+    /// principal agota su cuota free tier (429 — pasa a diario: Google recortó
+    /// el límite a ~20 req/día en jul-2026 y las corridas de la noche quedaban
+    /// sin IA), reintenta UNA vez con <see cref="AiSettings.FallbackModel"/>
+    /// (Gemma: cuota separada y enorme, sin grounding).
     /// </summary>
     public async Task<string> GenerateAsync(
         string systemInstruction,
@@ -33,25 +37,54 @@ public class GeminiClient(
         bool useWebSearch,
         CancellationToken ct = default)
     {
+        try
+        {
+            return await GenerateWithModelAsync(settings.Model, systemInstruction, userPrompt, useWebSearch, ct);
+        }
+        catch (GeminiQuotaException) when (
+            !string.IsNullOrWhiteSpace(settings.FallbackModel)
+            && !string.Equals(settings.FallbackModel, settings.Model, StringComparison.OrdinalIgnoreCase))
+        {
+            logger.LogWarning("Gemini {Model} sin cuota (429) — fallback a {Fallback}",
+                settings.Model, settings.FallbackModel);
+            return await GenerateWithModelAsync(
+                settings.FallbackModel, systemInstruction, userPrompt, useWebSearch, ct);
+        }
+    }
+
+    private async Task<string> GenerateWithModelAsync(
+        string model,
+        string systemInstruction,
+        string userPrompt,
+        bool useWebSearch,
+        CancellationToken ct)
+    {
+        // Los Gemma no soportan system_instruction, tools (grounding) ni JSON
+        // mode nativo — se adapta el payload: instrucción fusionada al prompt
+        // y JSON pedido por prompt (los callers ya lo piden y parsean tolerante).
+        var isGemma = model.StartsWith("gemma", StringComparison.OrdinalIgnoreCase);
+
         var generationConfig = new Dictionary<string, object?>
         {
             ["temperature"] = settings.Temperature,
         };
         // Tools + structured-output MIME type are mutually exclusive in the Gemini API.
-        if (!useWebSearch)
+        if (!useWebSearch && !isGemma)
             generationConfig["responseMimeType"] = "application/json";
 
+        var userText = isGemma ? $"{systemInstruction}\n\n---\n\n{userPrompt}" : userPrompt;
         var payload = new Dictionary<string, object?>
         {
-            ["system_instruction"] = new { parts = new[] { new { text = systemInstruction } } },
-            ["contents"]           = new[] { new { role = "user", parts = new[] { new { text = userPrompt } } } },
-            ["generationConfig"]   = generationConfig,
+            ["contents"]         = new[] { new { role = "user", parts = new[] { new { text = userText } } } },
+            ["generationConfig"] = generationConfig,
         };
-        if (useWebSearch)
+        if (!isGemma)
+            payload["system_instruction"] = new { parts = new[] { new { text = systemInstruction } } };
+        if (useWebSearch && !isGemma)
             payload["tools"] = new[] { new { google_search = new { } } };
 
         var json = JsonSerializer.Serialize(payload);
-        var url  = $"{BaseUrl}/{settings.Model}:generateContent?key={Uri.EscapeDataString(settings.ApiKey)}";
+        var url  = $"{BaseUrl}/{model}:generateContent?key={Uri.EscapeDataString(settings.ApiKey)}";
         var http = httpFactory.CreateClient("gemini");
 
         // Retry only on 503 ("high demand") — that's transient. NOT on 429: that's a daily/quota
@@ -70,7 +103,7 @@ public class GeminiClient(
             {
                 var text = ExtractText(body);
                 logger.LogDebug("Gemini {Model} ok ({Chars} chars, websearch={Ws}, attempt={Attempt})",
-                    settings.Model, text.Length, useWebSearch, attempt);
+                    model, text.Length, useWebSearch, attempt);
                 return text;
             }
 
@@ -78,15 +111,20 @@ public class GeminiClient(
             if (transient && attempt < maxAttempts)
             {
                 logger.LogDebug("Gemini {Model} {Code} (attempt {Attempt}) — retrying",
-                    settings.Model, (int)resp.StatusCode, attempt);
+                    model, (int)resp.StatusCode, attempt);
                 await Task.Delay(TimeSpan.FromSeconds(2 * attempt), ct);
                 continue;
             }
 
-            throw new InvalidOperationException(
-                $"Gemini {settings.Model} failed ({(int)resp.StatusCode}): {Truncate(body, 400)}");
+            var message = $"Gemini {model} failed ({(int)resp.StatusCode}): {Truncate(body, 400)}";
+            throw resp.StatusCode is System.Net.HttpStatusCode.TooManyRequests
+                ? new GeminiQuotaException(message)
+                : new InvalidOperationException(message);
         }
     }
+
+    /// <summary>429 del free tier — dispara el fallback de modelo.</summary>
+    private sealed class GeminiQuotaException(string message) : InvalidOperationException(message);
 
     /// <summary>Pulls candidates[0].content.parts[*].text out of the Gemini response envelope.</summary>
     private static string ExtractText(string responseBody)
@@ -110,10 +148,30 @@ public class GeminiClient(
                     sb.Append(text.GetString());
         }
 
-        var result = sb.ToString().Trim();
+        var result = StripCodeFences(sb.ToString());
         if (result.Length == 0)
             throw new InvalidOperationException("Gemini candidate had no text");
         return result;
+    }
+
+    /// <summary>
+    /// Quita el fence markdown (```json … ```) que envuelve la respuesta cuando
+    /// el modelo no soporta JSON mode nativo (Gemma, o Gemini con tools). Los
+    /// callers hacen JsonDocument.Parse directo — sin esto, el fence rompe el
+    /// parseo y la corrida cae a heurística. Público estático para tests.
+    /// </summary>
+    public static string StripCodeFences(string text)
+    {
+        var t = text.Trim();
+        if (!t.StartsWith("```", StringComparison.Ordinal)) return t;
+
+        var firstNewline = t.IndexOf('\n');
+        if (firstNewline < 0) return t;
+        t = t[(firstNewline + 1)..];
+
+        var closing = t.LastIndexOf("```", StringComparison.Ordinal);
+        if (closing >= 0) t = t[..closing];
+        return t.Trim();
     }
 
     private static string Truncate(string s, int max) =>
