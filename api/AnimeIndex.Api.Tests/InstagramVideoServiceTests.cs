@@ -519,25 +519,119 @@ public class TrailerSearchTests
     [InlineData("Sword Art Online anuncia nueva película para 2028", true)]
     [InlineData("Frieren confirma su segunda temporada con un tráiler", true)]
     [InlineData("El live-action de One Piece ya tiene fecha de estreno", true)]
+    // La raíz "estren" cubre las conjugaciones (bug real jul-2026: "se
+    // estrenará" no disparaba porque se buscaba el sustantivo "estreno")
+    [InlineData("La segunda parte de Chitose se estrenará en octubre", true)]
     // Titulares sin video que buscar → null (queda el slideshow)
     [InlineData("Sword Art Online anuncia una nueva novela sobre Kirito y Asuna", false)]
     [InlineData("Fallece reconocido animador del estudio Ghibli", false)]
     [InlineData("Nueva figura coleccionable de Nezuko agota su preventa", false)]
-    public void HeuristicTrailerQuery_OnlyTriggersOnAudiovisualNews(string title, bool expectsQuery)
+    public void HeuristicVideoQuery_OnlyTriggersOnAudiovisualNews(string title, bool expectsQuery)
     {
-        var query = AnimeNewsPublisherService.HeuristicTrailerQuery(title);
+        var result = AnimeNewsPublisherService.HeuristicVideoQuery(title);
 
         if (expectsQuery)
         {
-            Assert.NotNull(query);
+            Assert.NotNull(result);
+            Assert.Equal(NewsVideoKind.Trailer, result!.Value.Kind);
             // La query apunta a la versión doblada/subtitulada para LATAM
-            Assert.Contains("español latino", query);
-            Assert.Contains(title, query);   // el nombre de la obra viaja en el titular
+            Assert.Contains("español latino", result.Value.Query);
+            Assert.Contains(title, result.Value.Query);   // el nombre de la obra viaja en el titular
         }
         else
         {
-            Assert.Null(query);
+            Assert.Null(result);
         }
+    }
+
+    [Theory]
+    // Los casos REALES que salieron sin video (jul-2026): noticias de
+    // openings/endings/cortos no eran "de tráiler" y quedaban en slideshow
+    [InlineData("Mob y Reigen regresan: Mob Psycho 100 estrena un corto animado", NewsVideoKind.Short)]
+    [InlineData("Yoroi-Shinden Samurai Troopers estrena opening y ending sin créditos", NewsVideoKind.ThemeSong)]
+    [InlineData("Dannie May estrena video musical del opening de Yoroi-Shinden Samurai Troopers", NewsVideoKind.ThemeSong)]
+    public void HeuristicVideoQuery_ClassifiesThemeAndShortNews(string title, NewsVideoKind expected)
+    {
+        var result = AnimeNewsPublisherService.HeuristicVideoQuery(title);
+
+        Assert.NotNull(result);
+        Assert.Equal(expected, result!.Value.Kind);
+        // Para temas y cortos el idioma no aplica — la query no fuerza español
+        Assert.DoesNotContain("español latino", result.Value.Query);
+    }
+
+    [Theory]
+    // Las corridas de carrusel común postergan las noticias con video
+    [InlineData("Frieren confirma su segunda temporada con un tráiler", true)]
+    [InlineData("Samurai Troopers estrena opening y ending sin créditos", true)]
+    [InlineData("Mob Psycho 100 estrena un corto animado", true)]
+    [InlineData("El evento de figuras más grande de LATAM llega a Buenos Aires", false)]
+    public void HasAudiovisualSignal_DetectsVideoNews(string title, bool expected)
+        => Assert.Equal(expected, AnimeNewsPublisherService.HasAudiovisualSignal(title));
+
+    [Fact]
+    public void PickBestSearchResult_RejectsAutoTranslatedFanVideo_RealCase()
+    {
+        // Caso REAL (reel publicado 12-jul-2026): video fan en INGLÉS del canal
+        // "Novagesis" ("The Most Unexpected Anime of 2026 Just Dropped Its First
+        // Trailer"). YouTube auto-traduce títulos según la región del requester,
+        // así que vía WARP el título llegó "en español" — y "tráiler" contaba
+        // como señal de idioma. Debe caer en ambos modos: en español (el título
+        // traducido no dice nada del idioma real) y relajado (no es oficial).
+        var lines = new[]
+        {
+            Line("QanuAtmPzOM", "71",
+                "El anime más inesperado de 2026 acaba de lanzar su primer tráiler", "Novagesis"),
+        };
+
+        Assert.Null(TrailerDownloadService.PickBestSearchResult(lines));
+        Assert.Null(TrailerDownloadService.PickBestSearchResult(lines, requireSpanish: false));
+    }
+
+    [Fact]
+    public void PickBestSearchResult_ShortKind_AcceptsOfficialSpecialMovie_RealCase()
+    {
+        // Caso REAL (Mob Psycho 100, 12-jul-2026): el corto de aniversario
+        // embebido en el artículo ES el video de la noticia — upload oficial de
+        // Warner Japan; con kind Short el idioma no aplica.
+        var best = TrailerDownloadService.PickBestSearchResult(
+            [Line("OWSfQwwMcE4", "127",
+                "アニメ『モブサイコ100』10周年記念特別映像｜MOB PSYCHO 100 10th Anniversary Special Movie",
+                "Warner Bros. Japan Anime")],
+            requireSpanish: false, kind: NewsVideoKind.Short);
+
+        Assert.Equal("OWSfQwwMcE4", best?.Id);
+    }
+
+    [Fact]
+    public void PickBestSearchResult_ThemeKind_AcceptsCreditlessOpeningRejectsFanContent()
+    {
+        var best = TrailerDownloadService.PickBestSearchResult(
+        [
+            Line("fanamv000001", "95", "Samurai Troopers Opening [AMV]", "OtakuEdits"),
+            Line("official0001", "92", "『鎧伝サムライトルーパーズ』ノンクレジットオープニング", "KADOKAWAanime"),
+        ], requireSpanish: false, kind: NewsVideoKind.ThemeSong);
+
+        Assert.Equal("official0001", best?.Id);
+    }
+}
+
+public class GeminiClientTests
+{
+    [Fact]
+    public void StripCodeFences_UnwrapsGemmaStyleJson()
+    {
+        // Gemma (el fallback de cuota) no tiene JSON mode nativo: responde el
+        // JSON envuelto en un fence markdown que rompería JsonDocument.Parse
+        var fenced = "```json\n{\"buscar\": true}\n```";
+        Assert.Equal("{\"buscar\": true}", AnimeIndex.Scraper.Infrastructure.AiRewrite.GeminiClient.StripCodeFences(fenced));
+    }
+
+    [Fact]
+    public void StripCodeFences_LeavesPlainJsonUntouched()
+    {
+        Assert.Equal("{\"a\":1}", AnimeIndex.Scraper.Infrastructure.AiRewrite.GeminiClient.StripCodeFences("{\"a\":1}"));
+        Assert.Equal("{\"a\":1}", AnimeIndex.Scraper.Infrastructure.AiRewrite.GeminiClient.StripCodeFences("  {\"a\":1}\n"));
     }
 }
 
