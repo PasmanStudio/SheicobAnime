@@ -535,8 +535,8 @@ public class TrailerSearchTests
             Assert.NotNull(result);
             Assert.Equal(NewsVideoKind.Trailer, result!.Value.Kind);
             // La query apunta a la versión doblada/subtitulada para LATAM
-            Assert.Contains("español latino", result.Value.Query);
-            Assert.Contains(title, result.Value.Query);   // el nombre de la obra viaja en el titular
+            Assert.Contains("español latino", result!.Value.Query);
+            Assert.Contains(title, result!.Value.Query);   // el nombre de la obra viaja en el titular
         }
         else
         {
@@ -557,7 +557,7 @@ public class TrailerSearchTests
         Assert.NotNull(result);
         Assert.Equal(expected, result!.Value.Kind);
         // Para temas y cortos el idioma no aplica — la query no fuerza español
-        Assert.DoesNotContain("español latino", result.Value.Query);
+        Assert.DoesNotContain("español latino", result!.Value.Query);
     }
 
     [Theory]
