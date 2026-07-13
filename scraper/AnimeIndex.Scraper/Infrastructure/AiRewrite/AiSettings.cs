@@ -17,12 +17,22 @@ public class AiSettings
     public string ApiKey { get; set; } = string.Empty;
 
     /// <summary>
-    /// Model id. gemini-2.5-flash-lite is the default: free tier with a HIGH daily request
-    /// quota (~1000/day vs ~20/day for gemini-2.5-flash), fast, and more than good enough to
-    /// rewrite a news item into structured JSON. (gemini-2.0-flash / 2.0-flash-lite returned
-    /// free_tier limit:0 for this project.) Override via Ai__Model for more quality if you have quota.
+    /// Model id. gemini-2.5-flash-lite is the default: free tier, fast, and more than good
+    /// enough to rewrite a news item into structured JSON. OJO: Google recortó la cuota free
+    /// tier — visto en prod jul-2026: 429 "limit: 20" requests/día (antes ~1000), con lo que
+    /// las últimas corridas del día quedaban sin IA → de ahí el FallbackModel.
+    /// (gemini-2.0-flash / 2.0-flash-lite returned free_tier limit:0 for this project.)
+    /// Override via Ai__Model for more quality if you have quota.
     /// </summary>
     public string Model { get; set; } = "gemini-2.5-flash-lite";
+
+    /// <summary>
+    /// Modelo de RESPALDO cuando el principal devuelve 429 (cuota diaria agotada).
+    /// Los Gemma corren sobre una cuota free tier separada y mucho más grande
+    /// (~14k req/día) — no soportan system_instruction, grounding ni JSON mode,
+    /// el cliente adapta el payload solo. Vacío = sin fallback (heurísticas locales).
+    /// </summary>
+    public string FallbackModel { get; set; } = "gemma-3-27b-it";
 
     /// <summary>
     /// Let the model pull extra context from the web (Google Search grounding) when the

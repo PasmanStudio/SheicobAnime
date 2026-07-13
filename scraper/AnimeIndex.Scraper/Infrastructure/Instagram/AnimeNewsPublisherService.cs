@@ -69,7 +69,20 @@ public class AnimeNewsPublisherService(
     private async Task<IReadOnlyList<AnimeNewsItem>> SelectBatchAsync(
         IReadOnlyList<AnimeNewsItem> items, CancellationToken ct)
     {
-        if (items.Count <= 1 || !igSettings.NewsReelEnabled || newsSettings.IsPostRun)
+        if (newsSettings.IsPostRun)
+        {
+            // Corrida de carrusel común (sin video): las noticias que anuncian
+            // material audiovisual (tráiler/opening/corto) se POSTERGAN para que
+            // les toque un slot de reel — una noticia de opening publicada como
+            // carrusel promete un video que el post no puede mostrar (pasó en
+            // prod, jul-2026). Si el pool solo tiene audiovisuales, salen igual.
+            return items
+                .OrderBy(i => HasAudiovisualSignal(i.Title) ? 1 : 0)
+                .Take(newsSettings.MaxPerRun)
+                .ToList();
+        }
+
+        if (items.Count <= 1 || !igSettings.NewsReelEnabled)
             return items.Take(newsSettings.MaxPerRun).ToList();
 
         bool reelAvailable;
@@ -121,7 +134,8 @@ public class AnimeNewsPublisherService(
                     "más relevante/viral para el video destacado del día (estrenos grandes, anuncios bomba, " +
                     "fallecimientos de figuras, polémicas fuertes pesan más que curiosidades menores). " +
                     "A igual peso, preferí noticias con material audiovisual oficial (anuncio de tráiler, " +
-                    "teaser, nueva temporada o película): el video destacado puede incrustar ese tráiler. " +
+                    "teaser, nueva temporada o película, opening/ending o video musical, corto o video " +
+                    "especial): el video destacado puede incrustar ese material. " +
                     "Respondé SOLO un JSON: {\"index\": <número de la lista>}",
                     list, useWebSearch: false, ct);
 
@@ -131,7 +145,7 @@ public class AnimeNewsPublisherService(
             }
             catch (Exception ex) when (!ct.IsCancellationRequested)
             {
-                logger.LogDebug(ex, "Gemini relevance ranking failed — using heuristic");
+                logger.LogWarning(ex, "AnimeNews: ranking por IA falló — heurística");
             }
         }
 
@@ -157,6 +171,9 @@ public class AnimeNewsPublisherService(
                           "black clover", "spy x family", "spy family", "frieren", "solo leveling",
                           "dandadan", "blue lock", "my hero", "boku no hero", "bleach", "re:zero",
                           "mushoku tensei", "witch hat", "sword art", "tokyo revengers", "oshi no ko" }
+            .Count(t.Contains) * 2;
+        // Material audiovisual que el reel puede incrustar (opening/corto/MV)
+        score += new[] { "opening", "ending", "video musical", "corto animado" }
             .Count(t.Contains) * 2;
         // Menores
         score += new[] { "colaboración", "colaboracion", "evento", "figura", "manga" }
@@ -330,13 +347,14 @@ public class AnimeNewsPublisherService(
             if (igSettings.TrailerReelEnabled)
             {
                 // El embebido del artículo se valida (kudasai suele embeber el PV
-                // japonés — el requisito es español latino); si no pasa, se busca
-                // la versión latina en YouTube.
+                // japonés — el requisito es español latino); si no pasa, la
+                // búsqueda por IA decide el TIPO de video (tráiler/opening/corto)
+                // y puede rescatar ese mismo embebido cuando el idioma no aplica.
                 var candidate = trailerUrl is null
                     ? null
-                    : await trailerService.ValidateAsync(trailerUrl, ct);
+                    : await trailerService.ValidateAsync(trailerUrl, ct: ct);
                 if (candidate is null && igSettings.TrailerSearchEnabled)
-                    candidate = await SearchTrailerAsync(item, content, ct);
+                    candidate = await FindNewsVideoAsync(item, content, trailerUrl, ct);
 
                 var clipPath = candidate is null ? null : await trailerService.DownloadAsync(candidate.Url, ct);
                 if (clipPath is not null)
@@ -439,18 +457,22 @@ public class AnimeNewsPublisherService(
         }
     }
 
-    // ── Búsqueda del tráiler por IA ──────────────────────────────────────────
+    // ── Búsqueda del video de la noticia por IA ─────────────────────────────
 
     /// <summary>
-    /// Cuando el artículo no embebe un tráiler (el caso típico), lo BUSCA en
-    /// YouTube: Gemini decide si la noticia amerita video (anuncio de tráiler/
-    /// teaser/temporada/película — NO novelas, manga, figuras o luto) y arma la
-    /// query; sin IA cae a la heurística por keywords. Best-effort → null.
+    /// Cuando el artículo no embebe un video usable (el caso típico), lo BUSCA
+    /// en YouTube: Gemini decide si la noticia amerita video y de QUÉ TIPO —
+    /// tráiler, tema musical (opening/ending/MV) o corto/video especial — y
+    /// arma la query; sin IA cae a la heurística por keywords. Para temas y
+    /// cortos el requisito de español no aplica (el video ES la noticia: una
+    /// canción japonesa o una animación) y el embebido del artículo se rescata
+    /// si es un upload oficial. Best-effort → null (slideshow).
     /// </summary>
-    private async Task<TrailerCandidate?> SearchTrailerAsync(
-        AnimeNewsItem item, NewsContent content, CancellationToken ct)
+    private async Task<TrailerCandidate?> FindNewsVideoAsync(
+        AnimeNewsItem item, NewsContent content, string? embeddedUrl, CancellationToken ct)
     {
         string? query = null;
+        var kind = NewsVideoKind.Trailer;
 
         if (!string.IsNullOrWhiteSpace(aiSettings.ApiKey))
         {
@@ -458,15 +480,19 @@ public class AnimeNewsPublisherService(
             {
                 var response = await gemini.GenerateAsync(
                     "Sos productor de video de un noticiero de anime. Decidí si para esta noticia corresponde " +
-                    "buscar un tráiler oficial en YouTube para usarlo de fondo en el reel. Corresponde SOLO " +
-                    "cuando la noticia anuncia material audiovisual: nuevo tráiler/teaser/PV, nueva temporada, " +
-                    "película, adaptación a anime o fecha de estreno. NO corresponde para novelas o manga sin " +
-                    "anime confirmado, figuras, eventos, rankings, fallecimientos ni polémicas. Si corresponde, " +
-                    "armá la búsqueda de YouTube apuntando a la VERSIÓN EN ESPAÑOL LATINO (doblada o subtitulada " +
-                    "— la audiencia es LATAM y canales como Crunchyroll en Español suben esa versión): " +
-                    "nombre de la obra + \"tráiler oficial español latino\" " +
-                    "(ej.: \"Solo Leveling temporada 2 tráiler oficial español latino\"). " +
-                    "Respondé SOLO un JSON: {\"buscar\": true|false, \"query\": \"...\"}",
+                    "buscar en YouTube un video OFICIAL para usarlo de fondo en el reel, y de qué tipo: " +
+                    "\"trailer\" si la noticia anuncia un tráiler/teaser/PV, nueva temporada, película, " +
+                    "adaptación a anime o fecha de estreno; " +
+                    "\"tema\" si presenta un opening, ending, tema musical o video musical (MV); " +
+                    "\"corto\" si presenta un corto animado, video especial o de aniversario. " +
+                    "NO corresponde para novelas o manga sin anime confirmado, figuras, eventos, rankings, " +
+                    "fallecimientos ni polémicas. La query: para \"trailer\", nombre de la obra + " +
+                    "\"tráiler oficial español latino\" (la audiencia es LATAM y canales como Crunchyroll " +
+                    "en Español suben esa versión — ej.: \"Solo Leveling temporada 2 tráiler oficial español " +
+                    "latino\"); para \"tema\" o \"corto\", nombre de la obra + qué video es, como lo titularía " +
+                    "el upload oficial (ej.: \"Mob Psycho 100 anniversary special movie\", " +
+                    "\"Samurai Troopers opening creditless\"). " +
+                    "Respondé SOLO un JSON: {\"buscar\": true|false, \"tipo\": \"trailer\"|\"tema\"|\"corto\", \"query\": \"...\"}",
                     $"Titular: {item.Title}\nResumen: {Truncate(item.Summary ?? content.Lede ?? string.Empty, 400)}",
                     useWebSearch: false, ct);
 
@@ -475,30 +501,73 @@ public class AnimeNewsPublisherService(
                 {
                     // La IA decidió que la noticia no amerita video — respetarla,
                     // no caer a la heurística (es menos precisa).
-                    logger.LogInformation("AnimeNews: la noticia no amerita tráiler según IA — slideshow");
+                    logger.LogInformation("AnimeNews: la noticia no amerita video según IA — slideshow");
                     return null;
                 }
                 if (doc.RootElement.TryGetProperty("query", out var q))
                     query = q.GetString();
+                if (doc.RootElement.TryGetProperty("tipo", out var tipo))
+                    kind = ParseVideoKind(tipo.GetString());
             }
             catch (Exception ex) when (!ct.IsCancellationRequested)
             {
-                logger.LogDebug(ex, "Gemini trailer decision failed — using heuristic");
+                // Warning (no Debug): si la IA falla acá — cuota agotada, típico —
+                // la decisión cae a la heurística y queremos verlo en los logs.
+                logger.LogWarning(ex, "AnimeNews: decisión de video por IA falló — heurística");
             }
         }
 
-        query ??= HeuristicTrailerQuery(item.Title);
-        if (string.IsNullOrWhiteSpace(query)) return null;
+        if (string.IsNullOrWhiteSpace(query))
+        {
+            var heuristic = HeuristicVideoQuery(item.Title);
+            if (heuristic is null)
+            {
+                logger.LogInformation("AnimeNews: el titular no anuncia material audiovisual — slideshow");
+                return null;
+            }
+            (query, kind) = heuristic.Value;
+        }
 
+        // ── Temas (opening/ending/MV) y cortos: el video ES la noticia ──────
+        // El idioma no aplica (canción japonesa / animación) pero el upload
+        // tiene que ser oficial. El embebido del artículo es el candidato
+        // exacto — se prueba antes que la búsqueda.
+        if (kind is NewsVideoKind.ThemeSong or NewsVideoKind.Short)
+        {
+            var candidate = embeddedUrl is null
+                ? null
+                : await trailerService.ValidateAsync(embeddedUrl, requireSpanish: false, kind, ct);
+            if (candidate is not null)
+                logger.LogInformation("AnimeNews: video {Kind} embebido del artículo aceptado (upload oficial)", kind);
+            else
+            {
+                logger.LogInformation("AnimeNews: buscando {Kind} en YouTube → \"{Query}\"", kind, query);
+                candidate = await trailerService.SearchAsync(query, requireSpanish: false, kind, ct);
+            }
+
+            // Los cortos tienen diálogo: si hay subs es manuales, se queman
+            // (bonus best-effort — sin subs el corto va igual, es la noticia).
+            if (candidate is not null && kind == NewsVideoKind.Short)
+            {
+                var shortSubs = await trailerService.DownloadSpanishSubtitlesAsync(candidate.Url, ct);
+                if (shortSubs is not null) candidate = candidate with { SubtitlesPath = shortSubs };
+            }
+            return candidate;
+        }
+
+        // ── Tráiler: cadena español → cualquier idioma + subs es quemados ───
         logger.LogInformation("AnimeNews: buscando tráiler en YouTube → \"{Query}\"", query);
-        var candidate = await trailerService.SearchAsync(query!, requireSpanish: true, ct: ct);
-        if (candidate is not null) return candidate;
+        var spanish = await trailerService.SearchAsync(query, requireSpanish: true, ct: ct);
+        if (spanish is not null) return spanish;
 
         // 2do intento (pedido del usuario): sin versión latina, sirve el tráiler
         // oficial en cualquier idioma SI tiene subtítulos manuales en español
-        // para quemar en el video. Sin subs manuales → slideshow.
-        var anyQuery = query!.Replace("español latino", "", StringComparison.OrdinalIgnoreCase).Trim();
+        // para quemar en el video. Sin subs manuales → slideshow. El PV embebido
+        // en el artículo (rechazado antes por idioma) también entra acá.
+        var anyQuery = query.Replace("español latino", "", StringComparison.OrdinalIgnoreCase).Trim();
         var any = await trailerService.SearchAsync(anyQuery, requireSpanish: false, ct: ct);
+        if (any is null && embeddedUrl is not null)
+            any = await trailerService.ValidateAsync(embeddedUrl, requireSpanish: false, ct: ct);
         if (any is null) return null;
 
         var subs = await trailerService.DownloadSpanishSubtitlesAsync(any.Url, ct);
@@ -514,19 +583,47 @@ public class AnimeNewsPublisherService(
         return any with { SubtitlesPath = subs };
     }
 
+    private static NewsVideoKind ParseVideoKind(string? tipo) => tipo?.ToLowerInvariant() switch
+    {
+        "tema"  => NewsVideoKind.ThemeSong,
+        "corto" => NewsVideoKind.Short,
+        _       => NewsVideoKind.Trailer,
+    };
+
     /// <summary>
     /// Fallback sin IA: solo busca cuando el titular anuncia material
-    /// audiovisual; la query es el titular + "tráiler oficial español latino"
-    /// (el nombre de la obra ya viene en el titular, y el sufijo apunta a la
-    /// versión doblada/subtitulada para LATAM). Público estático para tests.
+    /// audiovisual, y clasifica el tipo (el orden importa: "estrena un corto"
+    /// o "estrena opening" NO son noticias de tráiler aunque digan "estren").
+    /// Para tráilers la query apunta a la versión doblada/subtitulada LATAM;
+    /// para temas y cortos el titular ya describe el video y el idioma no
+    /// aplica. Público estático para tests.
     /// </summary>
-    public static string? HeuristicTrailerQuery(string title)
+    public static (string Query, NewsVideoKind Kind)? HeuristicVideoQuery(string title)
     {
         var t = title.ToLowerInvariant();
+
+        var theme = new[] { "opening", "ending", "video musical", "tema musical" };
+        if (theme.Any(t.Contains)) return ($"{title} oficial", NewsVideoKind.ThemeSong);
+
+        var shortFilm = new[] { "corto animado", "cortometraje", "video especial", "aniversario" };
+        if (shortFilm.Any(t.Contains)) return ($"{title} oficial", NewsVideoKind.Short);
+
+        // "estren" (raíz) cubre estreno/estrena/estrenará — "estrena un corto
+        // animado" se caía por buscar el sustantivo exacto (bug real, jul-2026)
         var audiovisual = new[] { "tráiler", "trailer", "teaser", "avance", "temporada",
-                                  "película", "pelicula", "live-action", "adaptación", "adaptacion", "estreno" };
-        return audiovisual.Any(t.Contains) ? $"{title} tráiler oficial español latino" : null;
+                                  "película", "pelicula", "live-action", "adaptación", "adaptacion", "estren" };
+        return audiovisual.Any(t.Contains)
+            ? ($"{title} tráiler oficial español latino", NewsVideoKind.Trailer)
+            : null;
     }
+
+    /// <summary>
+    /// ¿El titular anuncia material audiovisual (tráiler/opening/corto)? Las
+    /// corridas de carrusel común lo usan para POSTERGAR esas noticias: sin
+    /// esto, una noticia de opening caía en el slot de carrusel (sin video) en
+    /// vez de esperar al próximo slot de reel. Público estático para tests.
+    /// </summary>
+    public static bool HasAudiovisualSignal(string title) => HeuristicVideoQuery(title) is not null;
 
     // ── Caption ──────────────────────────────────────────────────────────────
 
