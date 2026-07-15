@@ -355,16 +355,19 @@ public partial class TrailerDownloadService(
     /// </summary>
     public static List<string> SignificantWords(string text)
     {
+        var candidates = WordSplitRegex().Split(text)
+            .Where(word => word.Length >= 3)
+            .Select(word => (Word: word, Norm: Normalize(word)))
+            .Where(x => x.Norm.Length >= 3
+                        && !SubjectStopWords.Contains(x.Norm)
+                        && !YearRegex().IsMatch(x.Norm));
+
+        // Dedupe con estado (primera aparición gana) — esto sí queda en el loop
         var seen = new HashSet<string>(StringComparer.Ordinal);
         var result = new List<string>();
-        foreach (var word in WordSplitRegex().Split(text))
-        {
-            if (word.Length < 3) continue;
-            var norm = Normalize(word);
-            if (norm.Length < 3 || SubjectStopWords.Contains(norm)) continue;
-            if (YearRegex().IsMatch(norm)) continue;
-            if (seen.Add(norm)) result.Add(word);
-        }
+        foreach (var (word, norm) in candidates)
+            if (seen.Add(norm))
+                result.Add(word);
         return result;
     }
 
@@ -386,12 +389,10 @@ public partial class TrailerDownloadService(
     private static string Normalize(string text)
     {
         var decomposed = text.ToLowerInvariant().Normalize(NormalizationForm.FormD);
-        var sb = new StringBuilder(decomposed.Length);
-        foreach (var c in decomposed)
-            if (System.Globalization.CharUnicodeInfo.GetUnicodeCategory(c)
-                != System.Globalization.UnicodeCategory.NonSpacingMark)
-                sb.Append(c);
-        return sb.ToString().Normalize(NormalizationForm.FormC);
+        var kept = decomposed
+            .Where(c => CharUnicodeInfo.GetUnicodeCategory(c) != UnicodeCategory.NonSpacingMark)
+            .ToArray();
+        return new string(kept).Normalize(NormalizationForm.FormC);
     }
 
     // Stopwords (formas normalizadas): artículos/preposiciones, verbos típicos
