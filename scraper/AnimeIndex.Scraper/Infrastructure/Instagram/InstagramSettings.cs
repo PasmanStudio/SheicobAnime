@@ -57,6 +57,13 @@ public class InstagramSettings
     // (ytsearch) y se descarga el mejor candidato. Best-effort → slideshow.
     public bool TrailerSearchEnabled { get; set; } = true;
 
+    // Último recurso de la cadena de tráiler (decisión del usuario, jul-2026):
+    // sin versión en español ni subtítulos es manuales para quemar, el tráiler
+    // OFICIAL va igual en su idioma original — el titular y las slides en
+    // español encima le dan el contexto (mismo trato que openings/cortos).
+    // false = regla estricta anterior (PR #154): sin español → slideshow.
+    public bool TrailerOriginalLanguageFallback { get; set; } = true;
+
     // Binario de yt-dlp (el workflow lo instala con pipx; en dev local puede faltar).
     public string YtDlpPath { get; set; } = "yt-dlp";
 

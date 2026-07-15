@@ -567,10 +567,10 @@ public class AnimeNewsPublisherService(
         var spanish = await trailerService.SearchAsync(query, requireSpanish: true, subject: subject, ct: ct);
         if (spanish is not null) return spanish;
 
-        // 2do intento (pedido del usuario): sin versión latina, sirve el tráiler
-        // oficial en cualquier idioma SI tiene subtítulos manuales en español
-        // para quemar en el video. Sin subs manuales → slideshow. El PV embebido
-        // en el artículo (rechazado antes por idioma) también entra acá.
+        // 2do intento: sin versión latina, el tráiler oficial en cualquier
+        // idioma — con subtítulos es manuales quemados si existen, y si no, en
+        // su idioma original (último recurso, toggle abajo). El PV embebido en
+        // el artículo (rechazado antes por idioma) también entra acá.
         var anyQuery = query.Replace("español latino", "", StringComparison.OrdinalIgnoreCase).Trim();
         var any = await trailerService.SearchAsync(anyQuery, requireSpanish: false, subject: subject, ct: ct);
         if (any is null && embeddedUrl is not null)
@@ -578,16 +578,28 @@ public class AnimeNewsPublisherService(
         if (any is null) return null;
 
         var subs = await trailerService.DownloadSpanishSubtitlesAsync(any.Url, ct);
-        if (subs is null)
+        if (subs is not null)
         {
-            logger.LogInformation(
-                "AnimeNews: tráiler {Url} sin versión latina ni subtítulos manuales en español — slideshow",
-                any.Url);
-            return null;
+            logger.LogInformation("AnimeNews: tráiler {Url} con subtítulos es para quemar", any.Url);
+            return any with { SubtitlesPath = subs };
         }
 
-        logger.LogInformation("AnimeNews: tráiler {Url} con subtítulos es para quemar", any.Url);
-        return any with { SubtitlesPath = subs };
+        // Último recurso (decisión del usuario, jul-2026): el tráiler oficial
+        // va en su idioma original — el titular y las slides en español encima
+        // dan el contexto, y el video correcto en japonés vale más que un
+        // slideshow (la relevancia ya está garantizada por el gate de obra).
+        if (igSettings.TrailerOriginalLanguageFallback)
+        {
+            logger.LogInformation(
+                "AnimeNews: tráiler {Url} sin versión latina ni subs es — va en idioma original",
+                any.Url);
+            return any;
+        }
+
+        logger.LogInformation(
+            "AnimeNews: tráiler {Url} sin versión latina ni subtítulos manuales en español — slideshow",
+            any.Url);
+        return null;
     }
 
     private static NewsVideoKind ParseVideoKind(string? tipo) => tipo?.ToLowerInvariant() switch
