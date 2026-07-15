@@ -472,6 +472,7 @@ public class AnimeNewsPublisherService(
         AnimeNewsItem item, NewsContent content, string? embeddedUrl, CancellationToken ct)
     {
         string? query = null;
+        string? subject = null;
         var kind = NewsVideoKind.Trailer;
 
         if (!string.IsNullOrWhiteSpace(aiSettings.ApiKey))
@@ -486,13 +487,16 @@ public class AnimeNewsPublisherService(
                     "\"tema\" si presenta un opening, ending, tema musical o video musical (MV); " +
                     "\"corto\" si presenta un corto animado, video especial o de aniversario. " +
                     "NO corresponde para novelas o manga sin anime confirmado, figuras, eventos, rankings, " +
-                    "fallecimientos ni polémicas. La query: para \"trailer\", nombre de la obra + " +
-                    "\"tráiler oficial español latino\" (la audiencia es LATAM y canales como Crunchyroll " +
-                    "en Español suben esa versión — ej.: \"Solo Leveling temporada 2 tráiler oficial español " +
-                    "latino\"); para \"tema\" o \"corto\", nombre de la obra + qué video es, como lo titularía " +
-                    "el upload oficial (ej.: \"Mob Psycho 100 anniversary special movie\", " +
-                    "\"Samurai Troopers opening creditless\"). " +
-                    "Respondé SOLO un JSON: {\"buscar\": true|false, \"tipo\": \"trailer\"|\"tema\"|\"corto\", \"query\": \"...\"}",
+                    "fallecimientos ni polémicas. \"obra\": el nombre EXACTO de la obra (o del artista para " +
+                    "un MV) tal como aparecería en el título del upload oficial de YouTube, en romaji/inglés " +
+                    "— se usa para verificar que el video encontrado sea de ESA obra y no de otra cosa. " +
+                    "La query: para \"trailer\", la obra + \"tráiler oficial español latino\" (la audiencia " +
+                    "es LATAM y canales como Crunchyroll en Español suben esa versión — ej.: \"Solo Leveling " +
+                    "temporada 2 tráiler oficial español latino\"); para \"tema\" o \"corto\", la obra + qué " +
+                    "video es, como lo titularía el upload oficial (ej.: \"Mob Psycho 100 anniversary special " +
+                    "movie\", \"Samurai Troopers opening creditless\"). " +
+                    "Respondé SOLO un JSON: {\"buscar\": true|false, \"tipo\": \"trailer\"|\"tema\"|\"corto\", " +
+                    "\"obra\": \"...\", \"query\": \"...\"}",
                     $"Titular: {item.Title}\nResumen: {Truncate(item.Summary ?? content.Lede ?? string.Empty, 400)}",
                     useWebSearch: false, ct);
 
@@ -506,6 +510,8 @@ public class AnimeNewsPublisherService(
                 }
                 if (doc.RootElement.TryGetProperty("query", out var q))
                     query = q.GetString();
+                if (doc.RootElement.TryGetProperty("obra", out var o))
+                    subject = o.GetString();
                 if (doc.RootElement.TryGetProperty("tipo", out var tipo))
                     kind = ParseVideoKind(tipo.GetString());
             }
@@ -542,7 +548,8 @@ public class AnimeNewsPublisherService(
             else
             {
                 logger.LogInformation("AnimeNews: buscando {Kind} en YouTube → \"{Query}\"", kind, query);
-                candidate = await trailerService.SearchAsync(query, requireSpanish: false, kind, ct);
+                candidate = await trailerService.SearchAsync(
+                    query, requireSpanish: false, kind, subject, ct);
             }
 
             // Los cortos tienen diálogo: si hay subs es manuales, se queman
@@ -557,7 +564,7 @@ public class AnimeNewsPublisherService(
 
         // ── Tráiler: cadena español → cualquier idioma + subs es quemados ───
         logger.LogInformation("AnimeNews: buscando tráiler en YouTube → \"{Query}\"", query);
-        var spanish = await trailerService.SearchAsync(query, requireSpanish: true, ct: ct);
+        var spanish = await trailerService.SearchAsync(query, requireSpanish: true, subject: subject, ct: ct);
         if (spanish is not null) return spanish;
 
         // 2do intento (pedido del usuario): sin versión latina, sirve el tráiler
@@ -565,7 +572,7 @@ public class AnimeNewsPublisherService(
         // para quemar en el video. Sin subs manuales → slideshow. El PV embebido
         // en el artículo (rechazado antes por idioma) también entra acá.
         var anyQuery = query.Replace("español latino", "", StringComparison.OrdinalIgnoreCase).Trim();
-        var any = await trailerService.SearchAsync(anyQuery, requireSpanish: false, ct: ct);
+        var any = await trailerService.SearchAsync(anyQuery, requireSpanish: false, subject: subject, ct: ct);
         if (any is null && embeddedUrl is not null)
             any = await trailerService.ValidateAsync(embeddedUrl, requireSpanish: false, ct: ct);
         if (any is null) return null;
@@ -594,26 +601,36 @@ public class AnimeNewsPublisherService(
     /// Fallback sin IA: solo busca cuando el titular anuncia material
     /// audiovisual, y clasifica el tipo (el orden importa: "estrena un corto"
     /// o "estrena opening" NO son noticias de tráiler aunque digan "estren").
-    /// Para tráilers la query apunta a la versión doblada/subtitulada LATAM;
-    /// para temas y cortos el titular ya describe el video y el idioma no
-    /// aplica. Público estático para tests.
+    /// La query se arma con las palabras SIGNIFICATIVAS del titular (la obra)
+    /// + el sufijo del tipo: el titular completo como query devolvía 0
+    /// resultados en prod (frases largas en español no matchean nada en
+    /// YouTube). Para tráilers apunta a la versión doblada/subtitulada LATAM;
+    /// para temas y cortos el idioma no aplica. Público estático para tests.
     /// </summary>
     public static (string Query, NewsVideoKind Kind)? HeuristicVideoQuery(string title)
     {
         var t = title.ToLowerInvariant();
+        var obra = string.Join(' ', TrailerDownloadService.SignificantWords(title));
+        if (obra.Length == 0) return null;
 
         var theme = new[] { "opening", "ending", "video musical", "tema musical" };
-        if (theme.Any(t.Contains)) return ($"{title} oficial", NewsVideoKind.ThemeSong);
+        if (theme.Any(t.Contains))
+        {
+            var themeWord = t.Contains("opening") ? "opening"
+                          : t.Contains("ending") ? "ending"
+                          : "mv";
+            return ($"{obra} {themeWord}", NewsVideoKind.ThemeSong);
+        }
 
         var shortFilm = new[] { "corto animado", "cortometraje", "video especial", "aniversario" };
-        if (shortFilm.Any(t.Contains)) return ($"{title} oficial", NewsVideoKind.Short);
+        if (shortFilm.Any(t.Contains)) return ($"{obra} special movie", NewsVideoKind.Short);
 
         // "estren" (raíz) cubre estreno/estrena/estrenará — "estrena un corto
         // animado" se caía por buscar el sustantivo exacto (bug real, jul-2026)
         var audiovisual = new[] { "tráiler", "trailer", "teaser", "avance", "temporada",
                                   "película", "pelicula", "live-action", "adaptación", "adaptacion", "estren" };
         return audiovisual.Any(t.Contains)
-            ? ($"{title} tráiler oficial español latino", NewsVideoKind.Trailer)
+            ? ($"{obra} tráiler oficial español latino", NewsVideoKind.Trailer)
             : null;
     }
 

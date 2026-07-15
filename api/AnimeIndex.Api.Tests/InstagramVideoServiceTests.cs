@@ -515,34 +515,33 @@ public class TrailerSearchTests
     }
 
     [Theory]
-    // Titulares que anuncian material audiovisual → buscar (versión latina)
-    [InlineData("Sword Art Online anuncia nueva película para 2028", true)]
-    [InlineData("Frieren confirma su segunda temporada con un tráiler", true)]
-    [InlineData("El live-action de One Piece ya tiene fecha de estreno", true)]
+    // Titulares que anuncian material audiovisual → buscar (versión latina).
+    // La query es la OBRA (palabras significativas del titular) + el sufijo:
+    // el titular completo como query devolvía 0 resultados en prod (jul-2026).
+    [InlineData("Sword Art Online anuncia nueva película para 2028", "Sword Art Online")]
+    [InlineData("Frieren confirma su segunda temporada con un tráiler", "Frieren")]
+    [InlineData("El live-action de One Piece ya tiene fecha de estreno", "One Piece")]
     // La raíz "estren" cubre las conjugaciones (bug real jul-2026: "se
     // estrenará" no disparaba porque se buscaba el sustantivo "estreno")
-    [InlineData("La segunda parte de Chitose se estrenará en octubre", true)]
-    // Titulares sin video que buscar → null (queda el slideshow)
-    [InlineData("Sword Art Online anuncia una nueva novela sobre Kirito y Asuna", false)]
-    [InlineData("Fallece reconocido animador del estudio Ghibli", false)]
-    [InlineData("Nueva figura coleccionable de Nezuko agota su preventa", false)]
-    public void HeuristicVideoQuery_OnlyTriggersOnAudiovisualNews(string title, bool expectsQuery)
+    [InlineData("La segunda parte de Chitose se estrenará en octubre", "Chitose")]
+    public void HeuristicVideoQuery_BuildsCleanTrailerQuery(string title, string obra)
     {
         var result = AnimeNewsPublisherService.HeuristicVideoQuery(title);
 
-        if (expectsQuery)
-        {
-            Assert.NotNull(result);
-            Assert.Equal(NewsVideoKind.Trailer, result!.Value.Kind);
-            // La query apunta a la versión doblada/subtitulada para LATAM
-            Assert.Contains("español latino", result!.Value.Query);
-            Assert.Contains(title, result!.Value.Query);   // el nombre de la obra viaja en el titular
-        }
-        else
-        {
-            Assert.Null(result);
-        }
+        Assert.NotNull(result);
+        Assert.Equal(NewsVideoKind.Trailer, result!.Value.Kind);
+        // La obra al frente, sin el ruido del titular, y el sufijo LATAM al final
+        Assert.StartsWith(obra, result!.Value.Query);
+        Assert.EndsWith("tráiler oficial español latino", result!.Value.Query);
     }
+
+    [Theory]
+    // Titulares sin video que buscar → null (queda el slideshow)
+    [InlineData("Sword Art Online anuncia una nueva novela sobre Kirito y Asuna")]
+    [InlineData("Fallece reconocido animador del estudio Ghibli")]
+    [InlineData("Nueva figura coleccionable de Nezuko agota su preventa")]
+    public void HeuristicVideoQuery_IgnoresNonAudiovisualNews(string title)
+        => Assert.Null(AnimeNewsPublisherService.HeuristicVideoQuery(title));
 
     [Theory]
     // Los casos REALES que salieron sin video (jul-2026): noticias de
@@ -614,6 +613,61 @@ public class TrailerSearchTests
 
         Assert.Equal("official0001", best?.Id);
     }
+
+    [Fact]
+    public void PickBestSearchResult_RejectsWrongMovieTrailers_RealCases()
+    {
+        // Casos REALES (14-15 jul-2026): la obra no tenía tráiler en español y
+        // YouTube rellenó los resultados con tráilers de CINE en español que
+        // pasaban TODOS los filtros (canal Warner oficial + "tráiler" en el
+        // título + duración de tráiler). Se publicaron reels con "Project X" y
+        // "La Piel Que Habito" para Tsugumi Project, y "Faraway Downs" para
+        // From Far Away. El gate de relevancia: la mayoría de los tokens de la
+        // obra tiene que aparecer en el título/canal del resultado.
+        Assert.Null(TrailerDownloadService.PickBestSearchResult(
+            [Line("fMJ4IBnU0Ks", "85", "Project X - Tráiler Oficial Español HD", "Warner Bros. Pictures España")],
+            subject: "Tsugumi Project"));
+
+        Assert.Null(TrailerDownloadService.PickBestSearchResult(
+            [Line("Gm8XTqv_K80", "32", "La Piel Que habito - Tráiler Oficial", "Warner Bros. Pictures España")],
+            subject: "Tsugumi Project"));
+
+        Assert.Null(TrailerDownloadService.PickBestSearchResult(
+            [Line("9XZgjEnG_LE", "151", "FARAWAY DOWNS: AUSTRALIA Tráiler Español Latino (2023) Nicole Kidman, Hugh Jackman", "FilmSelect Español")],
+            subject: "From Far Away"));
+
+        Assert.Null(TrailerDownloadService.PickBestSearchResult(
+            [Line("4HOrjGQhpV4", "101", "Contratiempo - Tráiler Oficial Castellano HD", "Warner Bros. Pictures España")],
+            subject: "Mercedes and the Waning Moon"));
+    }
+
+    [Fact]
+    public void PickBestSearchResult_SubjectGate_StillAcceptsTheRightTrailer()
+    {
+        // El mismo pool con el tráiler correcto presente: la obra matchea y gana
+        var best = TrailerDownloadService.PickBestSearchResult(
+        [
+            Line("fMJ4IBnU0Ks", "85", "Project X - Tráiler Oficial Español HD", "Warner Bros. Pictures España"),
+            Line("dR7DW4ykE8k", "131", "Solo Leveling en ESPAÑOL | TRÁILER OFICIAL", "Crunchyroll en Español"),
+        ], subject: "Solo Leveling");
+
+        Assert.Equal("dR7DW4ykE8k", best?.Id);
+
+        // Y el subject también matchea contra el CANAL (uploads japoneses que
+        // solo llevan el nombre en kanji en el título)
+        var byChannel = TrailerDownloadService.PickBestSearchResult(
+            [Line("jpchannel001", "90", "本予告", "Frieren Official Channel")],
+            requireSpanish: false, subject: "Frieren");
+        Assert.Equal("jpchannel001", byChannel?.Id);
+    }
+
+    [Theory]
+    // La obra queda; el ruido del titular (verbos, medio, fechas, años) no
+    [InlineData("Sword Art Online anuncia nueva película para 2028", "Sword Art Online")]
+    [InlineData("El grupo ClariS estrenó el vídeo musical del opening de The Ogre's Bride", "ClariS Ogre Bride")]
+    [InlineData("Mob y Reigen regresan: Mob Psycho 100 estrena un corto animado", "Mob Reigen Psycho 100")]
+    public void SignificantWords_KeepsTheObraDropsTheNoise(string title, string expected)
+        => Assert.Equal(expected, string.Join(' ', TrailerDownloadService.SignificantWords(title)));
 }
 
 public class GeminiClientTests
@@ -632,6 +686,29 @@ public class GeminiClientTests
     {
         Assert.Equal("{\"a\":1}", AnimeIndex.Scraper.Infrastructure.AiRewrite.GeminiClient.StripCodeFences("{\"a\":1}"));
         Assert.Equal("{\"a\":1}", AnimeIndex.Scraper.Infrastructure.AiRewrite.GeminiClient.StripCodeFences("  {\"a\":1}\n"));
+    }
+
+    [Fact]
+    public void PickFallbackFromModelList_PrefersLargestInstructionTunedGemma()
+    {
+        // Google renombra los Gemma entre generaciones (gemma-3-27b-it dio 404
+        // en jul-2026): ante un 404 el cliente lista los modelos reales de la
+        // key y elige el Gemma -it más grande que soporte generateContent
+        var json = """
+        {"models":[
+          {"name":"models/gemini-2.5-flash-lite","supportedGenerationMethods":["generateContent"]},
+          {"name":"models/gemma-3n-e4b-it","supportedGenerationMethods":["generateContent"]},
+          {"name":"models/gemma-4-31b-it","supportedGenerationMethods":["generateContent"]},
+          {"name":"models/gemma-4-31b","supportedGenerationMethods":["embedContent"]}
+        ]}
+        """;
+
+        Assert.Equal("gemma-4-31b-it",
+            AnimeIndex.Scraper.Infrastructure.AiRewrite.GeminiClient.PickFallbackFromModelList(json));
+
+        // Sin ningún Gemma disponible → null (el 404 original se propaga)
+        Assert.Null(AnimeIndex.Scraper.Infrastructure.AiRewrite.GeminiClient.PickFallbackFromModelList(
+            """{"models":[{"name":"models/gemini-2.5-flash","supportedGenerationMethods":["generateContent"]}]}"""));
     }
 }
 
