@@ -28,11 +28,14 @@ public class AiSettings
 
     /// <summary>
     /// Modelo de RESPALDO cuando el principal devuelve 429 (cuota diaria agotada).
-    /// Los Gemma corren sobre una cuota free tier separada y mucho más grande
-    /// (~14k req/día) — no soportan system_instruction, grounding ni JSON mode,
-    /// el cliente adapta el payload solo. Vacío = sin fallback (heurísticas locales).
+    /// Los Gemma corren sobre una cuota free tier separada y mucho más grande —
+    /// no soportan system_instruction, grounding ni JSON mode, el cliente adapta
+    /// el payload solo. OJO: Google RENOMBRA los Gemma entre generaciones
+    /// (gemma-3-27b-it devolvió 404 en jul-2026 y el fallback quedó muerto);
+    /// si este nombre da 404, el cliente descubre el Gemma vigente vía
+    /// ListModels solo. Vacío = sin fallback (heurísticas locales).
     /// </summary>
-    public string FallbackModel { get; set; } = "gemma-3-27b-it";
+    public string FallbackModel { get; set; } = "gemma-4-31b-it";
 
     /// <summary>
     /// Let the model pull extra context from the web (Google Search grounding) when the

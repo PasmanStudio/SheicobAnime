@@ -31,6 +31,12 @@ public class GeminiClient(
     /// sin IA), reintenta UNA vez con <see cref="AiSettings.FallbackModel"/>
     /// (Gemma: cuota separada y enorme, sin grounding).
     /// </summary>
+    // Fallback descubierto vía ListModels cuando el configurado devuelve 404
+    // (Google renombra los Gemma entre generaciones: gemma-3-27b-it dio 404 en
+    // jul-2026 y todas las corridas cayeron a heurística). Se resuelve una vez
+    // por proceso.
+    private string? _resolvedFallback;
+
     public async Task<string> GenerateAsync(
         string systemInstruction,
         string userPrompt,
@@ -45,11 +51,83 @@ public class GeminiClient(
             !string.IsNullOrWhiteSpace(settings.FallbackModel)
             && !string.Equals(settings.FallbackModel, settings.Model, StringComparison.OrdinalIgnoreCase))
         {
+            var fallback = _resolvedFallback ?? settings.FallbackModel;
             logger.LogWarning("Gemini {Model} sin cuota (429) — fallback a {Fallback}",
-                settings.Model, settings.FallbackModel);
-            return await GenerateWithModelAsync(
-                settings.FallbackModel, systemInstruction, userPrompt, useWebSearch, ct);
+                settings.Model, fallback);
+            try
+            {
+                return await GenerateWithModelAsync(fallback, systemInstruction, userPrompt, useWebSearch, ct);
+            }
+            catch (GeminiModelNotFoundException) when (_resolvedFallback is null)
+            {
+                var discovered = await DiscoverFallbackModelAsync(ct);
+                if (discovered is null
+                    || string.Equals(discovered, fallback, StringComparison.OrdinalIgnoreCase))
+                    throw;
+
+                _resolvedFallback = discovered;
+                logger.LogWarning(
+                    "Fallback {Fallback} no existe (404) — usando {Discovered} descubierto vía ListModels",
+                    fallback, discovered);
+                return await GenerateWithModelAsync(discovered, systemInstruction, userPrompt, useWebSearch, ct);
+            }
         }
+    }
+
+    /// <summary>
+    /// Pregunta a la API qué modelos Gemma existen HOY para esta key (GET
+    /// ListModels) y elige el más grande instruction-tuned. Los Gemma son la
+    /// familia con cuota free tier separada — el nombre exacto cambia entre
+    /// generaciones, así que descubrirlo es más robusto que hardcodearlo.
+    /// </summary>
+    private async Task<string?> DiscoverFallbackModelAsync(CancellationToken ct)
+    {
+        try
+        {
+            var http = httpFactory.CreateClient("gemini");
+            var body = await http.GetStringAsync(
+                $"{BaseUrl}?key={Uri.EscapeDataString(settings.ApiKey)}&pageSize=1000", ct);
+            return PickFallbackFromModelList(body);
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            logger.LogWarning(ex, "ListModels para descubrir el modelo de fallback falló");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Del JSON de ListModels, elige el mejor Gemma que soporte generateContent:
+    /// instruction-tuned (-it) primero, después el de más parámetros (…27b/31b).
+    /// Público estático para tests.
+    /// </summary>
+    public static string? PickFallbackFromModelList(string modelsJson)
+    {
+        using var doc = JsonDocument.Parse(modelsJson);
+        if (!doc.RootElement.TryGetProperty("models", out var models)) return null;
+
+        string? best = null;
+        var bestRank = -1;
+        foreach (var model in models.EnumerateArray())
+        {
+            var name = model.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "";
+            if (!name.Contains("gemma", StringComparison.OrdinalIgnoreCase)) continue;
+            if (!model.TryGetProperty("supportedGenerationMethods", out var methods)
+                || !methods.EnumerateArray().Any(m => m.GetString() == "generateContent"))
+                continue;
+
+            var id = name.StartsWith("models/", StringComparison.Ordinal) ? name["models/".Length..] : name;
+            var size = System.Text.RegularExpressions.Regex.Match(id, @"(\d+)b");
+            var rank = size.Success ? int.Parse(size.Groups[1].Value) : 0;
+            if (id.EndsWith("-it", StringComparison.OrdinalIgnoreCase)) rank += 1000;
+
+            if (rank > bestRank)
+            {
+                bestRank = rank;
+                best = id;
+            }
+        }
+        return best;
     }
 
     private async Task<string> GenerateWithModelAsync(
@@ -117,14 +195,20 @@ public class GeminiClient(
             }
 
             var message = $"Gemini {model} failed ({(int)resp.StatusCode}): {Truncate(body, 400)}";
-            throw resp.StatusCode is System.Net.HttpStatusCode.TooManyRequests
-                ? new GeminiQuotaException(message)
-                : new InvalidOperationException(message);
+            throw resp.StatusCode switch
+            {
+                System.Net.HttpStatusCode.TooManyRequests => new GeminiQuotaException(message),
+                System.Net.HttpStatusCode.NotFound        => new GeminiModelNotFoundException(message),
+                _                                         => new InvalidOperationException(message),
+            };
         }
     }
 
     /// <summary>429 del free tier — dispara el fallback de modelo.</summary>
     private sealed class GeminiQuotaException(string message) : InvalidOperationException(message);
+
+    /// <summary>404: el modelo no existe (Google lo renombró/retiró) — dispara el descubrimiento.</summary>
+    private sealed class GeminiModelNotFoundException(string message) : InvalidOperationException(message);
 
     /// <summary>Pulls candidates[0].content.parts[*].text out of the Gemini response envelope.</summary>
     private static string ExtractText(string responseBody)
