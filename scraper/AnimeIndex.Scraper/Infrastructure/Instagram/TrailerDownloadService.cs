@@ -153,11 +153,16 @@ public partial class TrailerDownloadService(
     /// de idioma (tráiler oficial en cualquier idioma al que después se le
     /// queman subtítulos es, o un opening/corto donde el idioma no aplica —
     /// en ese modo el upload tiene que ser OFICIAL). <paramref name="kind"/>
-    /// define qué palabras clave dan confianza. Mismo best-effort que la descarga.
+    /// define qué palabras clave dan confianza. <paramref name="subject"/> es
+    /// el nombre de la obra: el resultado TIENE que referenciarla (ver
+    /// PickBestSearchResult) — sin esto, YouTube rellena las búsquedas sin
+    /// buen match con tráilers populares de cine que pasan todos los otros
+    /// filtros. Mismo best-effort que la descarga.
     /// </summary>
     public async Task<TrailerCandidate?> SearchAsync(
         string query, bool requireSpanish = true,
-        NewsVideoKind kind = NewsVideoKind.Trailer, CancellationToken ct = default)
+        NewsVideoKind kind = NewsVideoKind.Trailer, string? subject = null,
+        CancellationToken ct = default)
     {
         // Las comillas romperían el parseo de argumentos del proceso
         var sanitized = query.Replace('"', ' ').Trim();
@@ -219,7 +224,7 @@ public partial class TrailerDownloadService(
                 return null;
             }
 
-            var best = PickBestSearchResult(lines, requireSpanish, kind);
+            var best = PickBestSearchResult(lines, requireSpanish, kind, subject ?? query);
             if (best is null)
             {
                 logger.LogInformation(
@@ -261,12 +266,26 @@ public partial class TrailerDownloadService(
     /// inglés titulado "trailer" quedaría primero (pasó en prod: reel publicado
     /// con un video de comentario en inglés — YouTube ADEMÁS auto-traduce títulos
     /// según la región del requester, así que el título que vemos vía WARP puede
-    /// venir "en español" aunque el video no lo esté). Público estático para tests.
+    /// venir "en español" aunque el video no lo esté).
+    ///
+    /// <paramref name="subject"/>: el nombre de la obra (o la query completa —
+    /// las palabras de relleno son stopwords). REGLA DE RELEVANCIA: la mayoría
+    /// estricta de sus tokens significativos tiene que aparecer en el título o
+    /// canal del resultado. Sin esto, cuando la obra no tiene tráiler en
+    /// español YouTube rellena con tráilers de CINE en español que pasan TODOS
+    /// los demás filtros (pasó en prod 14-15 jul: "Project X" para Tsugumi
+    /// Project, "Faraway Downs" para From Far Away, "La Piel Que Habito" y
+    /// "Contratiempo" — todos de canales Warner oficiales, con "tráiler" en el
+    /// título y duración de tráiler). Público estático para tests.
     /// </summary>
     public static (string Id, double DurationSeconds)? PickBestSearchResult(
         IReadOnlyList<string> printedLines, bool requireSpanish = true,
-        NewsVideoKind kind = NewsVideoKind.Trailer)
+        NewsVideoKind kind = NewsVideoKind.Trailer, string? subject = null)
     {
+        var subjectTokens = subject is null
+            ? []
+            : SignificantWords(subject).Select(Normalize).ToList();
+
         (string Id, double Duration)? best = null;
         var bestScore = -1;
 
@@ -279,6 +298,11 @@ public partial class TrailerDownloadService(
             double.TryParse(parts[1], NumberStyles.Any, CultureInfo.InvariantCulture, out var duration);
             var title = parts[2].ToLowerInvariant();
             var channel = parts[3].ToLowerInvariant();
+
+            // Relevancia: el video tiene que ser DE LA OBRA, no solo "un tráiler
+            // oficial en español" — mejor slideshow que la película equivocada
+            if (subjectTokens.Count > 0 && !MentionsSubject(subjectTokens, $"{title} {channel}"))
+                continue;
 
             var official = OfficialChannelRegex().IsMatch(channel)
                 || title.Contains("official") || title.Contains("oficial")
@@ -320,6 +344,93 @@ public partial class TrailerDownloadService(
         NewsVideoKind.Short     => ShortWordRegex(),
         _                       => TrailerWordRegex(),
     };
+
+    // ── Relevancia (el resultado tiene que mencionar la obra) ───────────────
+
+    /// <summary>
+    /// Palabras significativas de un titular/obra EN SU FORMA ORIGINAL (sirven
+    /// para armar queries legibles): saca stopwords (artículos, verbos de
+    /// noticia, palabras de formato tráiler/opening/…), años y tokens cortos.
+    /// Público estático: el publisher lo usa para armar la query heurística.
+    /// </summary>
+    public static List<string> SignificantWords(string text)
+    {
+        var candidates = WordSplitRegex().Split(text)
+            .Where(word => word.Length >= 3)
+            .Select(word => (Word: word, Norm: Normalize(word)))
+            .Where(x => x.Norm.Length >= 3
+                        && !SubjectStopWords.Contains(x.Norm)
+                        && !YearRegex().IsMatch(x.Norm));
+
+        // Dedupe con estado (primera aparición gana) — esto sí queda en el loop
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var result = new List<string>();
+        foreach (var (word, norm) in candidates)
+            if (seen.Add(norm))
+                result.Add(word);
+        return result;
+    }
+
+    /// <summary>
+    /// ¿El texto (título+canal del resultado, ya normalizado por Normalize)
+    /// menciona la obra? Mayoría ESTRICTA de tokens como palabra completa:
+    /// "Project X" matchea 1 de 2 tokens de "Tsugumi Project" → afuera (el
+    /// caso real), pero un token único ("Frieren") alcanza con aparecer.
+    /// </summary>
+    private static bool MentionsSubject(IReadOnlyList<string> subjectTokens, string haystack)
+    {
+        var normalized = Normalize(haystack);
+        var matched = subjectTokens.Count(t =>
+            Regex.IsMatch(normalized, $@"\b{Regex.Escape(t)}\b"));
+        return matched * 2 > subjectTokens.Count;
+    }
+
+    /// <summary>Minúsculas sin diacríticos, para comparar tokens (tráiler = trailer).</summary>
+    private static string Normalize(string text)
+    {
+        var decomposed = text.ToLowerInvariant().Normalize(NormalizationForm.FormD);
+        var kept = decomposed
+            .Where(c => CharUnicodeInfo.GetUnicodeCategory(c) != UnicodeCategory.NonSpacingMark)
+            .ToArray();
+        return new string(kept).Normalize(NormalizationForm.FormC);
+    }
+
+    // Stopwords (formas normalizadas): artículos/preposiciones, verbos típicos
+    // de titular, palabras de medio y de formato de video — lo que queda son
+    // los tokens que identifican a la OBRA.
+    private static readonly HashSet<string> SubjectStopWords = new(StringComparer.Ordinal)
+    {
+        // artículos / preposiciones / conectores (es + en)
+        "los", "las", "una", "uno", "unos", "unas", "del", "con", "para", "por",
+        "como", "este", "esta", "esto", "sus", "que", "mas", "sin", "the", "and",
+        "with", "for", "its", "his", "her", "from", "sobre", "entre", "desde",
+        "hasta", "tras",
+        // verbos y muletillas de titular
+        "anuncia", "anuncian", "estrena", "estrenan", "estrenara", "estreno",
+        "estrenos", "revela", "revelan", "confirma", "confirman", "confirmado",
+        "llega", "llegara", "llegaran", "tendra", "tendran", "lanza", "lanzan",
+        "presenta", "presentan", "comparte", "compartio", "regresa", "regresan",
+        "inicia", "tiene", "sera", "seran", "muestra", "celebra",
+        // palabras de medio / formato de noticia
+        "anime", "manga", "novela", "novelas", "serie", "series", "pelicula",
+        "peliculas", "temporada", "temporadas", "parte", "live", "action",
+        "adaptacion", "fecha", "nuevo", "nueva", "nuevos", "nuevas", "primer",
+        "primera", "segundo", "segunda", "gran", "grupo", "staff", "elenco",
+        "arte", "promocional",
+        "enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto",
+        "septiembre", "octubre", "noviembre", "diciembre",
+        // palabras de formato de video (van en el sufijo de la query, no son obra)
+        "trailer", "teaser", "avance", "oficial", "official", "espanol",
+        "latino", "opening", "ending", "video", "musical", "corto", "animado",
+        "cortometraje", "especial", "aniversario", "creditless", "creditos",
+        "promo", "special", "movie", "song", "music", "theme",
+    };
+
+    [GeneratedRegex(@"[^\p{L}\p{Nd}]+")]
+    private static partial Regex WordSplitRegex();
+
+    [GeneratedRegex(@"^(19|20)\d{2}$")]
+    private static partial Regex YearRegex();
 
     // trailer/teaser/PV/avance en varios idiomas; \b evita falsos positivos
     // (p. ej. "pvp"). 予告/特報/ティザー son los usos japoneses estándar.
