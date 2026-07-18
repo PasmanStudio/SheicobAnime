@@ -20,10 +20,17 @@ jobs:
     timeout-minutes: 15
 
     steps:
-      - name: Install yt-dlp + PO token plugin
+      # Ronda 8: yt-dlp NIGHTLY (el estable 2026.7.4 quedó 2 semanas atrás del
+      # cambio de YouTube del 17-jul) como binario standalone + el plugin de
+      # bgutil como zip en el dir de plugins (el binario no ve paquetes pip).
+      - name: Install yt-dlp nightly + PO token plugin
         run: |
-          pipx install yt-dlp
-          pipx inject yt-dlp bgutil-ytdlp-pot-provider==1.3.1
+          mkdir -p "$HOME/.local/bin" "$HOME/.config/yt-dlp/plugins"
+          curl -sL -o "$HOME/.local/bin/yt-dlp" \
+            "https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp"
+          chmod +x "$HOME/.local/bin/yt-dlp"
+          curl -sL -o "$HOME/.config/yt-dlp/plugins/bgutil-ytdlp-pot-provider.zip" \
+            "https://github.com/Brainicism/bgutil-ytdlp-pot-provider/releases/download/1.3.1/bgutil-ytdlp-pot-provider.zip"
           yt-dlp --version
 
       - name: Start PO token provider (bgutil)
@@ -80,23 +87,25 @@ jobs:
       - name: Matriz de descargas
         run: |
           COOKIES="$RUNNER_TEMP/yt-cookies.txt"
-          # Videos: el MV de Kana Nishino que falló en prod (18-jul, bot-check
-          # persistente incluso con retry) y un tráiler doblado de Crunchyroll
-          # en Español (Solo Leveling) como control.
-          VIDEOS="AgqTpVY_T_k dR7DW4ykE8k"
-          # Ronda 6 (18-jul): sin cookies vía WARP, los 8 clientes = FAIL 16/16
-          # (YouTube cerró /player para esta identidad WARP; búsqueda y print
-          # de metadata siguen pasando). Ronda 7: cookies (secret del 5-jul,
-          # cuenta descartable) + WARP + PO provider con la familia web/tv —
-          # el combo canónico de la comunidad yt-dlp para IPs marcadas.
+          # Video: el MV de Kana Nishino que falló en prod (18-jul). Un solo
+          # video en ronda 8 — el -v multiplica el log y el patrón 6/7 fue
+          # idéntico entre videos.
+          VIDEOS="AgqTpVY_T_k"
+          # Ronda 6 (18-jul): sin cookies vía WARP, 8 clientes = FAIL 16/16
+          # (bot-check en /player). Ronda 7: CON cookies vía WARP el /player
+          # PASA (las cookies del 5-jul siguen válidas) pero el stream del CDN
+          # da "HTTP Error 403" o "Requested format is not available" → huele a
+          # PO token que el estable no negocia con el YouTube post-17-jul.
+          # Ronda 8: yt-dlp NIGHTLY + verbose (ver actividad [pot]) + los
+          # combos DIRECTOS con cookies que nunca se probaron en este estado.
           # Configs: nombre|player_client (vacío = default)|cookies|proxy
           CONFIGS=(
-            "warp-cookies-default||si|si"
-            "warp-cookies-web_safari|web_safari|si|si"
-            "warp-cookies-mweb|mweb|si|si"
-            "warp-cookies-tv|tv|si|si"
-            "warp-cookies-tv_embedded|tv_embedded|si|si"
-            "warp-cookies-web_embedded|web_embedded|si|si"
+            "nightly-warp-android_vr|android_vr|no|si"
+            "nightly-warp-tv|tv|no|si"
+            "nightly-warp-default-cookies||si|si"
+            "nightly-warp-mweb-cookies|mweb|si|si"
+            "nightly-direct-default-cookies||si|no"
+            "nightly-direct-android_vr|android_vr|no|no"
           )
 
           SUMMARY="$RUNNER_TEMP/summary.txt"
@@ -107,7 +116,7 @@ jobs:
               IFS='|' read -r name clients usecookies useproxy <<< "$entry"
 
               args=(-f "bv*[height<=720][ext=mp4]/bv*[height<=720]/best[height<=720]/best"
-                    --no-playlist --max-filesize 30M --socket-timeout 20 --no-warnings)
+                    --no-playlist --max-filesize 30M --socket-timeout 20 --verbose)
               [ -n "$clients" ] && args+=(--extractor-args "youtube:player_client=$clients")
               [ "$usecookies" = "si" ] && [ -f "$COOKIES" ] && args+=(--cookies "$COOKIES")
               [ "$useproxy" = "si" ] && args+=(--proxy "socks5h://127.0.0.1:1080")
