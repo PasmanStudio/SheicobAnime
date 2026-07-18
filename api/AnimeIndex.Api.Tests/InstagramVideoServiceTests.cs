@@ -708,6 +708,58 @@ public class TrailerSearchTests
     }
 }
 
+public class ExternalPostFallbackTests
+{
+    // Respaldo X/Twitter (18-jul-2026): la descarga de YouTube quedó bloqueada
+    // desde CI (34 combos FAIL) pero X no bloquea a los runners. La URL la
+    // encuentra la IA con grounding y se valida contra la metadata real.
+    private const string TweetUrl = "https://x.com/crunchyroll_la/status/2067276084865884314";
+
+    private static string Line(string id, string duration, string title, string uploader) =>
+        $"{id}|~|{duration}|~|{title}|~|{uploader}";
+
+    [Fact]
+    public void EvaluateExternalPost_AcceptsOfficialCrunchyrollTweet_RealCase()
+    {
+        // Línea REAL del diag 18-jul (tweet fijado de Crunchyroll LATAM)
+        var candidate = TrailerDownloadService.EvaluateExternalPost(TweetUrl,
+            Line("2067045108524974080", "60.06",
+                "Crunchyroll LATAM - ¡Se viene una nueva temporada llena de emociones! ☀️ Tus animes favoritos regresan",
+                "Crunchyroll LATAM"),
+            subject: "temporada julio anime");
+
+        Assert.NotNull(candidate);
+        Assert.Equal(TweetUrl, candidate!.Url);
+        Assert.Equal(60.06, candidate.DurationSeconds, precision: 2);
+    }
+
+    [Fact]
+    public void EvaluateExternalPost_AcceptsWorkAccountThatMentionsTheObra()
+    {
+        // Cuenta de la obra (no está en OfficialChannelRegex) — la mención de
+        // la obra en texto+uploader alcanza
+        var candidate = TrailerDownloadService.EvaluateExternalPost(TweetUrl,
+            Line("111", "95", "The Ogre's Bride TV anime — main trailer", "Ogre Bride Anime"),
+            subject: "Ogre Bride");
+
+        Assert.NotNull(candidate);
+    }
+
+    [Theory]
+    // Cuenta random sin mención de la obra → afuera (URL alucinada o post ajeno)
+    [InlineData("222", "90", "mirá este video increíble", "RandomFanAccount", "Frieren")]
+    // Contenido fan explícito → afuera aunque mencione la obra
+    [InlineData("333", "90", "REACCIÓN al tráiler de Frieren!!", "Frieren Fans LATAM", "Frieren")]
+    // Tweet de texto (sin video → duración NA=0) → afuera
+    [InlineData("444", "NA", "Crunchyroll LATAM - ¡Gran anuncio mañana!", "Crunchyroll LATAM", "Frieren")]
+    // Video demasiado largo (compilado/stream) → afuera
+    [InlineData("555", "2400", "Crunchyroll LATAM - Resumen de temporada", "Crunchyroll LATAM", "Frieren")]
+    public void EvaluateExternalPost_RejectsUntrustedOrNonClipPosts(
+        string id, string duration, string title, string uploader, string subject)
+        => Assert.Null(TrailerDownloadService.EvaluateExternalPost(TweetUrl,
+            Line(id, duration, title, uploader), subject));
+}
+
 public class GeminiClientTests
 {
     [Fact]
