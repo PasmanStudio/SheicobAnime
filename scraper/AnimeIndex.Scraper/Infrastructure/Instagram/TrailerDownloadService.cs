@@ -547,6 +547,68 @@ public partial class TrailerDownloadService(
     }
 
     /// <summary>
+    /// Valida un post de X/Twitter (u otra plataforma no-YouTube) como fuente
+    /// del video de la noticia — el RESPALDO cuando la descarga de YouTube
+    /// está bloqueada desde CI (18-jul-2026) pero X no bloquea a los runners.
+    /// La URL viene de la IA con grounding: el print de metadata real vía
+    /// yt-dlp es el anti-alucinación (URL inexistente → falla → null), y
+    /// <see cref="EvaluateExternalPost"/> exige señal de confianza. Devuelve
+    /// el candidato (URL + duración) o null.
+    /// </summary>
+    public async Task<TrailerCandidate?> ValidateOfficialPostAsync(
+        string url, string subject, CancellationToken ct = default)
+    {
+        // Sin extractor-args de youtube: la URL es de otra plataforma. El
+        // proxy se mantiene (X funciona directo y vía WARP, probado 18-jul).
+        var line = await RunYtDlpPrintAsync(
+            $"--skip-download --print \"%(id)s{FieldSeparator}%(duration)s{FieldSeparator}%(title)s{FieldSeparator}%(uploader)s\" " +
+            ProxyArg() +
+            $"--no-warnings --socket-timeout 20 \"{url}\"", ct);
+        if (line is null)
+        {
+            logger.LogInformation("Post externo sin metadata (URL inválida o borrada): {Url}", url);
+            return null;
+        }
+
+        var candidate = EvaluateExternalPost(url, line, subject);
+        if (candidate is null)
+            logger.LogInformation("Post externo descartado como fuente de video: {Line}",
+                line.Length > 140 ? line[..140] : line);
+        else
+            logger.LogInformation("Post externo validado como fuente de video ({Dur}s): {Url}",
+                candidate.DurationSeconds, url);
+        return candidate;
+    }
+
+    /// <summary>
+    /// ¿El post externo (línea "id|~|duración|~|texto|~|uploader") da confianza
+    /// como fuente del video? El gate de YouTube no aplica acá — la confianza
+    /// la da la CUENTA, no el título: uploader de distribuidor/estudio oficial
+    /// (OfficialChannelRegex) O mención de la obra en texto+uploader; duración
+    /// de clip promocional; nunca contenido fan. Público estático para tests.
+    /// </summary>
+    public static TrailerCandidate? EvaluateExternalPost(string url, string printedLine, string subject)
+    {
+        var parts = printedLine.Split(FieldSeparator);
+        if (parts.Length < 4) return null;
+
+        double.TryParse(parts[1], NumberStyles.Any, CultureInfo.InvariantCulture, out var duration);
+        var title = parts[2];
+        var uploader = parts[3];
+
+        // 5s..6min: un clip promocional real (tweets de texto dan duración NA=0)
+        if (duration is < 5 or > 360) return null;
+        if (FanContentRegex().IsMatch(title)) return null;
+
+        var official = OfficialChannelRegex().IsMatch(uploader.ToLowerInvariant());
+        var subjectTokens = SignificantWords(subject).Select(Normalize).ToList();
+        var mentionsObra = subjectTokens.Count > 0
+            && MentionsSubject(subjectTokens, $"{title} {uploader}");
+
+        return official || mentionsObra ? new TrailerCandidate(url, duration) : null;
+    }
+
+    /// <summary>
     /// Baja los subtítulos MANUALES en español de un video (es, es-419, es-ES…)
     /// como .vtt para quemarlos en el reel. Los subtítulos AUTOMÁTICOS
     /// (traducción por ASR) se ignoran a propósito: su calidad no da para un

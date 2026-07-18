@@ -357,6 +357,26 @@ public class AnimeNewsPublisherService(
                     candidate = await FindNewsVideoAsync(item, content, trailerUrl, ct);
 
                 var clipPath = candidate is null ? null : await trailerService.DownloadAsync(candidate.Url, ct);
+
+                // Respaldo X/Twitter (18-jul-2026): la descarga de YouTube está
+                // bloqueada desde CI (34 combos FAIL) pero X no bloquea a los
+                // runners y los tráilers oficiales también se publican ahí.
+                // Solo cuando YouTube ENCONTRÓ el video y la descarga falló —
+                // si no hubo candidato, la noticia puede no ameritar video.
+                if (clipPath is null && candidate is not null && igSettings.TweetVideoFallback)
+                {
+                    var tweet = await FindTweetVideoAsync(item, content, ct);
+                    var tweetClip = tweet is null ? null : await trailerService.DownloadAsync(tweet.Url, ct);
+                    if (tweetClip is not null)
+                    {
+                        logger.LogInformation("AnimeNews: video del post oficial de X como respaldo → {Url}", tweet!.Url);
+                        if (candidate.SubtitlesPath is not null)
+                            TrailerDownloadService.CleanUp(candidate.SubtitlesPath);
+                        candidate = tweet;
+                        clipPath = tweetClip;
+                    }
+                }
+
                 if (clipPath is not null)
                 {
                     try
@@ -651,6 +671,63 @@ public class AnimeNewsPublisherService(
         "corto" => NewsVideoKind.Short,
         _       => NewsVideoKind.Trailer,
     };
+
+    // Solo URLs de post de X/Twitter reales — la IA a veces devuelve links a
+    // perfiles, búsquedas o YouTube; nada de eso sirve acá.
+    private static readonly System.Text.RegularExpressions.Regex TweetUrlRegex =
+        new(@"^https?://(www\.)?(x|twitter)\.com/[A-Za-z0-9_]+/status/\d+/?$",
+            System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>
+    /// Busca en X (Twitter) el post de una cuenta OFICIAL con el video de la
+    /// noticia — el respaldo cuando YouTube encontró el video pero la descarga
+    /// está bloqueada desde CI (18-jul-2026: X no bloquea a los runners).
+    /// Gemini CON GROUNDING encuentra la URL real (Gemma no tiene grounding:
+    /// sin cuota de Gemini este respaldo no corre — best-effort); la URL se
+    /// valida contra su metadata real en ValidateOfficialPostAsync antes de
+    /// usarse. Devuelve el candidato o null (→ slideshow).
+    /// </summary>
+    private async Task<TrailerCandidate?> FindTweetVideoAsync(
+        AnimeNewsItem item, NewsContent content, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(aiSettings.ApiKey)) return null;
+
+        string? response = null;
+        try
+        {
+            response = await gemini.GenerateAsync(
+                "Buscá en X (Twitter) el post de una cuenta OFICIAL que contenga el VIDEO promocional " +
+                "de esta noticia de anime (tráiler/teaser/opening/MV/corto). Cuentas oficiales, en orden " +
+                "de preferencia: @crunchyroll_la o @crunchyroll_es (versión en español), la cuenta " +
+                "oficial de la obra, su estudio o distribuidor (Aniplex, TOHO animation, KADOKAWA…). " +
+                "Tiene que ser un post REAL y reciente con el video SUBIDO al post (no un link a " +
+                "YouTube). Respondé SOLO un JSON: {\"url\": \"https://x.com/<cuenta>/status/<id>\"} " +
+                "o {\"url\": null} si no encontrás ninguno.",
+                $"Titular: {item.Title}\nResumen: {Truncate(item.Summary ?? content.Lede ?? string.Empty, 300)}",
+                useWebSearch: true, ct);
+
+            using var doc = System.Text.Json.JsonDocument.Parse(GeminiClient.ExtractJsonObject(response));
+            var url = doc.RootElement.TryGetProperty("url", out var u)
+                      && u.ValueKind == System.Text.Json.JsonValueKind.String
+                ? u.GetString()
+                : null;
+            if (url is null || !TweetUrlRegex.IsMatch(url.Trim()))
+            {
+                logger.LogInformation("AnimeNews: la IA no encontró post de X usable ({Url})", url ?? "null");
+                return null;
+            }
+
+            logger.LogInformation("AnimeNews: post de X candidato → {Url}", url.Trim());
+            return await trailerService.ValidateOfficialPostAsync(
+                url.Trim(), TrailerDownloadService.SubjectFromTitle(item.Title), ct);
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            logger.LogInformation(ex, "AnimeNews: búsqueda del post de X falló. Respuesta: {Response}",
+                response is null ? "(sin respuesta)" : Truncate(response, 200));
+            return null;
+        }
+    }
 
     /// <summary>
     /// Fallback sin IA: solo busca cuando el titular anuncia material

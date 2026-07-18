@@ -20,6 +20,8 @@ jobs:
     timeout-minutes: 15
 
     steps:
+      # Ronda 9: vuelta al estable de pipx (lo que usa prod) — se prueban
+      # PLATAFORMAS ALTERNATIVAS, no clientes de YouTube.
       - name: Install yt-dlp + PO token plugin
         run: |
           pipx install yt-dlp
@@ -79,43 +81,46 @@ jobs:
 
       - name: Matriz de descargas
         run: |
-          COOKIES="$RUNNER_TEMP/yt-cookies.txt"
-          # Videos: el PUBG×Naruto que falló en prod y un tráiler doblado de
-          # Crunchyroll en Español (Solo Leveling).
-          VIDEOS="KhHDIpHwpkw dR7DW4ykE8k"
-          # Ronda 5: WARP+android_vr fue 2/2 — ¿las cookies lo rompen?
-          # Configs: nombre|player_client (vacío = default)|cookies|proxy
+          # Rondas 6-8 (18-jul): YouTube quedó CERRADO desde CI — 34 combos
+          # FAIL (clientes × cookies × WARP × nightly); las cookies del secret
+          # están rotadas ("no longer valid"). Desde IP residencial el mismo
+          # video baja sin cookies → el bloqueo es puramente por IP.
+          # Ronda 9: PLATAFORMAS ALTERNATIVAS donde también se publican los
+          # tráilers oficiales (X/Twitter de Crunchyroll LATAM, bilibili con
+          # búsqueda bilisearch), directo y vía WARP. Si X pasa, el pipeline
+          # puede buscar el post oficial del tráiler como fuente de respaldo.
+          # Configs: nombre|URL o búsqueda|proxy
           CONFIGS=(
-            "warp-android_vr-sin-cookies|android_vr|no|si"
-            "warp-android_vr-CON-cookies|android_vr|si|si"
+            "x-crunchyroll_la-directo|https://x.com/crunchyroll_la/status/2067276084865884314|no"
+            "x-crunchyroll_la-warp|https://x.com/crunchyroll_la/status/2067276084865884314|si"
+            "bilisearch-directo|bilisearch1:Kana Nishino Power of Love MV|no"
+            "bilisearch-warp|bilisearch1:Kana Nishino Power of Love MV|si"
           )
 
           SUMMARY="$RUNNER_TEMP/summary.txt"
           : > "$SUMMARY"
 
-          for video in $VIDEOS; do
-            for entry in "${CONFIGS[@]}"; do
-              IFS='|' read -r name clients usecookies useproxy <<< "$entry"
+          i=0
+          for entry in "${CONFIGS[@]}"; do
+              IFS='|' read -r name url useproxy <<< "$entry"
+              i=$((i + 1))
 
-              args=(-f "bv*[height<=720][ext=mp4]/bv*[height<=720]/best[height<=720]/best"
-                    --no-playlist --max-filesize 30M --socket-timeout 20 --no-warnings)
-              [ -n "$clients" ] && args+=(--extractor-args "youtube:player_client=$clients")
-              [ "$usecookies" = "si" ] && [ -f "$COOKIES" ] && args+=(--cookies "$COOKIES")
+              args=(-f "bv*[height<=720][ext=mp4]+ba/bv*[height<=720]+ba/b[height<=720]/best"
+                    --playlist-items 1 --max-filesize 60M --socket-timeout 20 --verbose)
               [ "$useproxy" = "si" ] && args+=(--proxy "socks5h://127.0.0.1:1080")
 
-              out="$RUNNER_TEMP/dl-$video-$name.mp4"
-              echo "::group::[$video] $name"
-              if timeout 120 yt-dlp "${args[@]}" -o "$out" "https://www.youtube.com/watch?v=$video" 2>&1; then
+              out="$RUNNER_TEMP/dl-$i.mp4"
+              echo "::group::$name"
+              if timeout 150 yt-dlp "${args[@]}" -o "$out" "$url" 2>&1; then
                 size=$(stat -c%s "$out" 2>/dev/null || echo 0)
                 echo "RESULT: OK ($((size / 1024)) KB)"
-                printf '%-14s %-36s OK    %6d KB\n' "$video" "$name" "$((size / 1024))" >> "$SUMMARY"
+                printf '%-42s OK    %6d KB\n' "$name" "$((size / 1024))" >> "$SUMMARY"
                 rm -f "$out"
               else
                 echo "RESULT: FAIL"
-                printf '%-14s %-36s FAIL\n' "$video" "$name" >> "$SUMMARY"
+                printf '%-42s FAIL\n' "$name" >> "$SUMMARY"
               fi
               echo "::endgroup::"
-            done
           done
 
           echo ""
@@ -133,6 +138,11 @@ jobs:
             --extractor-args "youtube:player_client=android_vr" \
             --proxy "socks5h://127.0.0.1:1080" \
             --no-warnings --socket-timeout 20 || echo "SEARCH FAIL"
+          echo "── print metadata de un TWEET, directo (ValidateAsync sobre X) ──"
+          yt-dlp --skip-download \
+            --print "%(id)s|~|%(duration)s|~|%(title).80s|~|%(uploader)s" \
+            --no-warnings --socket-timeout 20 \
+            "https://x.com/crunchyroll_la/status/2067276084865884314" || echo "X VALIDATE FAIL"
           echo "── print metadata (ValidateAsync) ──"
           yt-dlp --skip-download \
             --print "%(id)s|~|%(duration)s|~|%(title)s|~|%(channel)s" \

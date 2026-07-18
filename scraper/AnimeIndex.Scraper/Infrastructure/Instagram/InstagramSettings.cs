@@ -64,6 +64,13 @@ public class InstagramSettings
     // false = regla estricta anterior (PR #154): sin español → slideshow.
     public bool TrailerOriginalLanguageFallback { get; set; } = true;
 
+    // Respaldo cuando la DESCARGA de YouTube está bloqueada desde CI (18-jul-2026:
+    // 34 combos cliente×cookies×WARP fallaron; X y bilibili NO bloquean a los
+    // runners): Gemini con grounding busca el post de X (Twitter) de una cuenta
+    // oficial con el mismo video y se descarga de ahí. La URL se valida contra
+    // su metadata real antes de usarse (una URL alucinada no pasa).
+    public bool TweetVideoFallback { get; set; } = true;
+
     // Binario de yt-dlp (el workflow lo instala con pipx; en dev local puede faltar).
     public string YtDlpPath { get; set; } = "yt-dlp";
 
