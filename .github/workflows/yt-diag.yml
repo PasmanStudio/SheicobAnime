@@ -80,14 +80,24 @@ jobs:
       - name: Matriz de descargas
         run: |
           COOKIES="$RUNNER_TEMP/yt-cookies.txt"
-          # Videos: el PUBG×Naruto que falló en prod y un tráiler doblado de
-          # Crunchyroll en Español (Solo Leveling).
-          VIDEOS="KhHDIpHwpkw dR7DW4ykE8k"
-          # Ronda 5: WARP+android_vr fue 2/2 — ¿las cookies lo rompen?
+          # Videos: el MV de Kana Nishino que falló en prod (18-jul, bot-check
+          # persistente incluso con retry) y un tráiler doblado de Crunchyroll
+          # en Español (Solo Leveling) como control.
+          VIDEOS="AgqTpVY_T_k dR7DW4ykE8k"
+          # Ronda 6 (18-jul): WARP+android_vr venía 2/2 pero desde el 17-jul
+          # TODAS las descargas de prod devuelven bot-check (la búsqueda
+          # flat-playlist sigue pasando — el bloqueo es del endpoint /player).
+          # Se busca qué otro cliente pasa HOY vía WARP, sin cookies.
           # Configs: nombre|player_client (vacío = default)|cookies|proxy
           CONFIGS=(
-            "warp-android_vr-sin-cookies|android_vr|no|si"
-            "warp-android_vr-CON-cookies|android_vr|si|si"
+            "warp-android_vr|android_vr|no|si"
+            "warp-tv|tv|no|si"
+            "warp-tv_embedded|tv_embedded|no|si"
+            "warp-web_embedded|web_embedded|no|si"
+            "warp-ios|ios|no|si"
+            "warp-android|android|no|si"
+            "warp-mweb|mweb|no|si"
+            "warp-default||no|si"
           )
 
           SUMMARY="$RUNNER_TEMP/summary.txt"
