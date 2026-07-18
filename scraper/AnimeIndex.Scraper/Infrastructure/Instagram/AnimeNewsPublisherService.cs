@@ -477,9 +477,10 @@ public class AnimeNewsPublisherService(
 
         if (!string.IsNullOrWhiteSpace(aiSettings.ApiKey))
         {
+            string? response = null;
             try
             {
-                var response = await gemini.GenerateAsync(
+                response = await gemini.GenerateAsync(
                     "Sos productor de video de un noticiero de anime. Decidí si para esta noticia corresponde " +
                     "buscar en YouTube un video OFICIAL para usarlo de fondo en el reel, y de qué tipo: " +
                     "\"trailer\" si la noticia anuncia un tráiler/teaser/PV, nueva temporada, película, " +
@@ -487,20 +488,28 @@ public class AnimeNewsPublisherService(
                     "\"tema\" si presenta un opening, ending, tema musical o video musical (MV); " +
                     "\"corto\" si presenta un corto animado, video especial o de aniversario. " +
                     "NO corresponde para novelas o manga sin anime confirmado, figuras, eventos, rankings, " +
-                    "fallecimientos ni polémicas. \"obra\": el nombre EXACTO de la obra (o del artista para " +
-                    "un MV) tal como aparecería en el título del upload oficial de YouTube, en romaji/inglés " +
-                    "— se usa para verificar que el video encontrado sea de ESA obra y no de otra cosa. " +
+                    "fallecimientos ni polémicas. \"obra\": el nombre EXACTO de la obra tal como aparecería " +
+                    "en el título del upload oficial de YouTube, en romaji/inglés (para \"tema\" SIEMPRE el " +
+                    "ARTISTA: el upload oficial de un MV/opening lleva al artista y la canción, no a la " +
+                    "serie) — se usa para verificar que el video encontrado sea de ESA obra y no de otra. " +
                     "La query: para \"trailer\", la obra + \"tráiler oficial español latino\" (la audiencia " +
                     "es LATAM y canales como Crunchyroll en Español suben esa versión — ej.: \"Solo Leveling " +
-                    "temporada 2 tráiler oficial español latino\"); para \"tema\" o \"corto\", la obra + qué " +
-                    "video es, como lo titularía el upload oficial (ej.: \"Mob Psycho 100 anniversary special " +
-                    "movie\", \"Samurai Troopers opening creditless\"). " +
+                    "temporada 2 tráiler oficial español latino\"); para \"tema\", SOLO artista + canción + " +
+                    "tipo (ej.: \"MYTH & ROID Why? RED induction MV\", \"Ikimonogakari Sayonara Lara Music " +
+                    "Video\") — NUNCA el título licenciado de la serie en la query: los videos fan " +
+                    "(lyrics/reaction/covers) lo repiten en sus títulos y entierran al upload oficial, que " +
+                    "titula en japonés/romaji; si no conocés artista y canción, la obra en romaji + " +
+                    "\"opening\" u \"ending\" a secas; para \"corto\", la obra + qué video es, como lo " +
+                    "titularía el upload oficial (ej.: \"Mob Psycho 100 anniversary special movie\"). " +
                     "Respondé SOLO un JSON: {\"buscar\": true|false, \"tipo\": \"trailer\"|\"tema\"|\"corto\", " +
                     "\"obra\": \"...\", \"query\": \"...\"}",
                     $"Titular: {item.Title}\nResumen: {Truncate(item.Summary ?? content.Lede ?? string.Empty, 400)}",
                     useWebSearch: false, ct);
 
-                using var doc = System.Text.Json.JsonDocument.Parse(response);
+                // ExtractJsonObject: Gemma (fallback de cuota) envuelve el JSON en
+                // prosa, y hasta flash-lite con JSON mode metió texto extra tras el
+                // objeto — parsear crudo tiró 4 corridas a la heurística (16-17 jul).
+                using var doc = System.Text.Json.JsonDocument.Parse(GeminiClient.ExtractJsonObject(response));
                 if (!doc.RootElement.TryGetProperty("buscar", out var buscar) || !buscar.GetBoolean())
                 {
                     // La IA decidió que la noticia no amerita video — respetarla,
@@ -519,7 +528,11 @@ public class AnimeNewsPublisherService(
             {
                 // Warning (no Debug): si la IA falla acá — cuota agotada, típico —
                 // la decisión cae a la heurística y queremos verlo en los logs.
-                logger.LogWarning(ex, "AnimeNews: decisión de video por IA falló — heurística");
+                // El response crudo va al log: los JsonReaderException de prod
+                // fueron indescifrables sin él.
+                logger.LogWarning(ex,
+                    "AnimeNews: decisión de video por IA falló — heurística. Respuesta: {Response}",
+                    response is null ? "(sin respuesta)" : Truncate(response, 300));
             }
         }
 
@@ -547,9 +560,23 @@ public class AnimeNewsPublisherService(
                 logger.LogInformation("AnimeNews: video {Kind} embebido del artículo aceptado (upload oficial)", kind);
             else
             {
-                logger.LogInformation("AnimeNews: buscando {Kind} en YouTube → \"{Query}\"", kind, query);
+                logger.LogInformation("AnimeNews: buscando {Kind} en YouTube → \"{Query}\" (obra: {Subject})",
+                    kind, query, subject ?? "(derivada de la query)");
                 candidate = await trailerService.SearchAsync(
                     query, requireSpanish: false, kind, subject, ct);
+
+                // Escalera: si la query de la IA no encontró candidato, probar la
+                // heurística (obra + palabra de tipo). Una query recargada de
+                // serie+artista+canción atrae videos fan que repiten todas esas
+                // palabras y entierran al oficial (caso real 17-jul: Tanya the
+                // Evil / MYTH & ROID — los 6 resultados eran mashups y covers).
+                var heur = HeuristicVideoQuery(item.Title);
+                if (candidate is null && heur is not null && heur.Value.Query != query)
+                {
+                    logger.LogInformation("AnimeNews: reintento con query heurística → \"{Query}\"", heur.Value.Query);
+                    candidate = await trailerService.SearchAsync(
+                        heur.Value.Query, requireSpanish: false, kind, subject, ct);
+                }
             }
 
             // Los cortos tienen diálogo: si hay subs es manuales, se queman
@@ -563,7 +590,8 @@ public class AnimeNewsPublisherService(
         }
 
         // ── Tráiler: cadena español → cualquier idioma + subs es quemados ───
-        logger.LogInformation("AnimeNews: buscando tráiler en YouTube → \"{Query}\"", query);
+        logger.LogInformation("AnimeNews: buscando tráiler en YouTube → \"{Query}\" (obra: {Subject})",
+            query, subject ?? "(derivada de la query)");
         var spanish = await trailerService.SearchAsync(query, requireSpanish: true, subject: subject, ct: ct);
         if (spanish is not null) return spanish;
 
@@ -573,6 +601,21 @@ public class AnimeNewsPublisherService(
         // el artículo (rechazado antes por idioma) también entra acá.
         var anyQuery = query.Replace("español latino", "", StringComparison.OrdinalIgnoreCase).Trim();
         var any = await trailerService.SearchAsync(anyQuery, requireSpanish: false, subject: subject, ct: ct);
+
+        // Escalera: misma red de seguridad que en temas — si la query de la IA
+        // no dio candidato en ninguno de los dos pasos, se prueba la heurística.
+        if (any is null)
+        {
+            var heur = HeuristicVideoQuery(item.Title);
+            if (heur is not null && heur.Value.Kind == NewsVideoKind.Trailer && heur.Value.Query != query)
+            {
+                logger.LogInformation("AnimeNews: reintento con query heurística → \"{Query}\"", heur.Value.Query);
+                any = await trailerService.SearchAsync(heur.Value.Query, requireSpanish: true, subject: subject, ct: ct)
+                   ?? await trailerService.SearchAsync(
+                          heur.Value.Query.Replace("español latino", "", StringComparison.OrdinalIgnoreCase).Trim(),
+                          requireSpanish: false, subject: subject, ct: ct);
+            }
+        }
         if (any is null && embeddedUrl is not null)
             any = await trailerService.ValidateAsync(embeddedUrl, requireSpanish: false, ct: ct);
         if (any is null) return null;
@@ -613,16 +656,19 @@ public class AnimeNewsPublisherService(
     /// Fallback sin IA: solo busca cuando el titular anuncia material
     /// audiovisual, y clasifica el tipo (el orden importa: "estrena un corto"
     /// o "estrena opening" NO son noticias de tráiler aunque digan "estren").
-    /// La query se arma con las palabras SIGNIFICATIVAS del titular (la obra)
-    /// + el sufijo del tipo: el titular completo como query devolvía 0
-    /// resultados en prod (frases largas en español no matchean nada en
-    /// YouTube). Para tráilers apunta a la versión doblada/subtitulada LATAM;
-    /// para temas y cortos el idioma no aplica. Público estático para tests.
+    /// La query se arma con la OBRA del titular (SubjectFromTitle: palabras
+    /// significativas SIN lo citado entre comillas — «lleno de magia» en la
+    /// query dio literalmente 0 resultados en YouTube, caso real 16-jul) + el
+    /// sufijo del tipo: el titular completo como query devolvía 0 resultados
+    /// en prod (frases largas en español no matchean nada en YouTube). Para
+    /// tráilers apunta a la versión doblada/subtitulada LATAM; para temas y
+    /// cortos el idioma no aplica. Público estático para tests.
     /// </summary>
     public static (string Query, NewsVideoKind Kind)? HeuristicVideoQuery(string title)
     {
-        var t = title.ToLowerInvariant();
-        var obra = string.Join(' ', TrailerDownloadService.SignificantWords(title));
+        // Sin diacríticos para detectar el tipo ("vídeo musical" = "video musical")
+        var t = TrailerDownloadService.Normalize(title);
+        var obra = TrailerDownloadService.SubjectFromTitle(title);
         if (obra.Length == 0) return null;
 
         var theme = new[] { "opening", "ending", "video musical", "tema musical" };

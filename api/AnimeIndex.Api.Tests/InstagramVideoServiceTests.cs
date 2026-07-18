@@ -668,6 +668,44 @@ public class TrailerSearchTests
     [InlineData("Mob y Reigen regresan: Mob Psycho 100 estrena un corto animado", "Mob Reigen Psycho 100")]
     public void SignificantWords_KeepsTheObraDropsTheNoise(string title, string expected)
         => Assert.Equal(expected, string.Join(' ', TrailerDownloadService.SignificantWords(title)));
+
+    [Theory]
+    // Caso REAL (16-jul-2026): la frase citada del titular quedaba en la query
+    // ("BanG Dream YUME MITA lleno magia tráiler oficial español latino") y
+    // YouTube devolvía 0 resultados; sin «lleno de magia» el 1er resultado era
+    // el tráiler oficial en español. Las citas se descartan de la obra.
+    [InlineData("BanG Dream! YUME∞MITA estrena tráiler y un arte \"lleno de magia\"", "BanG Dream YUME MITA")]
+    [InlineData("Frieren estrena tráiler con un arte «digno de un grimorio»", "Frieren")]
+    [InlineData("Kimetsu no Yaiba presenta “la batalla final” en su nuevo avance", "Kimetsu Yaiba")]
+    // Sin citas la obra queda igual que con SignificantWords
+    [InlineData("Sword Art Online anuncia nueva película para 2028", "Sword Art Online")]
+    // Apóstrofos de títulos en inglés: NO son citas, no se tocan
+    [InlineData("El opening de The Ogre's Bride llega con video musical", "Ogre Bride")]
+    public void SubjectFromTitle_DropsQuotedSegments(string title, string expected)
+        => Assert.Equal(expected, TrailerDownloadService.SubjectFromTitle(title));
+
+    [Fact]
+    public void HeuristicVideoQuery_DropsQuotedNoiseFromTrailerQuery_RealCase()
+    {
+        // El titular real del reel que salió sin video (16-jul-2026)
+        var result = AnimeNewsPublisherService.HeuristicVideoQuery(
+            "BanG Dream! YUME∞MITA estrena tráiler y un arte \"lleno de magia\"");
+
+        Assert.NotNull(result);
+        Assert.Equal(NewsVideoKind.Trailer, result!.Value.Kind);
+        Assert.Equal("BanG Dream YUME MITA tráiler oficial español latino", result!.Value.Query);
+    }
+
+    [Fact]
+    public void HeuristicVideoQuery_DetectsAccentedVideoMusical()
+    {
+        // "vídeo musical" (con tilde, como titula Crunchyroll) también es tema
+        var result = AnimeNewsPublisherService.HeuristicVideoQuery(
+            "MYTH & ROID comparte un vídeo musical especial de su nueva canción");
+
+        Assert.NotNull(result);
+        Assert.Equal(NewsVideoKind.ThemeSong, result!.Value.Kind);
+    }
 }
 
 public class GeminiClientTests
@@ -686,6 +724,35 @@ public class GeminiClientTests
     {
         Assert.Equal("{\"a\":1}", AnimeIndex.Scraper.Infrastructure.AiRewrite.GeminiClient.StripCodeFences("{\"a\":1}"));
         Assert.Equal("{\"a\":1}", AnimeIndex.Scraper.Infrastructure.AiRewrite.GeminiClient.StripCodeFences("  {\"a\":1}\n"));
+    }
+
+    [Theory]
+    // Casos REALES de prod (16-17 jul-2026): la decisión de video parseaba la
+    // respuesta cruda y CUALQUIER envoltura la tiraba a la heurística —
+    // Gemma arranca con prosa/markdown ('*' is an invalid start of a value) y
+    // hasta flash-lite con JSON mode metió texto después del objeto ('o'/'"'
+    // is invalid after a single JSON value).
+    [InlineData("* Claro! Acá está el JSON:\n{\"buscar\": true, \"tipo\": \"tema\"}")]
+    [InlineData("{\"buscar\": true, \"tipo\": \"tema\"}\nobra: MYTH & ROID")]
+    [InlineData("{\"buscar\": true, \"tipo\": \"tema\"}\n\"query\": \"algo suelto\"")]
+    [InlineData("```json\n{\"buscar\": true, \"tipo\": \"tema\"}\n```")]
+    [InlineData("{\"buscar\": true, \"tipo\": \"tema\"}")]
+    public void ExtractJsonObject_RescuesWrappedModelResponses(string raw)
+    {
+        var json = AnimeIndex.Scraper.Infrastructure.AiRewrite.GeminiClient.ExtractJsonObject(raw);
+
+        using var doc = System.Text.Json.JsonDocument.Parse(json);
+        Assert.True(doc.RootElement.GetProperty("buscar").GetBoolean());
+        Assert.Equal("tema", doc.RootElement.GetProperty("tipo").GetString());
+    }
+
+    [Fact]
+    public void ExtractJsonObject_WithoutJsonReturnsTextAsIs()
+    {
+        // Sin objeto JSON no hay nada que rescatar: el Parse del caller falla
+        // y la decisión cae a la heurística (comportamiento correcto)
+        Assert.Equal("no puedo ayudarte con eso",
+            AnimeIndex.Scraper.Infrastructure.AiRewrite.GeminiClient.ExtractJsonObject("no puedo ayudarte con eso"));
     }
 
     [Fact]

@@ -57,9 +57,23 @@ public partial class TrailerDownloadService(
     /// <summary>
     /// Descarga el video CON su audio original (≤720p — el sonido del tráiler
     /// es parte del atractivo del reel) y devuelve la ruta del MP4, o null si
-    /// algo falló.
+    /// algo falló. El bloqueo anti-bot de YouTube vía WARP es probabilístico
+    /// POR REQUEST (en la misma corrida la búsqueda pasa y la descarga falla;
+    /// ~1 de 3 descargas murió así el 15-17 jul-2026) — ante bot-check o 403
+    /// se reintenta UNA vez.
     /// </summary>
     public async Task<string?> DownloadAsync(string videoUrl, CancellationToken ct = default)
+    {
+        var (path, retryable) = await DownloadOnceAsync(videoUrl, ct);
+        if (path is not null || !retryable) return path;
+
+        logger.LogInformation("Reintentando descarga tras bloqueo transitorio de YouTube: {Url}", videoUrl);
+        await Task.Delay(TimeSpan.FromSeconds(8), ct);
+        return (await DownloadOnceAsync(videoUrl, ct)).Path;
+    }
+
+    /// <summary>Un intento de descarga; Retryable = el fallo fue bot-check/403 (transitorio).</summary>
+    private async Task<(string? Path, bool Retryable)> DownloadOnceAsync(string videoUrl, CancellationToken ct)
     {
         var workDir = Path.Join(Path.GetTempPath(), $"ig-trailer-{Guid.NewGuid():N}");
         Directory.CreateDirectory(workDir);
@@ -112,7 +126,7 @@ public partial class TrailerDownloadService(
                 logger.LogWarning("yt-dlp timeout ({Min} min) para {Url} — reel cae a slideshow",
                     DownloadTimeout.TotalMinutes, videoUrl);
                 CleanUp(workDir);
-                return null;
+                return (null, false);
             }
 
             if (process.ExitCode != 0 || !File.Exists(outputPath))
@@ -122,25 +136,26 @@ public partial class TrailerDownloadService(
                 logger.LogWarning("yt-dlp falló (exit {Code}) para {Url}: {Err} — reel cae a slideshow",
                     process.ExitCode, videoUrl, tail);
                 CleanUp(workDir);
-                return null;
+                // Bot-check y 403 del CDN son por-request: valen un reintento
+                return (null, tail.Contains("Sign in to confirm") || tail.Contains("HTTP Error 403"));
             }
 
             var mb = new FileInfo(outputPath).Length / 1024.0 / 1024.0;
             logger.LogInformation("Tráiler descargado: {Url} → {Mb:F1} MB", videoUrl, mb);
-            return outputPath;
+            return (outputPath, false);
         }
         catch (System.ComponentModel.Win32Exception)
         {
             // yt-dlp no instalado (dev local) — el workflow de CI sí lo instala
             logger.LogInformation("yt-dlp no encontrado ('{Path}') — reel cae a slideshow", psi.FileName);
             CleanUp(workDir);
-            return null;
+            return (null, false);
         }
         catch (Exception ex) when (!ct.IsCancellationRequested)
         {
             logger.LogWarning(ex, "Descarga de tráiler falló para {Url} — reel cae a slideshow", videoUrl);
             CleanUp(workDir);
-            return null;
+            return (null, false);
         }
     }
 
@@ -227,9 +242,12 @@ public partial class TrailerDownloadService(
             var best = PickBestSearchResult(lines, requireSpanish, kind, subject ?? query);
             if (best is null)
             {
+                // Los resultados evaluados van al log: sin ellos los post-mortems
+                // de "por qué este reel salió sin video" son a ciegas (jul-2026)
                 logger.LogInformation(
-                    "Búsqueda de {Kind} sin candidato confiable{Lang} para \"{Query}\" ({Count} resultados)",
-                    kind, requireSpanish ? " en español" : "", query, lines.Length);
+                    "Búsqueda de {Kind} sin candidato confiable{Lang} para \"{Query}\" ({Count} resultados): {Results}",
+                    kind, requireSpanish ? " en español" : "", query, lines.Length,
+                    string.Join(" ∥ ", lines.Select(l => l.Length > 110 ? l[..110] : l)));
                 return null;
             }
 
@@ -372,6 +390,29 @@ public partial class TrailerDownloadService(
     }
 
     /// <summary>
+    /// La OBRA de un titular, para armar queries de búsqueda: descarta lo
+    /// citado entre comillas — los descriptores citados NO son la obra y
+    /// rompen la búsqueda (caso real 16-jul-2026: «lleno de magia» dentro de
+    /// la query de BanG Dream! YUME∞MITA devolvió 0 resultados en YouTube;
+    /// sin esas palabras el 1er resultado era el tráiler oficial en español) —
+    /// y filtra el resto con SignificantWords. Si el recorte deja vacío
+    /// (titular entero entre comillas), se usa el titular completo.
+    /// Público estático para tests.
+    /// </summary>
+    public static string SubjectFromTitle(string title)
+    {
+        var unquoted = QuotedSegmentRegex().Replace(title, " ");
+        var words = SignificantWords(unquoted);
+        if (words.Count == 0) words = SignificantWords(title);
+        return string.Join(' ', words);
+    }
+
+    // «…», “…” y "…" — citas de titular. Las comillas simples se dejan en paz
+    // por los apóstrofos de títulos en inglés (The Ogre's Bride, JoJo's).
+    [GeneratedRegex("«[^»]*»|“[^”]*”|\"[^\"]*\"")]
+    private static partial Regex QuotedSegmentRegex();
+
+    /// <summary>
     /// ¿El texto (título+canal del resultado, ya normalizado por Normalize)
     /// menciona la obra? Mayoría ESTRICTA de tokens como palabra completa:
     /// "Project X" matchea 1 de 2 tokens de "Tsugumi Project" → afuera (el
@@ -385,8 +426,12 @@ public partial class TrailerDownloadService(
         return matched * 2 > subjectTokens.Count;
     }
 
-    /// <summary>Minúsculas sin diacríticos, para comparar tokens (tráiler = trailer).</summary>
-    private static string Normalize(string text)
+    /// <summary>
+    /// Minúsculas sin diacríticos, para comparar tokens (tráiler = trailer).
+    /// Público estático: el publisher lo usa para detectar el tipo de video
+    /// en titulares con acentos ("vídeo musical").
+    /// </summary>
+    public static string Normalize(string text)
     {
         var decomposed = text.ToLowerInvariant().Normalize(NormalizationForm.FormD);
         var kept = decomposed
