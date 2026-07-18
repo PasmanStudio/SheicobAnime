@@ -84,20 +84,19 @@ jobs:
           # persistente incluso con retry) y un tráiler doblado de Crunchyroll
           # en Español (Solo Leveling) como control.
           VIDEOS="AgqTpVY_T_k dR7DW4ykE8k"
-          # Ronda 6 (18-jul): WARP+android_vr venía 2/2 pero desde el 17-jul
-          # TODAS las descargas de prod devuelven bot-check (la búsqueda
-          # flat-playlist sigue pasando — el bloqueo es del endpoint /player).
-          # Se busca qué otro cliente pasa HOY vía WARP, sin cookies.
+          # Ronda 6 (18-jul): sin cookies vía WARP, los 8 clientes = FAIL 16/16
+          # (YouTube cerró /player para esta identidad WARP; búsqueda y print
+          # de metadata siguen pasando). Ronda 7: cookies (secret del 5-jul,
+          # cuenta descartable) + WARP + PO provider con la familia web/tv —
+          # el combo canónico de la comunidad yt-dlp para IPs marcadas.
           # Configs: nombre|player_client (vacío = default)|cookies|proxy
           CONFIGS=(
-            "warp-android_vr|android_vr|no|si"
-            "warp-tv|tv|no|si"
-            "warp-tv_embedded|tv_embedded|no|si"
-            "warp-web_embedded|web_embedded|no|si"
-            "warp-ios|ios|no|si"
-            "warp-android|android|no|si"
-            "warp-mweb|mweb|no|si"
-            "warp-default||no|si"
+            "warp-cookies-default||si|si"
+            "warp-cookies-web_safari|web_safari|si|si"
+            "warp-cookies-mweb|mweb|si|si"
+            "warp-cookies-tv|tv|si|si"
+            "warp-cookies-tv_embedded|tv_embedded|si|si"
+            "warp-cookies-web_embedded|web_embedded|si|si"
           )
 
           SUMMARY="$RUNNER_TEMP/summary.txt"
