@@ -535,6 +535,29 @@ public partial class AnimeNewsFeedService(
         return id is null ? null : $"https://www.youtube.com/watch?v={id}";
     }
 
+    // Post de X/Twitter embebido o linkeado (blockquote twitter-tweet de
+    // WordPress, o link directo al anuncio). Los botones de compartir usan
+    // /intent/ (sin /status/) así que no matchean.
+    [GeneratedRegex(@"(?:twitter|x)\.com/([A-Za-z0-9_]{1,20})/status(?:es)?/(\d{8,25})", RegexOptions.IgnoreCase)]
+    private static partial Regex TweetInHtmlRegex();
+
+    /// <summary>
+    /// Primer post de X/Twitter embebido en el artículo — kudasai/anmosugoi
+    /// (WordPress, SSR) embeben el tweet del anuncio en el cuerpo. Sirve de
+    /// RESPALDO de descarga cuando YouTube bloquea a los runners (18-jul-2026:
+    /// X no los bloquea). Crunchyroll NO aplica: su artículo es una SPA y los
+    /// embeds solo existen client-side (verificado: el fetch server-side da un
+    /// shell de 14KB aun con UA de Googlebot). Devuelve la URL canónica del
+    /// post o null. Público para tests.
+    /// </summary>
+    public static string? ExtractArticleTweetUrl(string html)
+    {
+        var m = TweetInHtmlRegex().Match(html);
+        return m.Success
+            ? $"https://x.com/{m.Groups[1].Value}/status/{m.Groups[2].Value}"
+            : null;
+    }
+
     // ── Cross-feed duplicate merge ───────────────────────────────────────────
 
     /// <summary>

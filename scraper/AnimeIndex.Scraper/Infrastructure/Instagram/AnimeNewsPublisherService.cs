@@ -187,7 +187,7 @@ public class AnimeNewsPublisherService(
         try
         {
             // Gather all usable article media (cover + in-body images + trailer).
-            var (images, trailerUrl) = await GatherMediaAsync(item, ct);
+            var (images, trailerUrl, tweetUrl) = await GatherMediaAsync(item, ct);
 
             // Guarantee every post has a real image — never publish a text-only/flat poster.
             // Checked BEFORE the rewrite so we don't spend a Gemini call on an unpostable item.
@@ -215,7 +215,7 @@ public class AnimeNewsPublisherService(
             {
                 if (newsSettings.IsReelRun)
                 {
-                    reelMediaId = await PublishReelAsync(item, content, images, trailerUrl, ct);
+                    reelMediaId = await PublishReelAsync(item, content, images, trailerUrl, tweetUrl, ct);
                 }
                 else
                 {
@@ -224,7 +224,7 @@ public class AnimeNewsPublisherService(
                         var reelRecently = await db.AnimeNewsItems.AnyAsync(
                             n => n.IgReelMediaId != null && n.IgPostedAt >= DateTime.UtcNow.AddHours(-24), ct);
                         if (!reelRecently)
-                            reelMediaId = await PublishReelAsync(item, content, images, trailerUrl, ct);
+                            reelMediaId = await PublishReelAsync(item, content, images, trailerUrl, tweetUrl, ct);
                     }
                     catch (Exception ex) when (!ct.IsCancellationRequested)
                     {
@@ -331,7 +331,7 @@ public class AnimeNewsPublisherService(
     /// </summary>
     private async Task<string?> PublishReelAsync(
         AnimeNewsItem item, NewsContent content, IReadOnlyList<string> images,
-        string? trailerUrl, CancellationToken ct)
+        string? trailerUrl, string? articleTweetUrl, CancellationToken ct)
     {
         try
         {
@@ -365,7 +365,17 @@ public class AnimeNewsPublisherService(
                 // si no hubo candidato, la noticia puede no ameritar video.
                 if (clipPath is null && candidate is not null && igSettings.TweetVideoFallback)
                 {
-                    var tweet = await FindTweetVideoAsync(item, content, ct);
+                    // 1) El tweet EMBEBIDO en el artículo (kudasai/anmosugoi lo
+                    //    traen en los anuncios): procedencia = relevancia, mismo
+                    //    trato que el YouTube embebido — solo se exige que tenga
+                    //    un VIDEO de duración de clip (muchos embeds son tweets
+                    //    de texto). 2) Sin embebido usable, la IA con grounding.
+                    var tweet = articleTweetUrl is null
+                        ? null
+                        : await trailerService.ValidateOfficialPostAsync(
+                              articleTweetUrl, TrailerDownloadService.SubjectFromTitle(item.Title),
+                              requireTrustSignal: false, ct);
+                    tweet ??= await FindTweetVideoAsync(item, content, ct);
                     var tweetClip = tweet is null ? null : await trailerService.DownloadAsync(tweet.Url, ct);
                     if (tweetClip is not null)
                     {
@@ -697,11 +707,15 @@ public class AnimeNewsPublisherService(
         {
             response = await gemini.GenerateAsync(
                 "Buscá en X (Twitter) el post de una cuenta OFICIAL que contenga el VIDEO promocional " +
-                "de esta noticia de anime (tráiler/teaser/opening/MV/corto). Cuentas oficiales, en orden " +
+                "de esta noticia de anime (tráiler/teaser/opening/MV/corto). Cuentas válidas, en orden " +
                 "de preferencia: @crunchyroll_la o @crunchyroll_es (versión en español), la cuenta " +
-                "oficial de la obra, su estudio o distribuidor (Aniplex, TOHO animation, KADOKAWA…). " +
-                "Tiene que ser un post REAL y reciente con el video SUBIDO al post (no un link a " +
-                "YouTube). Respondé SOLO un JSON: {\"url\": \"https://x.com/<cuenta>/status/<id>\"} " +
+                "oficial de la obra o del juego/franquicia (los anuncios grandes SIEMPRE se publican " +
+                "ahí — ej.: @Wuthering_Waves, @shingeki), la del artista (para MVs), su estudio o " +
+                "distribuidor (Aniplex, TOHO animation, KADOKAWA…). Buscá con varios términos: nombre " +
+                "de la obra + \"trailer\", + \"PV\", + \"anime\", en inglés y japonés. Tiene que ser un " +
+                "post REAL y reciente con el video SUBIDO al post (no un link a YouTube); si la " +
+                "búsqueda muestra la URL x.com/... o twitter.com/... del post, devolvé esa URL exacta. " +
+                "Respondé SOLO un JSON: {\"url\": \"https://x.com/<cuenta>/status/<id>\"} " +
                 "o {\"url\": null} si no encontrás ninguno.",
                 $"Titular: {item.Title}\nResumen: {Truncate(item.Summary ?? content.Lede ?? string.Empty, 300)}",
                 useWebSearch: true, ct);
@@ -719,7 +733,7 @@ public class AnimeNewsPublisherService(
 
             logger.LogInformation("AnimeNews: post de X candidato → {Url}", url.Trim());
             return await trailerService.ValidateOfficialPostAsync(
-                url.Trim(), TrailerDownloadService.SubjectFromTitle(item.Title), ct);
+                url.Trim(), TrailerDownloadService.SubjectFromTitle(item.Title), ct: ct);
         }
         catch (Exception ex) when (!ct.IsCancellationRequested)
         {
@@ -841,14 +855,15 @@ public class AnimeNewsPublisherService(
     /// images from the article page (best-effort re-fetch), AND the first embedded
     /// YouTube trailer if any — el reel lo usa de fondo cuando existe.
     /// </summary>
-    private async Task<(IReadOnlyList<string> Images, string? TrailerUrl)> GatherMediaAsync(
+    private async Task<(IReadOnlyList<string> Images, string? TrailerUrl, string? TweetUrl)> GatherMediaAsync(
         AnimeNewsItem item, CancellationToken ct)
     {
         var images = new List<string>();
         string? trailerUrl = null;
+        string? tweetUrl = null;
         if (!string.IsNullOrWhiteSpace(item.ImageUrl)) images.Add(item.ImageUrl!);
         if (string.IsNullOrWhiteSpace(item.ArticleUrl))
-            return (images, null);
+            return (images, null, null);
 
         try
         {
@@ -859,6 +874,7 @@ public class AnimeNewsPublisherService(
                 var html = await resp.Content.ReadAsStringAsync(ct);
                 images.AddRange(AnimeNewsFeedService.ExtractArticleImages(html));
                 trailerUrl = AnimeNewsFeedService.ExtractArticleVideoUrl(html);
+                tweetUrl = AnimeNewsFeedService.ExtractArticleTweetUrl(html);
             }
         }
         catch (Exception ex) when (!ct.IsCancellationRequested)
@@ -866,7 +882,7 @@ public class AnimeNewsPublisherService(
             logger.LogDebug(ex, "AnimeNews: could not gather extra media for {Title}", Truncate(item.Title, 50));
         }
 
-        return (images.Distinct().Take(6).ToList(), trailerUrl);
+        return (images.Distinct().Take(6).ToList(), trailerUrl, tweetUrl);
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

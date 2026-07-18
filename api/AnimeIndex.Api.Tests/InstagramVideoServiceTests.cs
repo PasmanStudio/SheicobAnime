@@ -758,6 +758,61 @@ public class ExternalPostFallbackTests
         string id, string duration, string title, string uploader, string subject)
         => Assert.Null(TrailerDownloadService.EvaluateExternalPost(TweetUrl,
             Line(id, duration, title, uploader), subject));
+
+    [Fact]
+    public void EvaluateExternalPost_ArticleEmbed_TrustsProvenanceButStillNeedsAVideo()
+    {
+        // El tweet EMBEBIDO en el artículo: procedencia = relevancia — la
+        // cuenta japonesa de la obra twittea en japonés (cero tokens romaji)
+        // y con requireTrustSignal=false pasa igual…
+        var jp = TrailerDownloadService.EvaluateExternalPost(TweetUrl,
+            Line("666", "95", "TVアニメ『ネコと竜』ノンクレジットOP映像公開!", "ネコと竜公式"),
+            subject: "The Cat and the Dragon", requireTrustSignal: false);
+        Assert.NotNull(jp);
+
+        // …pero un tweet de TEXTO del anuncio (sin video) se rechaza igual
+        var textOnly = TrailerDownloadService.EvaluateExternalPost(TweetUrl,
+            Line("777", "NA", "アニメ化決定!", "ネコと竜公式"),
+            subject: "The Cat and the Dragon", requireTrustSignal: false);
+        Assert.Null(textOnly);
+    }
+}
+
+public class ArticleTweetExtractionTests
+{
+    [Fact]
+    public void ExtractArticleTweetUrl_FindsWordPressTweetEmbed()
+    {
+        // Embed clásico de WordPress (kudasai): blockquote twitter-tweet con el
+        // link al post adentro
+        var html = """
+            <p>El anuncio se realizó en la cuenta oficial:</p>
+            <blockquote class="twitter-tweet"><a href="https://twitter.com/nbuna_staff/status/2077770960586121386?ref_src=twsrc%5Etfw">July 18, 2026</a></blockquote>
+            """;
+
+        Assert.Equal("https://x.com/nbuna_staff/status/2077770960586121386",
+            AnimeNewsFeedService.ExtractArticleTweetUrl(html));
+    }
+
+    [Fact]
+    public void ExtractArticleTweetUrl_IgnoresShareButtonsAndProfileLinks()
+    {
+        // Botón de compartir (intent, sin /status/) + link de perfil del sitio
+        var html = """
+            <a href="https://twitter.com/intent/tweet?url=https%3A%2F%2Fsomoskudasai.com%2Fnoticia">Compartir</a>
+            <a href="https://x.com/somoskudasai">Seguinos en X</a>
+            """;
+
+        Assert.Null(AnimeNewsFeedService.ExtractArticleTweetUrl(html));
+    }
+
+    [Fact]
+    public void ExtractArticleTweetUrl_AcceptsXDomainLinks()
+    {
+        Assert.Equal("https://x.com/crunchyroll_la/status/2067276084865884314",
+            AnimeNewsFeedService.ExtractArticleTweetUrl(
+                "<a href=\"https://x.com/crunchyroll_la/status/2067276084865884314\">post</a>"));
+    }
 }
 
 public class GeminiClientTests

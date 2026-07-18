@@ -556,7 +556,7 @@ public partial class TrailerDownloadService(
     /// el candidato (URL + duración) o null.
     /// </summary>
     public async Task<TrailerCandidate?> ValidateOfficialPostAsync(
-        string url, string subject, CancellationToken ct = default)
+        string url, string subject, bool requireTrustSignal = true, CancellationToken ct = default)
     {
         // Sin extractor-args de youtube: la URL es de otra plataforma. El
         // proxy se mantiene (X funciona directo y vía WARP, probado 18-jul).
@@ -570,7 +570,7 @@ public partial class TrailerDownloadService(
             return null;
         }
 
-        var candidate = EvaluateExternalPost(url, line, subject);
+        var candidate = EvaluateExternalPost(url, line, subject, requireTrustSignal);
         if (candidate is null)
             logger.LogInformation("Post externo descartado como fuente de video: {Line}",
                 line.Length > 140 ? line[..140] : line);
@@ -585,9 +585,16 @@ public partial class TrailerDownloadService(
     /// como fuente del video? El gate de YouTube no aplica acá — la confianza
     /// la da la CUENTA, no el título: uploader de distribuidor/estudio oficial
     /// (OfficialChannelRegex) O mención de la obra en texto+uploader; duración
-    /// de clip promocional; nunca contenido fan. Público estático para tests.
+    /// de clip promocional; nunca contenido fan.
+    /// <paramref name="requireTrustSignal"/>=false para el tweet EMBEBIDO en el
+    /// artículo: la procedencia ya es la relevancia (mismo trato que el YouTube
+    /// embebido — las cuentas de obra japonesas twittean en japonés y no
+    /// matchean tokens romaji), pero duración y fan-content se exigen igual
+    /// (muchos embeds son tweets de TEXTO del anuncio, sin video).
+    /// Público estático para tests.
     /// </summary>
-    public static TrailerCandidate? EvaluateExternalPost(string url, string printedLine, string subject)
+    public static TrailerCandidate? EvaluateExternalPost(
+        string url, string printedLine, string subject, bool requireTrustSignal = true)
     {
         var parts = printedLine.Split(FieldSeparator);
         if (parts.Length < 4) return null;
@@ -599,6 +606,7 @@ public partial class TrailerDownloadService(
         // 5s..6min: un clip promocional real (tweets de texto dan duración NA=0)
         if (duration is < 5 or > 360) return null;
         if (FanContentRegex().IsMatch(title)) return null;
+        if (!requireTrustSignal) return new TrailerCandidate(url, duration);
 
         var official = OfficialChannelRegex().IsMatch(uploader.ToLowerInvariant());
         var subjectTokens = SignificantWords(subject).Select(Normalize).ToList();
