@@ -106,11 +106,9 @@ public class NewsRewriteService(
 
     private static RewriteDto? ParseJson(string raw)
     {
-        var start = raw.IndexOf('{');
-        var end   = raw.LastIndexOf('}');
-        if (start < 0 || end <= start) return null;
+        var slice = GeminiClient.ExtractJsonObject(raw);
+        if (!slice.StartsWith('{')) return null;
 
-        var slice = raw[start..(end + 1)];
         try { return JsonSerializer.Deserialize<RewriteDto>(slice, JsonOpts); }
         catch { return null; }
     }
