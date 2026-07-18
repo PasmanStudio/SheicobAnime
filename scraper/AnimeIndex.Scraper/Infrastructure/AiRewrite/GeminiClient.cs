@@ -258,6 +258,23 @@ public class GeminiClient(
         return t.Trim();
     }
 
+    /// <summary>
+    /// Recorta la respuesta del modelo al objeto JSON (primer '{' … último '}'),
+    /// quitando antes el fence markdown. Gemma envuelve el JSON en prosa (respuestas
+    /// que arrancan con "*…"), y hasta Gemini con JSON mode devolvió texto extra
+    /// después del objeto (visto en prod 16-17 jul-2026: la decisión de video
+    /// parseaba crudo y caía a la heurística en 4 corridas). Sin objeto JSON
+    /// devuelve el texto tal cual (el Parse del caller falla y maneja el error).
+    /// Público estático para tests.
+    /// </summary>
+    public static string ExtractJsonObject(string text)
+    {
+        var t = StripCodeFences(text);
+        var start = t.IndexOf('{');
+        var end   = t.LastIndexOf('}');
+        return start >= 0 && end > start ? t[start..(end + 1)] : t;
+    }
+
     private static string Truncate(string s, int max) =>
         s.Length <= max ? s : s[..max] + "…";
 }
