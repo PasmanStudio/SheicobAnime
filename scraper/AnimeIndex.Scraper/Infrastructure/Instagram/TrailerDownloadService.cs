@@ -44,7 +44,9 @@ public partial class TrailerDownloadService(
     InstagramSettings settings,
     ILogger<TrailerDownloadService> logger)
 {
-    private static readonly TimeSpan DownloadTimeout = TimeSpan.FromMinutes(2);
+    // 4 min: el CDN de bilibili (última red) tira ~115 KiB/s hacia los runners
+    // (ronda 9: 12MB en 107s) — con 2 min un opening de 720p moría en la línea
+    private static readonly TimeSpan DownloadTimeout = TimeSpan.FromMinutes(4);
     private static readonly TimeSpan SearchTimeout = TimeSpan.FromSeconds(75);
 
     // Cuántos resultados de búsqueda evaluar por query
@@ -177,6 +179,7 @@ public partial class TrailerDownloadService(
     public async Task<TrailerCandidate?> SearchAsync(
         string query, bool requireSpanish = true,
         NewsVideoKind kind = NewsVideoKind.Trailer, string? subject = null,
+        string searchPrefix = "ytsearch",
         CancellationToken ct = default)
     {
         // Las comillas romperían el parseo de argumentos del proceso
@@ -188,8 +191,10 @@ public partial class TrailerDownloadService(
             FileName = string.IsNullOrWhiteSpace(settings.YtDlpPath) ? "yt-dlp" : settings.YtDlpPath,
             // --flat-playlist: solo metadata de los resultados (rápido, una
             // sola llamada); la selección del mejor candidato es nuestra.
+            // searchPrefix "bilisearch" = búsqueda en bilibili (última red:
+            // NO bloquea a los runners de CI, verificado 18-jul-2026).
             Arguments =
-                $"\"ytsearch{SearchResults}:{sanitized}\" " +
+                $"\"{searchPrefix}{SearchResults}:{sanitized}\" " +
                 $"--flat-playlist --print \"%(id)s{FieldSeparator}%(duration)s{FieldSeparator}%(title)s{FieldSeparator}%(channel)s\" " +
                 $"--extractor-args \"youtube:player_client={settings.YtDlpPlayerClients}\" " +
                 ProxyArg() +
@@ -319,24 +324,33 @@ public partial class TrailerDownloadService(
 
             // Relevancia: el video tiene que ser DE LA OBRA, no solo "un tráiler
             // oficial en español" — mejor slideshow que la película equivocada
-            if (subjectTokens.Count > 0 && !MentionsSubject(subjectTokens, $"{title} {channel}"))
+            var subjectVerified = subjectTokens.Count > 0
+                && MentionsSubject(subjectTokens, $"{title} {channel}");
+            if (subjectTokens.Count > 0 && !subjectVerified)
                 continue;
 
             var official = OfficialChannelRegex().IsMatch(channel)
                 || title.Contains("official") || title.Contains("oficial")
                 || channel.Contains("official") || title.Contains("公式") || channel.Contains("公式");
+            var kindMatch = KindWordRegex(kind).IsMatch(title);
 
             // Requisito de idioma: sin señal de español en título o canal, afuera
             if (requireSpanish && !SpanishRegex().IsMatch(title) && !SpanishRegex().IsMatch(channel)) continue;
-            // Sin el filtro de idioma, solo uploads oficiales dan confianza
-            if (!requireSpanish && !official) continue;
+            // Sin el filtro de idioma: upload oficial, O palabra del tipo + obra
+            // VERIFICADA — los uploads oficiales japoneses no siempre llevan
+            // marcador (caso real 18-jul: "Cat and Dragon Creditless Opening
+            // Movie" del canal 宝島 rechazado, era EL video de la noticia), y un
+            // reupload limpio muestra el mismo video. Sin subject verificado el
+            // requisito de oficial se mantiene (regresión Novagesis: video fan
+            // con "tráiler" en el título auto-traducido).
+            if (!requireSpanish && !official && !(kindMatch && subjectVerified)) continue;
             // Contenido de fans (reacciones/reviews/resúmenes/trailers falsos): nunca
             if (FanContentRegex().IsMatch(title)) continue;
             // Más de 6 min no es material promocional: episodio, compilado, live
             if (duration > 360) continue;
 
             var score = 0;
-            if (KindWordRegex(kind).IsMatch(title)) score += 4;
+            if (kindMatch) score += 4;
             // El upload del distribuidor oficial gana aunque el título no diga
             // "trailer"; a igual puntaje, el orden de relevancia de YouTube
             // desempata (el primero se queda).
@@ -414,16 +428,20 @@ public partial class TrailerDownloadService(
 
     /// <summary>
     /// ¿El texto (título+canal del resultado, ya normalizado por Normalize)
-    /// menciona la obra? Mayoría ESTRICTA de tokens como palabra completa:
-    /// "Project X" matchea 1 de 2 tokens de "Tsugumi Project" → afuera (el
-    /// caso real), pero un token único ("Frieren") alcanza con aparecer.
+    /// menciona la obra? Mayoría de tokens como palabra completa, O al menos
+    /// DOS tokens: el subject de un tema viaja combinado (artista + obra —
+    /// "suis Yorushika Cat Dragon") porque los MV titulan por el artista y los
+    /// creditless por el anime (casos reales 17-18 jul); exigir mayoría del
+    /// combinado rechazaba ambos. "Project X" matchea 1 de 2 tokens de
+    /// "Tsugumi Project" → afuera (el caso real), y un token único ("Frieren")
+    /// alcanza con aparecer.
     /// </summary>
     private static bool MentionsSubject(IReadOnlyList<string> subjectTokens, string haystack)
     {
         var normalized = Normalize(haystack);
         var matched = subjectTokens.Count(t =>
             Regex.IsMatch(normalized, $@"\b{Regex.Escape(t)}\b"));
-        return matched * 2 > subjectTokens.Count;
+        return matched >= 2 || matched * 2 > subjectTokens.Count;
     }
 
     /// <summary>
@@ -478,8 +496,9 @@ public partial class TrailerDownloadService(
     private static partial Regex YearRegex();
 
     // trailer/teaser/PV/avance en varios idiomas; \b evita falsos positivos
-    // (p. ej. "pvp"). 予告/特報/ティザー son los usos japoneses estándar.
-    [GeneratedRegex(@"\b(trailer|tráiler|teaser|avance|pv|promo)\b|予告|特報|ティザー", RegexOptions.IgnoreCase)]
+    // (p. ej. "pvp"). 予告/特報/ティザー son los usos japoneses estándar;
+    // 预告 es el chino de bilibili.
+    [GeneratedRegex(@"\b(trailer|tráiler|teaser|avance|pv|promo)\b|予告|特報|ティザー|预告", RegexOptions.IgnoreCase)]
     private static partial Regex TrailerWordRegex();
 
     // opening/ending/MV: incluye los usos japoneses (主題歌 = theme song,
