@@ -603,6 +603,42 @@ public class TrailerSearchTests
     }
 
     [Fact]
+    public void PickBestSearchResult_RelaxedMode_AcceptsSubjectMatchedOpeningWithoutOfficialMarker()
+    {
+        // Líneas REALES del run 29656418763 (18-jul-2026): el creditless
+        // opening OFICIAL de The Cat and the Dragon venía del canal japonés
+        // 宝島 (sin "official/公式" en el nombre) y el gate lo rechazaba —
+        // era EL video de la noticia y el reel salió sin video. Regla nueva:
+        // sin oficial alcanza palabra del TIPO + obra VERIFICADA.
+        var best = TrailerDownloadService.PickBestSearchResult(
+        [
+            Line("k3NwKLjfEOw", "230", "Cat Days", "suis from Yorushika - Topic"),
+            Line("ZH8xYK5vac0", "91",
+                "TV Anime \"Cat and Dragon\" Creditless Opening Movie [Broadcasting & Streaming since July 2026]",
+                "宝島"),
+        ], requireSpanish: false, kind: NewsVideoKind.ThemeSong, subject: "Cat and Dragon");
+
+        Assert.Equal("ZH8xYK5vac0", best?.Id);
+
+        // Y con el subject COMBINADO artista+obra que manda el publisher (el
+        // upload matchea "cat dragon" aunque no mencione al artista): ≥2
+        // tokens alcanzan — exigir mayoría del combinado lo rechazaba
+        var combined = TrailerDownloadService.PickBestSearchResult(
+            [Line("ZH8xYK5vac0", "91",
+                "TV Anime \"Cat and Dragon\" Creditless Opening Movie [Broadcasting & Streaming since July 2026]",
+                "宝島")],
+            requireSpanish: false, kind: NewsVideoKind.ThemeSong,
+            subject: "suis from Yorushika suis Yorushika Cat Dragon");
+        Assert.Equal("ZH8xYK5vac0", combined?.Id);
+
+        // SIN obra verificable, el requisito de oficial se mantiene (la
+        // regresión Novagesis del 12-jul depende de esto)
+        Assert.Null(TrailerDownloadService.PickBestSearchResult(
+            [Line("ZH8xYK5vac0", "91", "TV Anime Creditless Opening Movie", "canal random")],
+            requireSpanish: false, kind: NewsVideoKind.ThemeSong));
+    }
+
+    [Fact]
     public void PickBestSearchResult_ThemeKind_AcceptsCreditlessOpeningRejectsFanContent()
     {
         var best = TrailerDownloadService.PickBestSearchResult(
