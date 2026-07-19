@@ -350,20 +350,27 @@ public class AnimeNewsPublisherService(
                 // japonés — el requisito es español latino); si no pasa, la
                 // búsqueda por IA decide el TIPO de video (tráiler/opening/corto)
                 // y puede rescatar ese mismo embebido cuando el idioma no aplica.
-                var candidate = trailerUrl is null
+                var embedded = trailerUrl is null
                     ? null
                     : await trailerService.ValidateAsync(trailerUrl, ct: ct);
-                if (candidate is null && igSettings.TrailerSearchEnabled)
-                    candidate = await FindNewsVideoAsync(item, content, trailerUrl, ct);
+                var plan = embedded is not null
+                    ? new NewsVideoPlan(embedded, true,
+                        HeuristicVideoQuery(item.Title)?.Query ?? "", null,
+                        HeuristicVideoQuery(item.Title)?.Kind ?? NewsVideoKind.Trailer)
+                    : igSettings.TrailerSearchEnabled
+                        ? await FindNewsVideoAsync(item, content, trailerUrl, ct)
+                        : NewsVideoPlan.None;
+                var candidate = plan.Candidate;
 
                 var clipPath = candidate is null ? null : await trailerService.DownloadAsync(candidate.Url, ct);
 
                 // Respaldo X/Twitter (18-jul-2026): la descarga de YouTube está
                 // bloqueada desde CI (34 combos FAIL) pero X no bloquea a los
                 // runners y los tráilers oficiales también se publican ahí.
-                // Solo cuando YouTube ENCONTRÓ el video y la descarga falló —
-                // si no hubo candidato, la noticia puede no ameritar video.
-                if (clipPath is null && candidate is not null && igSettings.TweetVideoFallback)
+                // Corre siempre que la noticia AMERITE video — aunque la búsqueda
+                // de YouTube no haya dado candidato (hueco real 18-jul: el
+                // opening de Suis/Yorushika existía y los respaldos ni corrieron).
+                if (clipPath is null && plan.WantsVideo && igSettings.TweetVideoFallback)
                 {
                     // 1) El tweet EMBEBIDO en el artículo (kudasai/anmosugoi lo
                     //    traen en los anuncios): procedencia = relevancia, mismo
@@ -380,10 +387,37 @@ public class AnimeNewsPublisherService(
                     if (tweetClip is not null)
                     {
                         logger.LogInformation("AnimeNews: video del post oficial de X como respaldo → {Url}", tweet!.Url);
-                        if (candidate.SubtitlesPath is not null)
+                        if (candidate?.SubtitlesPath is not null)
                             TrailerDownloadService.CleanUp(candidate.SubtitlesPath);
                         candidate = tweet;
                         clipPath = tweetClip;
+                    }
+                }
+
+                // Última red: bilibili (verificado 18-jul: búsqueda y descarga
+                // pasan desde los runners; los PV/openings de anime están casi
+                // todos ahí). Query limpia: obra + "PV" para tráilers, la del
+                // plan (artista+canción) para temas.
+                if (clipPath is null && plan.WantsVideo && igSettings.TweetVideoFallback)
+                {
+                    var obra = TrailerDownloadService.SubjectFromTitle(item.Title);
+                    var biliSubject = $"{plan.Subject} {obra}".Trim();
+                    var biliQuery = plan.Kind == NewsVideoKind.Trailer ? $"{obra} PV" : plan.Query;
+                    if (biliQuery.Trim().Length > 0)
+                    {
+                        logger.LogInformation("AnimeNews: última red — buscando en bilibili → \"{Query}\"", biliQuery);
+                        var bili = await trailerService.SearchAsync(
+                            biliQuery, requireSpanish: false, plan.Kind, biliSubject,
+                            searchPrefix: "bilisearch", ct: ct);
+                        var biliClip = bili is null ? null : await trailerService.DownloadAsync(bili.Url, ct);
+                        if (biliClip is not null)
+                        {
+                            logger.LogInformation("AnimeNews: video de bilibili como última red → {Url}", bili!.Url);
+                            if (candidate?.SubtitlesPath is not null)
+                                TrailerDownloadService.CleanUp(candidate.SubtitlesPath);
+                            candidate = bili;
+                            clipPath = biliClip;
+                        }
                     }
                 }
 
@@ -498,7 +532,7 @@ public class AnimeNewsPublisherService(
     /// canción japonesa o una animación) y el embebido del artículo se rescata
     /// si es un upload oficial. Best-effort → null (slideshow).
     /// </summary>
-    private async Task<TrailerCandidate?> FindNewsVideoAsync(
+    private async Task<NewsVideoPlan> FindNewsVideoAsync(
         AnimeNewsItem item, NewsContent content, string? embeddedUrl, CancellationToken ct)
     {
         string? query = null;
@@ -545,7 +579,7 @@ public class AnimeNewsPublisherService(
                     // La IA decidió que la noticia no amerita video — respetarla,
                     // no caer a la heurística (es menos precisa).
                     logger.LogInformation("AnimeNews: la noticia no amerita video según IA — slideshow");
-                    return null;
+                    return NewsVideoPlan.None;
                 }
                 if (doc.RootElement.TryGetProperty("query", out var q))
                     query = q.GetString();
@@ -572,10 +606,17 @@ public class AnimeNewsPublisherService(
             if (heuristic is null)
             {
                 logger.LogInformation("AnimeNews: el titular no anuncia material audiovisual — slideshow");
-                return null;
+                return NewsVideoPlan.None;
             }
             (query, kind) = heuristic.Value;
         }
+
+        // La noticia AMERITA video: pase lo que pase con YouTube, el plan viaja
+        // al caller para que la escalera de respaldos (tweet del artículo → X
+        // vía IA → bilibili) corra igual — la garantía "si el video existe, el
+        // reel sale con video" depende de esto (hueco real 18-jul: la búsqueda
+        // no dio candidato y los respaldos ni corrieron).
+        var plan = new NewsVideoPlan(null, true, query!, subject, kind);
 
         // ── Temas (opening/ending/MV) y cortos: el video ES la noticia ──────
         // El idioma no aplica (canción japonesa / animación) pero el upload
@@ -590,10 +631,16 @@ public class AnimeNewsPublisherService(
                 logger.LogInformation("AnimeNews: video {Kind} embebido del artículo aceptado (upload oficial)", kind);
             else
             {
+                // Subject COMBINADO artista+obra: los MV oficiales titulan por
+                // el artista (Tanya/MYTH & ROID, 17-jul) y los creditless por
+                // el ANIME (Cat and Dragon/宝島, 18-jul) — con el subject solo
+                // artista, el creditless oficial no matcheaba ni un token y la
+                // relevancia lo tiraba. MentionsSubject acepta ≥2 tokens.
+                var themeSubject = $"{subject} {TrailerDownloadService.SubjectFromTitle(item.Title)}".Trim();
                 logger.LogInformation("AnimeNews: buscando {Kind} en YouTube → \"{Query}\" (obra: {Subject})",
-                    kind, query, subject ?? "(derivada de la query)");
+                    kind, query, themeSubject);
                 candidate = await trailerService.SearchAsync(
-                    query, requireSpanish: false, kind, subject, ct);
+                    query, requireSpanish: false, kind, themeSubject, ct: ct);
 
                 // Escalera: si la query de la IA no encontró candidato, probar la
                 // heurística (obra + palabra de tipo). Una query recargada de
@@ -605,7 +652,7 @@ public class AnimeNewsPublisherService(
                 {
                     logger.LogInformation("AnimeNews: reintento con query heurística → \"{Query}\"", heur.Value.Query);
                     candidate = await trailerService.SearchAsync(
-                        heur.Value.Query, requireSpanish: false, kind, subject, ct);
+                        heur.Value.Query, requireSpanish: false, kind, themeSubject, ct: ct);
                 }
             }
 
@@ -616,14 +663,14 @@ public class AnimeNewsPublisherService(
                 var shortSubs = await trailerService.DownloadSpanishSubtitlesAsync(candidate.Url, ct);
                 if (shortSubs is not null) candidate = candidate with { SubtitlesPath = shortSubs };
             }
-            return candidate;
+            return plan with { Candidate = candidate };
         }
 
         // ── Tráiler: cadena español → cualquier idioma + subs es quemados ───
         logger.LogInformation("AnimeNews: buscando tráiler en YouTube → \"{Query}\" (obra: {Subject})",
             query, subject ?? "(derivada de la query)");
         var spanish = await trailerService.SearchAsync(query, requireSpanish: true, subject: subject, ct: ct);
-        if (spanish is not null) return spanish;
+        if (spanish is not null) return plan with { Candidate = spanish };
 
         // 2do intento: sin versión latina, el tráiler oficial en cualquier
         // idioma — con subtítulos es manuales quemados si existen, y si no, en
@@ -648,13 +695,13 @@ public class AnimeNewsPublisherService(
         }
         if (any is null && embeddedUrl is not null)
             any = await trailerService.ValidateAsync(embeddedUrl, requireSpanish: false, ct: ct);
-        if (any is null) return null;
+        if (any is null) return plan;
 
         var subs = await trailerService.DownloadSpanishSubtitlesAsync(any.Url, ct);
         if (subs is not null)
         {
             logger.LogInformation("AnimeNews: tráiler {Url} con subtítulos es para quemar", any.Url);
-            return any with { SubtitlesPath = subs };
+            return plan with { Candidate = any with { SubtitlesPath = subs } };
         }
 
         // Último recurso (decisión del usuario, jul-2026): el tráiler oficial
@@ -666,13 +713,25 @@ public class AnimeNewsPublisherService(
             logger.LogInformation(
                 "AnimeNews: tráiler {Url} sin versión latina ni subs es — va en idioma original",
                 any.Url);
-            return any;
+            return plan with { Candidate = any };
         }
 
         logger.LogInformation(
             "AnimeNews: tráiler {Url} sin versión latina ni subtítulos manuales en español — slideshow",
             any.Url);
-        return null;
+        return plan;
+    }
+
+    /// <summary>
+    /// Resultado de la decisión de video: si la noticia AMERITA video
+    /// (<see cref="WantsVideo"/>), la query/obra/tipo viajan al caller para que
+    /// la escalera de respaldos (tweet del artículo → X vía IA → bilibili)
+    /// corra aunque YouTube no haya dado candidato.
+    /// </summary>
+    private sealed record NewsVideoPlan(
+        TrailerCandidate? Candidate, bool WantsVideo, string Query, string? Subject, NewsVideoKind Kind)
+    {
+        public static readonly NewsVideoPlan None = new(null, false, "", null, NewsVideoKind.Trailer);
     }
 
     private static NewsVideoKind ParseVideoKind(string? tipo) => tipo?.ToLowerInvariant() switch
