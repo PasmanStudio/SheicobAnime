@@ -70,15 +70,19 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
 
       # yt-dlp para el reel "tráiler + titular" (busca y baja la versión en
-      # español latino del tráiler). pipx viene preinstalado en el runner y trae
-      # la versión actual (la de apt queda vieja y YouTube la rompe).
+      # español latino del tráiler). pipx viene preinstalado en el runner.
       # NOTA (jul-2026, matriz probada en vivo en el workflow yt-diag): el PO
       # token provider (bgutil) y las cookies se ELIMINARON — con android_vr +
       # WARP no hacen falta, y las cookies directamente ROMPEN a android_vr.
-      - name: Install yt-dlp
+      # CANAL NIGHTLY (no stable): los fixes de firma/nsig y SABR de YouTube
+      # salen en nightly ANTES que en stable. La stable 2026.07.04 dejó de bajar
+      # videos (~20-jul: android_vr → "No title found in player responses" + nsig
+      # → HTTP 403) y el reel caía a slideshow en ~13 de 14 corridas. --pre hace
+      # que pip tome el nightly (se publica en PyPI como pre-release).
+      - name: Install yt-dlp (nightly)
         if: env.NEWS_FORMAT != 'post'
         run: |
-          pipx install yt-dlp
+          pipx install --pip-args=--pre "yt-dlp[default]"
           yt-dlp --version
 
       # Cloudflare WARP como salida de yt-dlp: YouTube bloquea por IP a los
@@ -160,7 +164,11 @@ jobs:
           # y cargala como secret GEMINI_API_KEY. Sin ella, el pipeline cae a contenido
           # heurístico limpio (no rompe). Modelo/flags opcionales más abajo.
           Ai__ApiKey:              ${{ secrets.GEMINI_API_KEY }}
-          # Ai__Model:             "gemini-2.0-flash"   # default
+          # Modelo de reescritura. gemini-3.5-flash-lite (GA jul-2026): sucesor
+          # directo del 2.5-flash-lite (el default del código), sigue en la familia
+          # Flash-Lite (free tier), más rápido y con mejor calidad. Si agota la
+          # cuota diaria (429), GeminiClient cae al FallbackModel (Gemma).
+          Ai__Model:               "gemini-3.5-flash-lite"
           # Ai__UseWebSearch:      "true"               # grounding con Google Search
           # ── News settings (optional overrides) ────────────────────────────
           # AnimeNews__MaxPerRun: "1"          # default: 1
