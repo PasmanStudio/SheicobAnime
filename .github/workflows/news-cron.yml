@@ -164,11 +164,12 @@ jobs:
           # y cargala como secret GEMINI_API_KEY. Sin ella, el pipeline cae a contenido
           # heurístico limpio (no rompe). Modelo/flags opcionales más abajo.
           Ai__ApiKey:              ${{ secrets.GEMINI_API_KEY }}
-          # Modelo de reescritura. gemini-3.5-flash-lite (GA jul-2026): sucesor
-          # directo del 2.5-flash-lite (el default del código), sigue en la familia
-          # Flash-Lite (free tier), más rápido y con mejor calidad. Si agota la
-          # cuota diaria (429), GeminiClient cae al FallbackModel (Gemma).
-          Ai__Model:               "gemini-3.5-flash-lite"
+          # Modelo de reescritura. gemini-3.1-flash-lite: más nuevo que el
+          # 2.5-flash-lite (el default del código) y con capa GRATIS real para
+          # texto (15 RPM). Se eligió sobre 3.5-flash-lite porque ese, recién GA,
+          # daba 429 sin cupo free para la key (22-jul-2026, verificado en vivo →
+          # caía a Gemma). Si agota cuota (429), GeminiClient cae al FallbackModel.
+          Ai__Model:               "gemini-3.1-flash-lite"
           # Ai__UseWebSearch:      "true"               # grounding con Google Search
           # ── News settings (optional overrides) ────────────────────────────
           # AnimeNews__MaxPerRun: "1"          # default: 1
