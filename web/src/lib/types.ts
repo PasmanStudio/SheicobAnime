@@ -124,13 +124,6 @@ export interface PaginatedResponse<T> {
   pageSize: number;
 }
 
-/** Entrada mínima de /episodes/sitemap — solo lo que necesita el XML. */
-export interface EpisodeSitemapEntry {
-  seriesSlug: string;
-  episodeNumber: number;
-  createdAt: string;
-}
-
 export interface ApiErrorResponse {
   error: string;
   code: string;
