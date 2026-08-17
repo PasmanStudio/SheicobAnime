@@ -97,15 +97,36 @@ try
         // Convert postgresql:// URI to ADO.NET format (Railway/Supabase use URI format)
         connectionString = NormalizePostgresConnectionString(connectionString);
 
+        // Pool y timeouts explícitos, sobre CUALQUIER formato de entrada.
+        // Antes solo se aplicaban al normalizar una URI, así que un DATABASE_URL
+        // ya en formato ADO.NET quedaba con los defaults de Npgsql (pool 100,
+        // idle lifetime 300s) contra un pooler de Supabase free que admite ~15
+        // conexiones — receta para timeouts de conexión bajo ráfaga.
+        var maxPoolSize = builder.Configuration.GetValue<int?>("DB_MAX_POOL_SIZE") ?? 10;
+        connectionString = ApplyPoolSettings(connectionString, maxPoolSize, "sheicobanime-api");
+
+        // Hangfire abre sus propias conexiones. Npgsql poolea POR connection
+        // string, así que compartir la string significaba compartir el pool: el
+        // polling de Hangfire consumía slots que necesitaban los requests. Con
+        // un Application Name distinto obtiene su propio pool, chico y aislado.
+        var hangfireConnectionString = ApplyPoolSettings(
+            connectionString, maxPoolSize: 4, applicationName: "sheicobanime-hangfire");
+
         builder.Services.AddDbContext<AppDbContext>(options =>
         {
             options.UseNpgsql(connectionString, npgsqlOptions =>
             {
+                // 2 reintentos y no 3, con backoff corto: cada reintento retiene
+                // el slot del pool. Bajo saturación, reintentar agresivamente
+                // empeora la congestión en vez de aliviarla.
                 npgsqlOptions.EnableRetryOnFailure(
-                    maxRetryCount: 3,
-                    maxRetryDelay: TimeSpan.FromSeconds(5),
+                    maxRetryCount: 2,
+                    maxRetryDelay: TimeSpan.FromSeconds(2),
                     errorCodesToAdd: null);
-                npgsqlOptions.CommandTimeout(30);
+                // 15s en vez de 30: el frontend aborta el fetch a los 12s, así
+                // que una query de más de 15s no le sirve a nadie y solo bloquea
+                // una conexión.
+                npgsqlOptions.CommandTimeout(15);
             });
             // Raw-SQL migrations (AddAuthTables, AddDiscordPosts, AddUserWatchlist) don't update
             // the EF snapshot — suppress the PendingModelChangesWarning so `database update` runs.
@@ -122,7 +143,7 @@ try
             .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
             .UseSimpleAssemblyNameTypeSerializer()
             .UseRecommendedSerializerSettings()
-            .UsePostgreSqlStorage(opts => opts.UseNpgsqlConnection(connectionString)));
+            .UsePostgreSqlStorage(opts => opts.UseNpgsqlConnection(hangfireConnectionString)));
     }
 
     // ─── Redis / Cache ───────────────────────────────────
@@ -153,6 +174,13 @@ try
     builder.Services.AddScoped<IValidator<CreateBackfillRequest>, CreateBackfillValidator>();
 
     // ─── Rate Limiting ───────────────────────────────────
+    // OJO con el límite global: el frontend corre en Cloudflare Workers y todo
+    // el tráfico SSR llega desde un puñado de IPs de salida de Cloudflare, así
+    // que TODOS los visitantes caen en la misma partición. Con el viejo límite
+    // de 60/min eso era 1 req/s para el sitio entero: bajo cualquier pico real
+    // los usuarios legítimos comían 429 y la página se rompía. Configurable por
+    // env para poder ajustarlo sin deploy.
+    var globalRateLimit = builder.Configuration.GetValue<int?>("RATE_LIMIT_PER_MINUTE") ?? 240;
     builder.Services.AddRateLimiter(options =>
     {
         options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context =>
@@ -160,7 +188,7 @@ try
                 GetClientIp(context),
                 _ => new SlidingWindowRateLimiterOptions
                 {
-                    PermitLimit = 60,
+                    PermitLimit = globalRateLimit,
                     Window = TimeSpan.FromMinutes(1),
                     SegmentsPerWindow = 6,
                     QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
@@ -275,6 +303,30 @@ try
         await next();
     });
 
+    // ─── Cancelaciones del cliente ≠ errores del servidor ────────────────
+    // Cuando el Worker de Cloudflare (o el navegador) corta el request, EF Core
+    // lanza OperationCanceledException/TaskCanceledException y el pipeline la
+    // convertía en 500: ruido de Errores en los logs, en Sentry, y métricas de
+    // fallas infladas que hacían parecer caído un API que solo tenía clientes
+    // impacientes. 499 ("client closed request") es lo que corresponde, y al no
+    // ser >=500 Serilog lo loguea como Information en vez de Error.
+    // Va DESPUÉS de Serilog/Sentry a propósito: así los ve como un 499 limpio.
+    app.Use(async (context, next) =>
+    {
+        try
+        {
+            await next();
+        }
+        catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
+        {
+            if (!context.Response.HasStarted)
+            {
+                context.Response.Clear();
+                context.Response.StatusCode = 499;
+            }
+        }
+    });
+
     app.UseRateLimiter();
     app.UseCors();
 
@@ -323,15 +375,54 @@ try
     }
     else if (app.Environment.IsProduction())
     {
-        // Apply pending EF migrations on startup (safe — idempotent)
-        using var scope = app.Services.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        await db.Database.MigrateAsync();
-        // Seed reference data (genres) — idempotent, safe to run every startup
-        await SeedData.SeedGenresAsync(db);
-        // Invalidate genres cache so stale empty results don't persist
-        var cache = scope.ServiceProvider.GetRequiredService<ICacheService>();
-        await cache.RemoveAsync("genres:all");
+        // Migración + seed al arrancar, PERO nunca fatal.
+        //
+        // Antes esto era `await db.Database.MigrateAsync()` pelado: si la DB
+        // estaba saturada o lenta en ese instante (justo lo que pasa cuando
+        // Render reinicia la instancia en plena ráfaga de crawlers), la
+        // excepción subía al catch de más afuera, se logueaba "Application
+        // terminated unexpectedly" y el proceso moría — el mail de Render
+        // "Application exited early". Y como al reiniciar la DB seguía
+        // saturada, el arranque volvía a fallar: bucle de reinicios.
+        //
+        // Las migraciones en prod ya están aplicadas en el 99% de los deploys,
+        // así que un fallo transitorio acá no debe impedir que el API sirva
+        // (tiene cache y se recupera solo). Se reintenta con backoff y, si aun
+        // así falla, se loguea el error y se arranca igual.
+        const int maxAttempts = 3;
+        for (var attempt = 1; attempt <= maxAttempts; attempt++)
+        {
+            try
+            {
+                using var scope = app.Services.CreateScope();
+                var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                await db.Database.MigrateAsync();
+                // Seed reference data (genres) — idempotent, safe to run every startup
+                await SeedData.SeedGenresAsync(db);
+                // Invalidate genres cache so stale empty results don't persist
+                var cache = scope.ServiceProvider.GetRequiredService<ICacheService>();
+                await cache.RemoveAsync("genres:all");
+                break;
+            }
+            catch (Exception ex)
+            {
+                if (attempt == maxAttempts)
+                {
+                    Log.Error(ex,
+                        "Migración/seed de arranque falló tras {Attempts} intentos. " +
+                        "El API arranca igual: las migraciones probablemente ya estén " +
+                        "aplicadas y matar el proceso solo provocaría un bucle de reinicios",
+                        maxAttempts);
+                    break;
+                }
+
+                var delay = TimeSpan.FromSeconds(3 * attempt);
+                Log.Warning(ex,
+                    "Migración/seed de arranque falló (intento {Attempt}/{Attempts}), " +
+                    "reintentando en {Delay}s", attempt, maxAttempts, delay.TotalSeconds);
+                await Task.Delay(delay);
+            }
+        }
     }
 
     app.Run();
@@ -393,6 +484,40 @@ public partial class Program
         var port = uri.Port > 0 ? uri.Port : 5432;
         var database = uri.AbsolutePath.TrimStart('/');
 
-        return $"Host={host};Port={port};Database={database};Username={user};Password={pass};SSL Mode=Require;Trust Server Certificate=true;Maximum Pool Size=8";
+        return $"Host={host};Port={port};Database={database};Username={user};Password={pass};SSL Mode=Require;Trust Server Certificate=true";
+    }
+
+    /// <summary>
+    /// Fija pool y timeouts sobre una connection string de Postgres ya normalizada.
+    ///
+    /// Contexto del incidente de ago-2026: ráfagas de crawlers sobre el long tail
+    /// de episodios abrían decenas de requests simultáneos; el pool se quedaba sin
+    /// conexiones libres, abrir una nueva contra el pooler de Supabase tardaba
+    /// segundos y los requests morían con TaskCanceledException dentro de
+    /// NpgsqlConnector.ConnectAsync. Las claves que importan:
+    ///
+    /// - Timeout: 8s para ABRIR (default 15). Fallar rápido evita que se apilen
+    ///   requests esperando una conexión que no va a llegar.
+    /// - Connection Idle Lifetime: 60s (default 300). El pooler de Supabase corta
+    ///   conexiones ociosas por su cuenta; si el pool las retiene más tiempo que
+    ///   el server, entrega conexiones muertas y el request falla al primer uso.
+    /// - Keepalive: 30s para que el pooler no considere ociosa una conexión viva.
+    /// - Application Name: separa pools (Npgsql poolea por connection string) y
+    ///   hace visible en pg_stat_activity quién consume conexiones.
+    /// </summary>
+    internal static string ApplyPoolSettings(string connectionString, int maxPoolSize, string applicationName)
+    {
+        var b = new Npgsql.NpgsqlConnectionStringBuilder(connectionString)
+        {
+            Pooling = true,
+            MaxPoolSize = Math.Clamp(maxPoolSize, 2, 50),
+            MinPoolSize = 0,
+            Timeout = 8,
+            ConnectionIdleLifetime = 60,
+            ConnectionPruningInterval = 10,
+            KeepAlive = 30,
+            ApplicationName = applicationName,
+        };
+        return b.ConnectionString;
     }
 }
