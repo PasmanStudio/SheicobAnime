@@ -48,8 +48,10 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   // ── Recent episode pages ──────────────────────────────────────────────────
   // Señal de frescura: los episodios de la semana con lastmod exacto.
   // La API clampa days a 7 y pageSize a 100 — pedir más no trae más.
-  // El catálogo COMPLETO de episodios vive en /sitemap-episodes/{n}.xml
-  // (listados en robots.txt), no acá.
+  // A propósito NO se listan los ~70k episodios del catálogo: los sitemaps
+  // masivos (/sitemap-episodes/{n}.xml) se dieron de baja en ago-2026 porque el
+  // crawl del long tail 24/7 fundía la cuota de writes de KV y saturaba el API.
+  // Los episodios se indexan por links internos desde /series/{slug}.
   let episodePages: MetadataRoute.Sitemap = [];
   try {
     const episodes = await getRecentEpisodes({ days: 7, pageSize: 100 });

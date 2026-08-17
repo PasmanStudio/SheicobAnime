@@ -2,7 +2,6 @@ import type {
     Episode,
     EpisodeQueryParams,
     EpisodeRatingStats,
-    EpisodeSitemapEntry,
     Genre,
     HealthResponse,
     Mirror,
@@ -229,18 +228,6 @@ export async function getRecentEpisodes(
   // Recent episodes change often — short TTL + tag para refresco on-demand del home.
   return request<Episode[]>(
     `/episodes/recent${toQueryString({ ...params })}`,
-    CONTENT_CACHE
-  );
-}
-
-export async function getEpisodeSitemapPage(
-  page: number,
-  pageSize: number
-): Promise<PaginatedResponse<EpisodeSitemapEntry>> {
-  // Catálogo completo de episodios para los sitemaps (/sitemap-episodes/{n}.xml).
-  // Solo lo piden crawlers — el TTL de CONTENT_CACHE alcanza de sobra.
-  return request<PaginatedResponse<EpisodeSitemapEntry>>(
-    `/episodes/sitemap${toQueryString({ page, pageSize })}`,
     CONTENT_CACHE
   );
 }
