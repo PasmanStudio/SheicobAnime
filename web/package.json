@@ -16,8 +16,8 @@
     "@auth/pg-adapter": "^1.11.2",
     "@sentry/nextjs": "^10.59.0",
     "lucide-react": "^1.8.0",
-    "next": "15.5.18",
-    "next-auth": "^5.0.0-beta.31",
+    "next": "15.5.21",
+    "next-auth": "^5.0.0-beta.32",
     "pg": "^8.21.0",
     "react": "^18",
     "react-dom": "^18"
@@ -30,15 +30,16 @@
     "@types/react-dom": "^18",
     "cross-env": "^10.1.0",
     "eslint": "^8",
-    "eslint-config-next": "15.5.18",
+    "eslint-config-next": "15.5.21",
     "tailwindcss": "^3.4.1",
     "typescript": "^5",
     "wrangler": "^4.100.0"
   },
   "overrides": {
-    "fast-uri": ">=3.1.2",
+    "fast-uri": ">=4.1.2",
     "rollup": ">=4.59.0",
-    "postcss": ">=8.5.10",
-    "uuid": ">=11.0.0"
+    "postcss": ">=8.5.23",
+    "uuid": ">=11.0.0",
+    "sharp": ">=0.35.0"
   }
 }
