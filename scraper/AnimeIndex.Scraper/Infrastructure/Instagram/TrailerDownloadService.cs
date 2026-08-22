@@ -86,16 +86,14 @@ public partial class TrailerDownloadService(
             FileName = string.IsNullOrWhiteSpace(settings.YtDlpPath) ? "yt-dlp" : settings.YtDlpPath,
             // Video H.264 ≤720p + su pista de audio (yt-dlp los muxea con el
             // ffmpeg del sistema); fallbacks progresivos por si el formato
-            // exacto no existe. player_client=android_vr + salida por WARP
-            // (ProxyArg): la ÚNICA combinación que pasa el bot-check de YouTube
-            // desde GitHub Actions (matriz probada en vivo jul-2026 — ojo: las
-            // cookies ROMPEN a android_vr, no agregarlas). Configurable vía
-            // Instagram__YtDlpPlayerClients.
+            // exacto no existe. Clientes por DEFECTO + runtime JS + salida por
+            // WARP (CommonArgs): forzar android_vr murió el 2-ago-2026, cuando
+            // YouTube empezó a exigirle GVS PO token y a devolver 403 en la
+            // descarga (yt-dlp#17348). Configurable vía Instagram__YtDlpPlayerClients.
             Arguments =
                 "-f \"bv*[height<=720][ext=mp4]+ba[ext=m4a]/bv*[height<=720]+ba/b[height<=720]/best\" " +
                 "--merge-output-format mp4 " +
-                $"--extractor-args \"youtube:player_client={settings.YtDlpPlayerClients}\" " +
-                ProxyArg() +
+                CommonArgs(videoUrl) +
                 "--no-playlist --max-filesize 150M --socket-timeout 20 " +
                 $"-o \"{outputPath}\" \"{videoUrl}\"",
             RedirectStandardError = true,
@@ -190,14 +188,16 @@ public partial class TrailerDownloadService(
         {
             FileName = string.IsNullOrWhiteSpace(settings.YtDlpPath) ? "yt-dlp" : settings.YtDlpPath,
             // --flat-playlist: solo metadata de los resultados (rápido, una
-            // sola llamada); la selección del mejor candidato es nuestra.
-            // searchPrefix "bilisearch" = búsqueda en bilibili (última red:
-            // NO bloquea a los runners de CI, verificado 18-jul-2026).
+            // sola llamada); la selección del mejor candidato es nuestra. En
+            // YouTube el plano ya trae título/duración/canal; fuera de YouTube
+            // NO (ver ResolveFlatResultsAsync).
+            // searchPrefix "bilisearch" = búsqueda en bilibili (última red).
+            // OJO: su API de búsqueda es inestable — responde HTTP 412 seguido,
+            // siempre desde las IPs de WARP y a veces también directo (ago-2026).
             Arguments =
                 $"\"{searchPrefix}{SearchResults}:{sanitized}\" " +
-                $"--flat-playlist --print \"%(id)s{FieldSeparator}%(duration)s{FieldSeparator}%(title)s{FieldSeparator}%(channel)s\" " +
-                $"--extractor-args \"youtube:player_client={settings.YtDlpPlayerClients}\" " +
-                ProxyArg() +
+                $"--flat-playlist --print \"%(id)s{FieldSeparator}%(duration)s{FieldSeparator}%(title)s{FieldSeparator}%(channel)s{FieldSeparator}%(url)s\" " +
+                CommonArgs(searchPrefix) +
                 "--no-warnings --socket-timeout 20",
             RedirectStandardError = true,
             RedirectStandardOutput = true,
@@ -244,6 +244,15 @@ public partial class TrailerDownloadService(
                 return null;
             }
 
+            // Fuera de YouTube, --flat-playlist devuelve SOLO id y url: duración,
+            // título y canal llegan "NA" y PickBestSearchResult no puede validar
+            // NADA — la última red de bilibili dio 0 candidatos en 13 de 13
+            // corridas (17-21 ago-2026) por esto. Cada resultado se resuelve
+            // aparte para tener su metadata real (el extractor individual sí
+            // responde; el 412 es de la API de búsqueda).
+            if (!IsYouTube(searchPrefix))
+                lines = await ResolveFlatResultsAsync(lines, ct);
+
             var best = PickBestSearchResult(lines, requireSpanish, kind, subject ?? query);
             if (best is null)
             {
@@ -256,10 +265,13 @@ public partial class TrailerDownloadService(
                 return null;
             }
 
-            logger.LogInformation("Tráiler encontrado por búsqueda: {Id} ({Dur}s) para \"{Query}\"",
-                best.Value.Id, best.Value.DurationSeconds, query);
-            return new TrailerCandidate(
-                $"https://www.youtube.com/watch?v={best.Value.Id}", best.Value.DurationSeconds);
+            // La URL viene del propio resultado (%(url)s). Sintetizar la de
+            // YouTube a partir del id era un bug latente de la red de bilibili:
+            // un id de bilibili producía un watch?v= inexistente.
+            var url = best.Value.Url ?? $"https://www.youtube.com/watch?v={best.Value.Id}";
+            logger.LogInformation("Tráiler encontrado por búsqueda: {Url} ({Dur}s) para \"{Query}\"",
+                url, best.Value.DurationSeconds, query);
+            return new TrailerCandidate(url, best.Value.DurationSeconds);
         }
         catch (System.ComponentModel.Win32Exception)
         {
@@ -301,7 +313,7 @@ public partial class TrailerDownloadService(
     /// "Contratiempo" — todos de canales Warner oficiales, con "tráiler" en el
     /// título y duración de tráiler). Público estático para tests.
     /// </summary>
-    public static (string Id, double DurationSeconds)? PickBestSearchResult(
+    public static (string Id, double DurationSeconds, string? Url)? PickBestSearchResult(
         IReadOnlyList<string> printedLines, bool requireSpanish = true,
         NewsVideoKind kind = NewsVideoKind.Trailer, string? subject = null)
     {
@@ -309,7 +321,7 @@ public partial class TrailerDownloadService(
             ? []
             : SignificantWords(subject).Select(Normalize).ToList();
 
-        (string Id, double Duration)? best = null;
+        (string Id, double Duration, string? Url)? best = null;
         var bestScore = -1;
 
         foreach (var parts in printedLines.Select(line => line.Split(FieldSeparator)))
@@ -321,6 +333,11 @@ public partial class TrailerDownloadService(
             double.TryParse(parts[1], NumberStyles.Any, CultureInfo.InvariantCulture, out var duration);
             var title = parts[2].ToLowerInvariant();
             var channel = parts[3].ToLowerInvariant();
+            // 5to campo opcional (%(url)s): la URL canónica del resultado. Sin
+            // él, el caller sintetiza la de YouTube desde el id.
+            var url = parts.Length > 4 && parts[4].Trim() is { Length: > 0 } u && u != "NA"
+                ? u
+                : null;
 
             // Relevancia: el video tiene que ser DE LA OBRA, no solo "un tráiler
             // oficial en español" — mejor slideshow que la película equivocada
@@ -361,7 +378,7 @@ public partial class TrailerDownloadService(
             if (score > bestScore)
             {
                 bestScore = score;
-                best = (id, duration);
+                best = (id, duration, url);
             }
         }
 
@@ -548,8 +565,7 @@ public partial class TrailerDownloadService(
     {
         var line = await RunYtDlpPrintAsync(
             $"--skip-download --print \"%(id)s{FieldSeparator}%(duration)s{FieldSeparator}%(title)s{FieldSeparator}%(channel)s\" " +
-            $"--extractor-args \"youtube:player_client={settings.YtDlpPlayerClients}\" " +
-            ProxyArg() +
+            CommonArgs(videoUrl) +
             $"--no-warnings --socket-timeout 20 \"{videoUrl}\"", ct);
 
         if (line is null) return null;
@@ -577,11 +593,11 @@ public partial class TrailerDownloadService(
     public async Task<TrailerCandidate?> ValidateOfficialPostAsync(
         string url, string subject, bool requireTrustSignal = true, CancellationToken ct = default)
     {
-        // Sin extractor-args de youtube: la URL es de otra plataforma. El
-        // proxy se mantiene (X funciona directo y vía WARP, probado 18-jul).
+        // CommonArgs se saltea solo el extractor-args de youtube y el proxy: la
+        // URL es de otra plataforma (X anda igual directo que por WARP).
         var line = await RunYtDlpPrintAsync(
             $"--skip-download --print \"%(id)s{FieldSeparator}%(duration)s{FieldSeparator}%(title)s{FieldSeparator}%(uploader)s\" " +
-            ProxyArg() +
+            CommonArgs(url) +
             $"--no-warnings --socket-timeout 20 \"{url}\"", ct);
         if (line is null)
         {
@@ -653,8 +669,7 @@ public partial class TrailerDownloadService(
             // --write-subs = SOLO subtítulos manuales (sin --write-auto-subs)
             Arguments =
                 "--skip-download --write-subs --sub-langs \"es.*\" --sub-format vtt " +
-                $"--extractor-args \"youtube:player_client={settings.YtDlpPlayerClients}\" " +
-                ProxyArg() +
+                CommonArgs(videoUrl) +
                 $"--no-warnings --socket-timeout 20 -P \"{workDir}\" -o subs \"{videoUrl}\"",
             RedirectStandardError = true,
             RedirectStandardOutput = true,
@@ -758,15 +773,92 @@ public partial class TrailerDownloadService(
     }
 
     /// <summary>
-    /// Proxy de salida para TODOS los comandos de yt-dlp. YouTube bloquea por IP
-    /// a los runners de GitHub (confirmado jul-2026: 21/21 configuraciones
-    /// cliente×cookies fallaron con el bot-check); el workflow levanta Cloudflare
-    /// WARP (wgcf + wireproxy → SOCKS5 local) y pasa la URL acá. Vacío = directo.
+    /// Proxy de salida para los comandos de yt-dlp que van A YOUTUBE. YouTube
+    /// bloquea por IP a los runners de GitHub (confirmado jul-2026: 21/21
+    /// configuraciones cliente×cookies fallaron con el bot-check); el workflow
+    /// levanta Cloudflare WARP (wgcf + wireproxy → SOCKS5 local) y pasa la URL
+    /// acá. Vacío = directo.
+    ///
+    /// NO se aplica al resto de las plataformas: bilibili le responde HTTP 412
+    /// (Precondition Failed) a las IPs de WARP y eso mató la última red en 5 de
+    /// 13 corridas (18-21 ago-2026); X anda igual directo que por el túnel.
     /// </summary>
-    private string ProxyArg() =>
-        !string.IsNullOrWhiteSpace(settings.YtDlpProxy)
+    private string ProxyArg(string? target) =>
+        !string.IsNullOrWhiteSpace(settings.YtDlpProxy) && IsYouTube(target)
             ? $"--proxy \"{settings.YtDlpProxy}\" "
             : string.Empty;
+
+    /// <summary>
+    /// ¿El comando apunta a YouTube? <paramref name="target"/> es la URL del
+    /// video o el prefijo de búsqueda ("ytsearch" / "bilisearch"). Público
+    /// estático para tests.
+    /// </summary>
+    public static bool IsYouTube(string? target) =>
+        target is not null
+        && (target.Contains("youtube.com", StringComparison.OrdinalIgnoreCase)
+            || target.Contains("youtu.be", StringComparison.OrdinalIgnoreCase)
+            || target.StartsWith("ytsearch", StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// --extractor-args del player_client, SOLO con uno configurado y destino
+    /// YouTube. Vacío (el default desde ago-2026) = los clientes por defecto de
+    /// yt-dlp, los únicos que bajan sin GVS PO token: forzar android_vr devuelve
+    /// 403 (ver <see cref="InstagramSettings.YtDlpPlayerClients"/>).
+    /// </summary>
+    private string PlayerClientArg(string? target) =>
+        !string.IsNullOrWhiteSpace(settings.YtDlpPlayerClients) && IsYouTube(target)
+            ? $"--extractor-args \"youtube:player_client={settings.YtDlpPlayerClients}\" "
+            : string.Empty;
+
+    /// <summary>
+    /// --js-runtimes: sin runtime JS, yt-dlp no resuelve el "n challenge" de
+    /// YouTube y los clientes por defecto devuelven solo imágenes (extraer sin
+    /// runtime quedó deprecado en ago-2026). Se repite una vez por runtime —
+    /// yt-dlp rechaza la lista separada por comas.
+    /// </summary>
+    private string JsRuntimeArgs() =>
+        string.Concat(settings.YtDlpJsRuntimes
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(runtime => $"--js-runtimes {runtime} "));
+
+    /// <summary>Flags comunes a todo comando de yt-dlp: cliente, runtime JS y proxy.</summary>
+    private string CommonArgs(string? target) =>
+        PlayerClientArg(target) + JsRuntimeArgs() + ProxyArg(target);
+
+    /// <summary>Cuántos resultados planos se resuelven de a uno (cada uno es una llamada).</summary>
+    private const int FlatResolveLimit = 4;
+
+    /// <summary>
+    /// Convierte resultados de búsqueda SIN metadata ("id|~|NA|~|NA|~|NA|~|url",
+    /// lo único que da --flat-playlist fuera de YouTube) en líneas completas,
+    /// resolviendo cada URL por separado. Se capa en <see cref="FlatResolveLimit"/>
+    /// porque cada resolución es una llamada de ~2 s. Los que fallan se descartan.
+    /// </summary>
+    private async Task<string[]> ResolveFlatResultsAsync(string[] flatLines, CancellationToken ct)
+    {
+        var resolved = new List<string>();
+        foreach (var line in flatLines.Take(FlatResolveLimit))
+        {
+            if (ct.IsCancellationRequested) break;
+
+            var parts = line.Split(FieldSeparator);
+            if (parts.Length < 5) continue;
+            var url = parts[4].Trim();
+            if (url.Length == 0 || url == "NA") continue;
+
+            var full = await RunYtDlpPrintAsync(
+                $"--skip-download --print \"%(id)s{FieldSeparator}%(duration)s{FieldSeparator}%(title)s{FieldSeparator}%(uploader)s\" " +
+                CommonArgs(url) +
+                $"--no-warnings --socket-timeout 20 \"{url}\"", ct);
+            // La URL se pega acá y no en la plantilla del --print: un "%" dentro
+            // de la URL lo tomaría yt-dlp como campo a interpolar.
+            if (full is not null) resolved.Add($"{full}{FieldSeparator}{url}");
+        }
+
+        logger.LogInformation("Resultados de búsqueda resueltos con metadata real: {Count}/{Total}",
+            resolved.Count, Math.Min(flatLines.Length, FlatResolveLimit));
+        return [.. resolved];
+    }
 
     /// <summary>Borra el directorio temporal del clip (llamar al terminar de usarlo).</summary>
     public static void CleanUp(string pathInsideWorkDir)

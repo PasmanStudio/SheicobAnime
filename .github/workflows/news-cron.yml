@@ -71,19 +71,34 @@ jobs:
 
       # yt-dlp para el reel "tráiler + titular" (busca y baja la versión en
       # español latino del tráiler). pipx viene preinstalado en el runner.
-      # NOTA (jul-2026, matriz probada en vivo en el workflow yt-diag): el PO
-      # token provider (bgutil) y las cookies se ELIMINARON — con android_vr +
-      # WARP no hacen falta, y las cookies directamente ROMPEN a android_vr.
       # CANAL NIGHTLY (no stable): los fixes de firma/nsig y SABR de YouTube
-      # salen en nightly ANTES que en stable. La stable 2026.07.04 dejó de bajar
-      # videos (~20-jul: android_vr → "No title found in player responses" + nsig
-      # → HTTP 403) y el reel caía a slideshow en ~13 de 14 corridas. --pre hace
-      # que pip tome el nightly (se publica en PyPI como pre-release).
+      # salen en nightly ANTES que en stable. --pre hace que pip tome el nightly
+      # (se publica en PyPI como pre-release).
+      #
+      # NADA de --extractor-args player_client acá (ago-2026): forzar android_vr
+      # murió el 2-ago cuando YouTube empezó a exigirle GVS PO token (yt-dlp#17348)
+      # y a devolver "HTTP Error 403" en la descarga — eso dejó ~60% de los reels
+      # sin video entre el 17 y el 21-ago. Los clientes por DEFECTO de yt-dlp sí
+      # bajan, pero necesitan un runtime JS para resolver el "n challenge": yt-dlp
+      # solo habilita deno por default y el runner no lo trae, así que se instala
+      # (y el código pasa además --js-runtimes node como respaldo).
       - name: Install yt-dlp (nightly)
         if: env.NEWS_FORMAT != 'post'
         run: |
           pipx install --pip-args=--pre "yt-dlp[default]"
           yt-dlp --version
+
+      # Runtime JS para el "n challenge" de YouTube. deno es el que yt-dlp
+      # prioriza; node (preinstalado en el runner) queda de respaldo vía
+      # Instagram__YtDlpJsRuntimes. Best-effort: si la instalación falla, node
+      # alcanza — probado el 22-ago-2026 bajando 720p con --js-runtimes node.
+      - name: Install Deno (runtime JS de yt-dlp)
+        if: env.NEWS_FORMAT != 'post'
+        continue-on-error: true
+        run: |
+          curl -fsSL https://deno.land/install.sh | sh -s -- -y
+          echo "$HOME/.deno/bin" >> "$GITHUB_PATH"
+          "$HOME/.deno/bin/deno" --version | head -1
 
       # Cloudflare WARP como salida de yt-dlp: YouTube bloquea por IP a los
       # runners (confirmado jul-2026: las 21 combinaciones cliente×cookies
@@ -145,8 +160,13 @@ jobs:
           Instagram__IgUserId:     ${{ secrets.INSTAGRAM_IG_USER_ID }}
           Instagram__ImgBbApiKey:  ${{ secrets.IMGBB_API_KEY }}
           # SOCKS5 de WARP (ver paso "Start Cloudflare WARP proxy") — vacío si el
-          # túnel no levantó; el código solo agrega --proxy cuando no está vacío.
+          # túnel no levantó; el código solo agrega --proxy cuando no está vacío
+          # Y el destino es YouTube (bilibili responde 412 a las IPs de WARP).
           Instagram__YtDlpProxy: ${{ env.YTDLP_PROXY }}
+          # Runtimes JS que yt-dlp puede usar para el "n challenge" (ver paso
+          # "Install Deno"). Sin runtime, los clientes por defecto solo devuelven
+          # imágenes. deno lo toma solo; node va explícito como respaldo.
+          Instagram__YtDlpJsRuntimes: "node"
           # ── Cloudinary (host de imágenes preferido — key-auth, sin throttle de IP) ──
           Instagram__CloudinaryCloudName:  ${{ secrets.CLOUDINARY_CLOUD_NAME }}
           Instagram__CloudinaryApiKey:     ${{ secrets.CLOUDINARY_API_KEY }}
