@@ -259,20 +259,59 @@ public class GeminiClient(
     }
 
     /// <summary>
-    /// Recorta la respuesta del modelo al objeto JSON (primer '{' … último '}'),
-    /// quitando antes el fence markdown. Gemma envuelve el JSON en prosa (respuestas
-    /// que arrancan con "*…"), y hasta Gemini con JSON mode devolvió texto extra
+    /// Recorta la respuesta del modelo al primer objeto JSON BALANCEADO, quitando
+    /// antes el fence markdown. Gemma envuelve el JSON en prosa (respuestas que
+    /// arrancan con "*…"), y hasta Gemini con JSON mode devolvió texto extra
     /// después del objeto (visto en prod 16-17 jul-2026: la decisión de video
-    /// parseaba crudo y caía a la heurística en 4 corridas). Sin objeto JSON
-    /// devuelve el texto tal cual (el Parse del caller falla y maneja el error).
-    /// Público estático para tests.
+    /// parseaba crudo y caía a la heurística en 4 corridas).
+    ///
+    /// El balanceo importa: la versión vieja tomaba del primer '{' al ÚLTIMO '}'
+    /// y eso se rompe cuando la prosa trae MÁS de una llave — que es siempre el
+    /// caso con grounding (useWebSearch), donde el modelo devuelve un plan en
+    /// markdown con el JSON entre backticks y encima repite el esquema. Resultado
+    /// en prod: `{"url": null}` + backtick + el resto → JsonReaderException, y la
+    /// búsqueda del video en X falló en 13 de 13 corridas (17-21 ago-2026).
+    ///
+    /// Se prueba cada '{' hasta encontrar uno que cierre balanceado (respetando
+    /// strings y escapes). Sin objeto JSON devuelve el texto tal cual (el Parse
+    /// del caller falla y maneja el error). Público estático para tests.
     /// </summary>
     public static string ExtractJsonObject(string text)
     {
         var t = StripCodeFences(text);
-        var start = t.IndexOf('{');
-        var end   = t.LastIndexOf('}');
-        return start >= 0 && end > start ? t[start..(end + 1)] : t;
+
+        for (var start = t.IndexOf('{'); start >= 0; start = t.IndexOf('{', start + 1))
+        {
+            var end = FindMatchingBrace(t, start);
+            if (end > start) return t[start..(end + 1)];
+        }
+        return t;
+    }
+
+    /// <summary>
+    /// Índice del '}' que cierra el '{' de <paramref name="start"/>, o -1 si el
+    /// objeto queda abierto. Ignora las llaves que viven dentro de un string JSON
+    /// (y los caracteres escapados dentro de ese string).
+    /// </summary>
+    private static int FindMatchingBrace(string text, int start)
+    {
+        var depth = 0;
+        var inString = false;
+        var escaped = false;
+
+        for (var i = start; i < text.Length; i++)
+        {
+            var c = text[i];
+
+            if (escaped) { escaped = false; continue; }
+            if (c == '\\' && inString) { escaped = true; continue; }
+            if (c == '"') { inString = !inString; continue; }
+            if (inString) continue;
+
+            if (c == '{') depth++;
+            else if (c == '}' && --depth == 0) return i;
+        }
+        return -1;
     }
 
     private static string Truncate(string s, int max) =>
