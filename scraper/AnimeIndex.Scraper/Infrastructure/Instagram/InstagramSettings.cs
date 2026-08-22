@@ -75,12 +75,25 @@ public class InstagramSettings
     // Binario de yt-dlp (el workflow lo instala con pipx; en dev local puede faltar).
     public string YtDlpPath { get; set; } = "yt-dlp";
 
-    // player_client de yt-dlp. Matriz probada en vivo desde GitHub Actions
-    // (jul-2026, workflow yt-diag): SOLO "android_vr" + salida por WARP descarga
-    // (2/2 videos); tv / web_safari / web_embedded / default fallan con el
-    // bot-check incluso vía WARP y con cookies. android_vr no requiere PO token
-    // ni login. Si YouTube lo endurece, ajustar acá sin redeploy.
-    public string YtDlpPlayerClients { get; set; } = "android_vr";
+    // player_client de yt-dlp. VACÍO = los clientes por defecto de yt-dlp, que
+    // es lo correcto desde ago-2026: el 2-ago-2026 YouTube empezó a exigirle a
+    // android_vr un GVS PO token (yt-dlp#17348) y sin él descarta TODOS los
+    // formatos https salvo el 18 — que además responde 403 en la descarga.
+    // Reproducido el 22-ago-2026 con la misma nightly de CI desde IP
+    // residencial limpia: android_vr → "ERROR: unable to download video data:
+    // HTTP Error 403"; los clientes por defecto + un runtime JS (ver
+    // YtDlpJsRuntimes) bajan 720p sin PO token. Esto tiró ~60% de los reels sin
+    // video entre el 17 y el 21-ago. Se deja configurable para poder volver a
+    // fijar un cliente sin redeploy si YouTube cambia otra vez.
+    public string YtDlpPlayerClients { get; set; } = string.Empty;
+
+    // Runtimes JS que yt-dlp puede usar para resolver el "n challenge" de
+    // YouTube (EJS). Desde ago-2026 extraer sin runtime está DEPRECADO: sin uno,
+    // los clientes por defecto devuelven "Only images are available". yt-dlp
+    // solo habilita "deno" por default y el runner de GitHub NO lo trae, pero sí
+    // trae node — de ahí el default. La opción se repite por runtime en la línea
+    // de comandos (no acepta lista separada por comas).
+    public string YtDlpJsRuntimes { get; set; } = "node";
 
     // Proxy de salida para yt-dlp (p. ej. "socks5h://127.0.0.1:1080"). YouTube
     // bloquea por IP a los runners de GitHub — confirmado jul-2026: las 21
@@ -88,7 +101,9 @@ public class InstagramSettings
     // a bot". El workflow levanta Cloudflare WARP (wgcf + wireproxy) y pasa el
     // SOCKS5 local acá; la descarga sale por IP de WARP (no-datacenter).
     // Vacío = conexión directa (dev local, donde la IP residencial no está
-    // bloqueada).
+    // bloqueada). SOLO se aplica a URLs de YouTube: bilibili responde HTTP 412
+    // (Precondition Failed) a las IPs de WARP — 5 de 13 corridas de la última
+    // red murieron así entre el 18 y el 21-ago-2026.
     public string YtDlpProxy { get; set; } = string.Empty;
 
     // Máximo de segundos de TRÁILER en el reel (la gente quiere VER el tráiler
