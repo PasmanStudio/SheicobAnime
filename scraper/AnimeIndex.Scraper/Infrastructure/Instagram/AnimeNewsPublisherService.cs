@@ -576,17 +576,33 @@ public class AnimeNewsPublisherService(
                 using var doc = System.Text.Json.JsonDocument.Parse(GeminiClient.ExtractJsonObject(response));
                 if (!doc.RootElement.TryGetProperty("buscar", out var buscar) || !buscar.GetBoolean())
                 {
-                    // La IA decidió que la noticia no amerita video — respetarla,
-                    // no caer a la heurística (es menos precisa).
-                    logger.LogInformation("AnimeNews: la noticia no amerita video según IA — slideshow");
-                    return NewsVideoPlan.None;
+                    // La IA dice que no amerita video. Se la respeta SALVO que el
+                    // titular anuncie material audiovisual explícito: "Orbitals
+                    // estrena video musical junto con detalles de vinilo con
+                    // opening y ending" recibió buscar:false y el reel salió sin
+                    // video (18-ago-2026). Peor todavía, ese camino dejaba
+                    // WantsVideo=false y salteaba TODA la escalera de respaldos.
+                    var announced = HeuristicVideoQuery(item.Title);
+                    if (announced is null)
+                    {
+                        logger.LogInformation("AnimeNews: la noticia no amerita video según IA — slideshow");
+                        return NewsVideoPlan.None;
+                    }
+
+                    logger.LogInformation(
+                        "AnimeNews: la IA dijo que no amerita video pero el titular anuncia {Kind} — se busca igual → \"{Query}\"",
+                        announced.Value.Kind, announced.Value.Query);
+                    (query, kind) = announced.Value;
                 }
-                if (doc.RootElement.TryGetProperty("query", out var q))
-                    query = q.GetString();
-                if (doc.RootElement.TryGetProperty("obra", out var o))
-                    subject = o.GetString();
-                if (doc.RootElement.TryGetProperty("tipo", out var tipo))
-                    kind = ParseVideoKind(tipo.GetString());
+                else
+                {
+                    if (doc.RootElement.TryGetProperty("query", out var q))
+                        query = q.GetString();
+                    if (doc.RootElement.TryGetProperty("obra", out var o))
+                        subject = o.GetString();
+                    if (doc.RootElement.TryGetProperty("tipo", out var tipo))
+                        kind = ParseVideoKind(tipo.GetString());
+                }
             }
             catch (Exception ex) when (!ct.IsCancellationRequested)
             {

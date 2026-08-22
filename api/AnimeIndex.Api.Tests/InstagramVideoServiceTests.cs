@@ -946,3 +946,124 @@ public class PhotoQualityGateTests
         Assert.False(AnimeNewsImageService.IsUsablePhoto(banner));
     }
 }
+
+/// <summary>
+/// Regresiones del post-mortem del 22-ago-2026: entre el 17 y el 21 de agosto
+/// solo 3 de 22 reels salieron con video incrustado. Cada test de acá cubre uno
+/// de los cuatro cortes encontrados en los logs de news-cron.
+/// </summary>
+public class NewsReelVideoRegressionTests
+{
+    [Fact]
+    public void ExtractJsonObject_TakesFirstBalancedObject_GroundedProseRealCase()
+    {
+        // Forma REAL de la respuesta de Gemini CON GROUNDING (useWebSearch:true)
+        // en FindTweetVideoAsync: un plan en markdown, el JSON entre backticks y
+        // el esquema repetido más abajo. Con "primer '{' … último '}'" el recorte
+        // se comía el backtick y el esquema → JsonReaderException, y la búsqueda
+        // del video en X falló en 13 de 13 corridas.
+        const string grounded = """
+            *   Task: Find an official X post containing a promotional video.
+            *   Result: no official post with an uploaded video was found.
+            *   Output: `{"url": null}`
+            *   Schema reminder: {"url": "https://x.com/<cuenta>/status/<id>"}
+            """;
+
+        var json = AnimeIndex.Scraper.Infrastructure.AiRewrite.GeminiClient.ExtractJsonObject(grounded);
+
+        Assert.Equal("""{"url": null}""", json);
+        using var doc = System.Text.Json.JsonDocument.Parse(json);
+        Assert.Equal(System.Text.Json.JsonValueKind.Null, doc.RootElement.GetProperty("url").ValueKind);
+    }
+
+    [Fact]
+    public void ExtractJsonObject_HandlesNestedObjectsAndBracesInsideStrings()
+    {
+        // Objeto anidado: el cierre balanceado tiene que ser el ÚLTIMO, no el primero
+        var nested = AnimeIndex.Scraper.Infrastructure.AiRewrite.GeminiClient.ExtractJsonObject(
+            """Respuesta: {"a": {"b": 1}, "c": 2} — listo.""");
+        Assert.Equal("""{"a": {"b": 1}, "c": 2}""", nested);
+
+        // Llaves DENTRO de un string JSON no cuentan como estructura
+        var inString = AnimeIndex.Scraper.Infrastructure.AiRewrite.GeminiClient.ExtractJsonObject(
+            """prosa {"query": "Solo Leveling {temporada 2}"} fin""");
+        using var doc = System.Text.Json.JsonDocument.Parse(inString);
+        Assert.Equal("Solo Leveling {temporada 2}", doc.RootElement.GetProperty("query").GetString());
+    }
+
+    [Fact]
+    public void ExtractJsonObject_StillHandlesFencedAndCleanResponses()
+    {
+        // Los casos que ya andaban no se rompen
+        Assert.Equal("""{"buscar": true}""",
+            AnimeIndex.Scraper.Infrastructure.AiRewrite.GeminiClient.ExtractJsonObject(
+                "```json\n{\"buscar\": true}\n```"));
+        Assert.Equal("""{"buscar": false}""",
+            AnimeIndex.Scraper.Infrastructure.AiRewrite.GeminiClient.ExtractJsonObject(
+                """{"buscar": false}"""));
+    }
+
+    [Fact]
+    public void HeuristicVideoQuery_CatchesTheMusicVideoHeadlineTheAiRejected()
+    {
+        // Caso REAL (run 32196646313, 18-ago-2026): la IA respondió buscar:false
+        // para un titular que anuncia un video musical, el reel salió sin video y
+        // además se saltearon todos los respaldos. La heurística sí lo detecta —
+        // por eso ahora vetea al "no amerita video" de la IA.
+        var plan = AnimeNewsPublisherService.HeuristicVideoQuery(
+            "Orbitals estrena video musical junto con detalles de vinilo con opening y ending");
+
+        Assert.NotNull(plan);
+        Assert.Equal(NewsVideoKind.ThemeSong, plan!.Value.Kind);
+        Assert.Contains("Orbitals", plan.Value.Query);
+    }
+
+    [Fact]
+    public void PickBestSearchResult_UsesTheResultsOwnUrl_NotASynthesizedYouTubeOne()
+    {
+        // La última red de bilibili sintetizaba "youtube.com/watch?v={id}" con un
+        // id de bilibili → URL inexistente. Con el 5º campo (%(url)s) la URL sale
+        // del propio resultado.
+        var best = TrailerDownloadService.PickBestSearchResult(
+            ["BV1xx411c7mD|~|91|~|Cyberpunk Edgerunners 2 PV|~|Netflix|~|https://www.bilibili.com/video/BV1xx411c7mD"],
+            requireSpanish: false, subject: "Cyberpunk Edgerunners");
+
+        Assert.Equal("https://www.bilibili.com/video/BV1xx411c7mD", best?.Url);
+    }
+
+    [Fact]
+    public void PickBestSearchResult_WithoutUrlField_LeavesUrlNullForTheCallerToSynthesize()
+    {
+        // Las líneas de 4 campos (todo lo previo al 5º) siguen andando
+        var best = TrailerDownloadService.PickBestSearchResult(
+            ["dR7DW4ykE8k|~|131|~|Solo Leveling en ESPAÑOL | TRÁILER OFICIAL|~|Crunchyroll en Español"]);
+
+        Assert.Equal("dR7DW4ykE8k", best?.Id);
+        Assert.Null(best?.Url);
+    }
+
+    [Fact]
+    public void PickBestSearchResult_RejectsFlatBilibiliResultsWithNoMetadata()
+    {
+        // Lo que --flat-playlist devuelve en bilibili: id y url, todo lo demás
+        // "NA". Sin resolver cada resultado no hay nada que validar — eso dio 0
+        // candidatos en 13 de 13 corridas de la última red.
+        Assert.Null(TrailerDownloadService.PickBestSearchResult(
+        [
+            "117130452276756|~|NA|~|NA|~|NA|~|http://www.bilibili.com/video/av117130452276756",
+            "116734694595453|~|NA|~|NA|~|NA|~|http://www.bilibili.com/video/av116734694595453",
+        ], requireSpanish: false, subject: "Cyberpunk Edgerunners"));
+    }
+
+    [Theory]
+    // El proxy de WARP y el player_client de YouTube solo valen para YouTube
+    [InlineData("https://www.youtube.com/watch?v=SyeHKMfswHk", true)]
+    [InlineData("https://youtu.be/SyeHKMfswHk", true)]
+    [InlineData("ytsearch", true)]
+    [InlineData("bilisearch", false)]
+    [InlineData("https://www.bilibili.com/video/BV1xx411c7mD", false)]
+    [InlineData("https://x.com/crunchyroll_la/status/1234567890123", false)]
+    [InlineData(null, false)]
+    public void IsYouTube_GatesTheWarpProxyAndPlayerClient(string? target, bool expected)
+        => Assert.Equal(expected, TrailerDownloadService.IsYouTube(target));
+}
