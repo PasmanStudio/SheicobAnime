@@ -37,7 +37,10 @@ jobs:
   news:
     name: Post anime news
     runs-on: ubuntu-latest
-    timeout-minutes: 10   # safety cap — normal run is ~3–5 min
+    # Safety cap — una corrida normal son ~3–5 min. Se subió de 10 a 12: el
+    # arranque de WARP ahora reintenta y puede sumar hasta 90 s en el peor caso
+    # (y con 10 min ya se habían cancelado corridas: 18 y 19-ago-2026).
+    timeout-minutes: 12
 
     steps:
       # Cada horario del cron publica un formato fijo: los de las 16 y 18 UTC
@@ -123,16 +126,60 @@ jobs:
             "https://github.com/whyvl/wireproxy/releases/download/v1.1.2/wireproxy_linux_amd64.tar.gz"
           tar -xzf wireproxy.tar.gz
           printf '%s\n\n[Socks5]\nBindAddress = 127.0.0.1:1080\n' "$WARP_WIREGUARD_CONFIG" > wp.conf
-          nohup ./wireproxy -c wp.conf > wireproxy.log 2>&1 &
-          sleep 3
-          WARP_IP=$(curl -s -m 15 --proxy socks5h://127.0.0.1:1080 ifconfig.me || true)
-          if [ -n "$WARP_IP" ]; then
-            echo "WARP arriba (IP de salida: $WARP_IP)"
-            echo "YTDLP_PROXY=socks5h://127.0.0.1:1080" >> "$GITHUB_ENV"
-          else
-            echo "WARP no respondió — yt-dlp corre directo (slideshow probable)"
-            tail -5 wireproxy.log || true
+
+          # El handshake de WireGuard NO es instantáneo y a veces se pierde: el
+          # 22-ago-2026 a las 17:14 UTC wireproxy mandó 3 handshake initiations
+          # (17:15:02, :07, :12) sin respuesta y el paso —que asumía 3 s y hacía
+          # un solo curl— se rindió a los ~18 s. Ese reel salió sin video.
+          # Ahora se SONDEA hasta 30 s por intento y se reintenta 3 veces
+          # reiniciando el túnel, que es lo que fuerza un handshake nuevo (y de
+          # paso puede caer en otra IP de salida).
+          # El techo total es 90 s a propósito: un handshake que anda resuelve en
+          # <2 s, así que esperar más no compra nada y el job tiene un cap de 12 min.
+          start_warp() {
+            pkill -f '[w]ireproxy' 2>/dev/null || true
+            nohup ./wireproxy -c wp.conf > "wireproxy-$1.log" 2>&1 &
+            local deadline=$((SECONDS + 30))
+            while [ "$SECONDS" -lt "$deadline" ]; do
+              WARP_IP=$(curl -s -m 5 --proxy socks5h://127.0.0.1:1080 ifconfig.me || true)
+              if [ -n "$WARP_IP" ]; then return 0; fi
+              sleep 1
+            done
+            return 1
+          }
+
+          for attempt in 1 2 3; do
+            if start_warp "$attempt"; then
+              echo "WARP arriba en el intento $attempt (IP de salida: $WARP_IP)"
+              echo "YTDLP_PROXY=socks5h://127.0.0.1:1080" >> "$GITHUB_ENV"
+              exit 0
+            fi
+            echo "intento $attempt: WARP no respondió"
+            tail -3 "wireproxy-$attempt.log" || true
+          done
+          echo "WARP no levantó tras 3 intentos — yt-dlp corre directo (slideshow probable)"
+
+      # Cookies de YouTube: el remedio documentado para el bot-check "Sign in to
+      # confirm you're not a bot", que es lo ÚNICO que sigue tirando reels sin
+      # video una vez muerto el 403 del PO token. Pega aunque WARP esté arriba,
+      # cuando la IP de salida del túnel viene flagueada (22-ago-2026 23:17 UTC).
+      # Se habían sacado en jul-2026 porque ROMPÍAN a android_vr — ese cliente ya
+      # no se usa (ver "Install yt-dlp"), así que el motivo dejó de aplicar.
+      # Best-effort: sin el secret, o con las cookies vencidas, yt-dlp se comporta
+      # igual que hoy — nunca empeora.
+      - name: Write YouTube cookies
+        if: env.NEWS_FORMAT != 'post'
+        env:
+          YOUTUBE_COOKIES: ${{ secrets.YOUTUBE_COOKIES }}
+        run: |
+          if [ -z "$YOUTUBE_COOKIES" ]; then
+            echo "sin secret YOUTUBE_COOKIES — yt-dlp corre sin cookies"
+            exit 0
           fi
+          printf '%s' "$YOUTUBE_COOKIES" > "$RUNNER_TEMP/yt-cookies.txt"
+          chmod 600 "$RUNNER_TEMP/yt-cookies.txt"
+          echo "YTDLP_COOKIES=$RUNNER_TEMP/yt-cookies.txt" >> "$GITHUB_ENV"
+          echo "cookies escritas ($(wc -l < "$RUNNER_TEMP/yt-cookies.txt") líneas)"
 
       - name: Cache NuGet packages
         uses: actions/cache@v4
@@ -167,6 +214,9 @@ jobs:
           # "Install Deno"). Sin runtime, los clientes por defecto solo devuelven
           # imágenes. deno lo toma solo; node va explícito como respaldo.
           Instagram__YtDlpJsRuntimes: "node"
+          # Cookies de YouTube (ver paso "Write YouTube cookies") — vacío si no
+          # hay secret. Solo se mandan a YouTube, nunca a bilibili ni a X.
+          Instagram__YtDlpCookiesPath: ${{ env.YTDLP_COOKIES }}
           # ── Cloudinary (host de imágenes preferido — key-auth, sin throttle de IP) ──
           Instagram__CloudinaryCloudName:  ${{ secrets.CLOUDINARY_CLOUD_NAME }}
           Instagram__CloudinaryApiKey:     ${{ secrets.CLOUDINARY_API_KEY }}
