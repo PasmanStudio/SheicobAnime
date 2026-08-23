@@ -1067,3 +1067,51 @@ public class NewsReelVideoRegressionTests
     public void IsYouTube_GatesTheWarpProxyAndPlayerClient(string? target, bool expected)
         => Assert.Equal(expected, TrailerDownloadService.IsYouTube(target));
 }
+
+/// <summary>
+/// Regresiones del segundo post-mortem (22-ago-2026, ya con el fix del PO token
+/// en prod): de 5 corridas de reel, 3 salieron con video y las 2 que fallaron
+/// fueron por el bot-check de YouTube a nivel IP — una con WARP caído y otra con
+/// WARP arriba pero la IP de salida flagueada.
+/// </summary>
+public class YtDlpCookiesTests
+{
+    [Fact]
+    public void CookiesUsable_OnlyForYouTube_NeverForBilibiliOrX()
+    {
+        var jar = Path.Combine(Path.GetTempPath(), $"yt-cookies-{Guid.NewGuid():N}.txt");
+        File.WriteAllText(jar, "# Netscape HTTP Cookie File\n");
+        try
+        {
+            // YouTube: sí — es donde pega el bot-check
+            Assert.True(TrailerDownloadService.CookiesUsable(jar, "https://www.youtube.com/watch?v=SyeHKMfswHk"));
+            Assert.True(TrailerDownloadService.CookiesUsable(jar, "https://youtu.be/SyeHKMfswHk"));
+            Assert.True(TrailerDownloadService.CookiesUsable(jar, "ytsearch"));
+
+            // Fuera de YouTube: NUNCA. Las cookies de sesión no tienen por qué
+            // viajar a bilibili ni a X.
+            Assert.False(TrailerDownloadService.CookiesUsable(jar, "bilisearch"));
+            Assert.False(TrailerDownloadService.CookiesUsable(jar, "https://www.bilibili.com/video/BV1xx411c7mD"));
+            Assert.False(TrailerDownloadService.CookiesUsable(jar, "https://x.com/crunchyroll_la/status/1234567890123"));
+            Assert.False(TrailerDownloadService.CookiesUsable(jar, null));
+        }
+        finally { File.Delete(jar); }
+    }
+
+    [Fact]
+    public void CookiesUsable_FalseWhenNotConfiguredOrFileMissing()
+    {
+        const string yt = "https://www.youtube.com/watch?v=SyeHKMfswHk";
+
+        // Sin configurar (el caso de dev local y el de CI sin el secret)
+        Assert.False(TrailerDownloadService.CookiesUsable(null, yt));
+        Assert.False(TrailerDownloadService.CookiesUsable("", yt));
+        Assert.False(TrailerDownloadService.CookiesUsable("   ", yt));
+
+        // Configurado pero el archivo no está: correr igual SIN cookies. Pasarle
+        // a yt-dlp un --cookies inexistente lo hace abortar, y eso convertiría un
+        // paso best-effort del workflow en una falla dura del reel.
+        Assert.False(TrailerDownloadService.CookiesUsable(
+            Path.Combine(Path.GetTempPath(), $"no-existe-{Guid.NewGuid():N}.txt"), yt));
+    }
+}
