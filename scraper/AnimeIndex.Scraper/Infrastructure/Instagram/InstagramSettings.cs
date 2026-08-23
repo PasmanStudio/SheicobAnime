@@ -87,6 +87,16 @@ public class InstagramSettings
     // fijar un cliente sin redeploy si YouTube cambia otra vez.
     public string YtDlpPlayerClients { get; set; } = string.Empty;
 
+    // Archivo de cookies de YouTube (formato Netscape) para yt-dlp. Es el
+    // remedio documentado para el bot-check "Sign in to confirm you're not a
+    // bot", que quedó como ÚNICA causa de reels sin video una vez muerto el 403
+    // del PO token: pega aunque WARP esté arriba, cuando la IP de salida del
+    // túnel viene flagueada (22-ago-2026). Se habían sacado en jul-2026 porque
+    // ROMPÍAN a android_vr — ese cliente ya no se usa, así que el motivo no
+    // aplica más. SOLO se mandan a YouTube (ver IsYouTube): las cookies de
+    // sesión no tienen por qué viajar a bilibili ni a X. Vacío = sin cookies.
+    public string YtDlpCookiesPath { get; set; } = string.Empty;
+
     // Runtimes JS que yt-dlp puede usar para resolver el "n challenge" de
     // YouTube (EJS). Desde ago-2026 extraer sin runtime está DEPRECADO: sin uno,
     // los clientes por defecto devuelven "Only images are available". yt-dlp

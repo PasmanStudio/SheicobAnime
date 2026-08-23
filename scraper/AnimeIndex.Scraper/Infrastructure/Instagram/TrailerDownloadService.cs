@@ -821,9 +821,41 @@ public partial class TrailerDownloadService(
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Select(runtime => $"--js-runtimes {runtime} "));
 
-    /// <summary>Flags comunes a todo comando de yt-dlp: cliente, runtime JS y proxy.</summary>
+    /// <summary>
+    /// --cookies, SOLO para YouTube y solo si el archivo existe. Es lo que
+    /// destraba el bot-check "Sign in to confirm you're not a bot" cuando la IP
+    /// de salida de WARP viene flagueada. Se limita a YouTube a propósito: las
+    /// cookies de sesión no tienen por qué viajar a bilibili ni a X. Un path
+    /// configurado pero inexistente hace que yt-dlp aborte, así que se chequea.
+    /// </summary>
+    private string CookiesArg(string? target)
+    {
+        if (string.IsNullOrWhiteSpace(settings.YtDlpCookiesPath) || !IsYouTube(target))
+            return string.Empty;
+
+        if (!CookiesUsable(settings.YtDlpCookiesPath, target))
+        {
+            logger.LogWarning("Cookies de YouTube configuradas pero el archivo no existe: {Path}",
+                settings.YtDlpCookiesPath);
+            return string.Empty;
+        }
+        return $"--cookies \"{settings.YtDlpCookiesPath}\" ";
+    }
+
+    /// <summary>
+    /// ¿Corresponde mandar cookies en este comando? Path configurado + destino
+    /// YouTube + archivo existente (un path configurado pero inexistente hace
+    /// que yt-dlp aborte con error, así que sin archivo se corre sin cookies).
+    /// Público estático para tests.
+    /// </summary>
+    public static bool CookiesUsable(string? cookiesPath, string? target) =>
+        !string.IsNullOrWhiteSpace(cookiesPath)
+        && IsYouTube(target)
+        && File.Exists(cookiesPath);
+
+    /// <summary>Flags comunes a todo comando de yt-dlp: cliente, runtime JS, cookies y proxy.</summary>
     private string CommonArgs(string? target) =>
-        PlayerClientArg(target) + JsRuntimeArgs() + ProxyArg(target);
+        PlayerClientArg(target) + JsRuntimeArgs() + CookiesArg(target) + ProxyArg(target);
 
     /// <summary>Cuántos resultados planos se resuelven de a uno (cada uno es una llamada).</summary>
     private const int FlatResolveLimit = 4;
