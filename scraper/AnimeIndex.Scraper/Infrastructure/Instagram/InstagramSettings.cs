@@ -87,6 +87,19 @@ public class InstagramSettings
     // fijar un cliente sin redeploy si YouTube cambia otra vez.
     public string YtDlpPlayerClients { get; set; } = string.Empty;
 
+    // player_client para el REINTENTO tras un bot-check. Repetir el mismo
+    // comando rinde poco: el bloqueo va por (cliente, video, IP) y el
+    // 24-ago-2026 los dos intentos idénticos de Tokyo Revengers comieron el
+    // mismo "Sign in to confirm you're not a bot". web_embedded ataca el player
+    // por otra vía y resuelve 720p igual que los clientes por defecto
+    // (verificado 24-ago-2026 con la nightly de CI). Vacío = reintento igual.
+    public string YtDlpRetryPlayerClients { get; set; } = "web_embedded";
+
+    // Cuántos candidatos de la búsqueda se intentan bajar antes de rendirse.
+    // Cada intento fallido cuesta ~3 s, así que 4 acota el peor caso a ~25 s
+    // sin dejar de cubrir el caso real (6 tráilers válidos, el 1ro bloqueado).
+    public int MaxVideoCandidates { get; set; } = 4;
+
     // Archivo de cookies de YouTube (formato Netscape) para yt-dlp. Es el
     // remedio documentado para el bot-check "Sign in to confirm you're not a
     // bot", que quedó como ÚNICA causa de reels sin video una vez muerto el 403

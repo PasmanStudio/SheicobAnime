@@ -1,4 +1,4 @@
-using Microsoft.Extensions.Logging;
+﻿using Microsoft.Extensions.Logging;
 using System.Diagnostics;
 using System.Globalization;
 using System.Linq;
@@ -66,16 +66,24 @@ public partial class TrailerDownloadService(
     /// </summary>
     public async Task<string?> DownloadAsync(string videoUrl, CancellationToken ct = default)
     {
-        var (path, retryable) = await DownloadOnceAsync(videoUrl, ct);
+        var (path, retryable) = await DownloadOnceAsync(videoUrl, null, ct);
         if (path is not null || !retryable) return path;
 
-        logger.LogInformation("Reintentando descarga tras bloqueo transitorio de YouTube: {Url}", videoUrl);
+        // El reintento va con OTRO set de clientes: el bot-check se aplica por
+        // (cliente, video, IP), asi que repetir el MISMO comando rinde poco --
+        // el 24-ago-2026 los dos intentos identicos del trailer de Tokyo
+        // Revengers comieron el mismo "Sign in to confirm you're not a bot".
+        var retryClients = settings.YtDlpRetryPlayerClients;
+        logger.LogInformation(
+            "Reintentando descarga tras bloqueo transitorio de YouTube (clientes: {Clients}): {Url}",
+            string.IsNullOrWhiteSpace(retryClients) ? "los mismos" : retryClients, videoUrl);
         await Task.Delay(TimeSpan.FromSeconds(8), ct);
-        return (await DownloadOnceAsync(videoUrl, ct)).Path;
+        return (await DownloadOnceAsync(videoUrl, retryClients, ct)).Path;
     }
 
     /// <summary>Un intento de descarga; Retryable = el fallo fue bot-check/403 (transitorio).</summary>
-    private async Task<(string? Path, bool Retryable)> DownloadOnceAsync(string videoUrl, CancellationToken ct)
+    private async Task<(string? Path, bool Retryable)> DownloadOnceAsync(
+        string videoUrl, string? playerClientsOverride, CancellationToken ct)
     {
         var workDir = Path.Join(Path.GetTempPath(), $"ig-trailer-{Guid.NewGuid():N}");
         Directory.CreateDirectory(workDir);
@@ -93,7 +101,7 @@ public partial class TrailerDownloadService(
             Arguments =
                 "-f \"bv*[height<=720][ext=mp4]+ba[ext=m4a]/bv*[height<=720]+ba/b[height<=720]/best\" " +
                 "--merge-output-format mp4 " +
-                CommonArgs(videoUrl) +
+                CommonArgs(videoUrl, playerClientsOverride) +
                 "--no-playlist --max-filesize 150M --socket-timeout 20 " +
                 $"-o \"{outputPath}\" \"{videoUrl}\"",
             RedirectStandardError = true,
@@ -162,9 +170,27 @@ public partial class TrailerDownloadService(
     // ── Búsqueda del tráiler en YouTube ──────────────────────────────────────
 
     /// <summary>
+    /// El MEJOR candidato de la búsqueda, o null. Envoltorio de
+    /// <see cref="SearchManyAsync"/> para los llamadores que solo quieren uno.
+    /// </summary>
+    public async Task<TrailerCandidate?> SearchAsync(
+        string query, bool requireSpanish = true,
+        NewsVideoKind kind = NewsVideoKind.Trailer, string? subject = null,
+        string searchPrefix = "ytsearch",
+        CancellationToken ct = default)
+        => (await SearchManyAsync(query, requireSpanish, kind, subject, searchPrefix, ct))
+            .FirstOrDefault();
+
+    /// <summary>
     /// Busca el video en YouTube (ytsearch de yt-dlp, sin descargar nada) y
-    /// devuelve el mejor candidato (URL + duración), o null si ninguno da
-    /// confianza. <paramref name="requireSpanish"/>=false relaja el requisito
+    /// devuelve TODOS los candidatos confiables, del mejor al peor (lista vacía
+    /// si ninguno da confianza). Devuelve varios a propósito: el caller baja por
+    /// la lista hasta que uno se descargue, porque el mejor candidato puede
+    /// morir por causas ajenas a su calidad — bot-check de YouTube, video
+    /// borrado, region-lock o age-gate. Quedarse con uno solo tiró el reel de
+    /// Tokyo Revengers del 24-ago-2026: había 6 tráilers válidos y solo se
+    /// probó el primero.
+    /// <paramref name="requireSpanish"/>=false relaja el requisito
     /// de idioma (tráiler oficial en cualquier idioma al que después se le
     /// queman subtítulos es, o un opening/corto donde el idioma no aplica —
     /// en ese modo el upload tiene que ser OFICIAL). <paramref name="kind"/>
@@ -174,7 +200,7 @@ public partial class TrailerDownloadService(
     /// buen match con tráilers populares de cine que pasan todos los otros
     /// filtros. Mismo best-effort que la descarga.
     /// </summary>
-    public async Task<TrailerCandidate?> SearchAsync(
+    public async Task<IReadOnlyList<TrailerCandidate>> SearchManyAsync(
         string query, bool requireSpanish = true,
         NewsVideoKind kind = NewsVideoKind.Trailer, string? subject = null,
         string searchPrefix = "ytsearch",
@@ -182,7 +208,7 @@ public partial class TrailerDownloadService(
     {
         // Las comillas romperían el parseo de argumentos del proceso
         var sanitized = query.Replace('"', ' ').Trim();
-        if (sanitized.Length == 0) return null;
+        if (sanitized.Length == 0) return [];
 
         var psi = new ProcessStartInfo
         {
@@ -229,7 +255,7 @@ public partial class TrailerDownloadService(
                 catch (InvalidOperationException) { /* ya salió */ }
                 catch (System.ComponentModel.Win32Exception) { /* best-effort */ }
                 logger.LogWarning("yt-dlp search timeout para \"{Query}\" — reel cae a slideshow", query);
-                return null;
+                return [];
             }
 
             var lines = stdout.ToString()
@@ -241,7 +267,7 @@ public partial class TrailerDownloadService(
                 if (tail.Length > 400) tail = tail[^400..];
                 logger.LogWarning("yt-dlp search falló (exit {Code}) para \"{Query}\": {Err}",
                     process.ExitCode, query, tail);
-                return null;
+                return [];
             }
 
             // Fuera de YouTube, --flat-playlist devuelve SOLO id y url: duración,
@@ -253,8 +279,8 @@ public partial class TrailerDownloadService(
             if (!IsYouTube(searchPrefix))
                 lines = await ResolveFlatResultsAsync(lines, ct);
 
-            var best = PickBestSearchResult(lines, requireSpanish, kind, subject ?? query);
-            if (best is null)
+            var ranked = PickRankedSearchResults(lines, requireSpanish, kind, subject ?? query);
+            if (ranked.Count == 0)
             {
                 // Los resultados evaluados van al log: sin ellos los post-mortems
                 // de "por qué este reel salió sin video" son a ciegas (jul-2026)
@@ -262,26 +288,32 @@ public partial class TrailerDownloadService(
                     "Búsqueda de {Kind} sin candidato confiable{Lang} para \"{Query}\" ({Count} resultados): {Results}",
                     kind, requireSpanish ? " en español" : "", query, lines.Length,
                     string.Join(" ∥ ", lines.Select(l => l.Length > 110 ? l[..110] : l)));
-                return null;
+                return [];
             }
 
             // La URL viene del propio resultado (%(url)s). Sintetizar la de
             // YouTube a partir del id era un bug latente de la red de bilibili:
             // un id de bilibili producía un watch?v= inexistente.
-            var url = best.Value.Url ?? $"https://www.youtube.com/watch?v={best.Value.Id}";
-            logger.LogInformation("Tráiler encontrado por búsqueda: {Url} ({Dur}s) para \"{Query}\"",
-                url, best.Value.DurationSeconds, query);
-            return new TrailerCandidate(url, best.Value.DurationSeconds);
+            var candidates = ranked
+                .Select(r => new TrailerCandidate(
+                    r.Url ?? $"https://www.youtube.com/watch?v={r.Id}", r.DurationSeconds))
+                .ToList();
+
+            logger.LogInformation(
+                "Búsqueda de {Kind} para \"{Query}\": {Count} candidato(s) confiable(s) → {Urls}",
+                kind, query, candidates.Count,
+                string.Join(", ", candidates.Take(4).Select(c => c.Url)));
+            return candidates;
         }
         catch (System.ComponentModel.Win32Exception)
         {
             logger.LogInformation("yt-dlp no encontrado ('{Path}') — sin búsqueda de tráiler", psi.FileName);
-            return null;
+            return [];
         }
         catch (Exception ex) when (!ct.IsCancellationRequested)
         {
             logger.LogWarning(ex, "Búsqueda de tráiler falló para \"{Query}\"", query);
-            return null;
+            return [];
         }
     }
 
@@ -316,13 +348,32 @@ public partial class TrailerDownloadService(
     public static (string Id, double DurationSeconds, string? Url)? PickBestSearchResult(
         IReadOnlyList<string> printedLines, bool requireSpanish = true,
         NewsVideoKind kind = NewsVideoKind.Trailer, string? subject = null)
+        => PickRankedSearchResults(printedLines, requireSpanish, kind, subject) is [var first, ..]
+            ? first
+            : null;
+
+    /// <summary>
+    /// TODOS los resultados que pasan los filtros, del más al menos confiable.
+    /// Existe porque quedarse con uno solo tiraba reels sin video de gusto: el
+    /// 24-ago-2026 la búsqueda de "Tokyo Revengers War of the Three Titans Arc"
+    /// devolvió 6 tráilers válidos, el elegido comió el bot-check de YouTube en
+    /// sus dos intentos y el reel salió como slideshow SIN haber probado los
+    /// otros 5. También cubre el video borrado, el region-locked y el que pide
+    /// login: con lista, el caller sigue bajando por la lista hasta que uno entra.
+    /// Mismos filtros y mismo puntaje que <see cref="PickBestSearchResult"/>, que
+    /// ahora es "el primero de esta lista". Público estático para tests.
+    /// </summary>
+    public static IReadOnlyList<(string Id, double DurationSeconds, string? Url)> PickRankedSearchResults(
+        IReadOnlyList<string> printedLines, bool requireSpanish = true,
+        NewsVideoKind kind = NewsVideoKind.Trailer, string? subject = null)
     {
         var subjectTokens = subject is null
             ? []
             : SignificantWords(subject).Select(Normalize).ToList();
 
-        (string Id, double Duration, string? Url)? best = null;
-        var bestScore = -1;
+        // El orden de relevancia de YouTube desempata a igual puntaje, así que
+        // el orden de llegada se preserva (OrderByDescending es estable).
+        var scored = new List<(int Score, (string Id, double DurationSeconds, string? Url) Result)>();
 
         foreach (var parts in printedLines.Select(line => line.Split(FieldSeparator)))
         {
@@ -375,15 +426,11 @@ public partial class TrailerDownloadService(
             else if (official) score += 2;
             if (duration is >= 10 and <= 300) score += 2;  // teasers arrancan en ~15s
 
-            if (score > bestScore)
-            {
-                bestScore = score;
-                best = (id, duration, url);
-            }
+            // Sin keyword del tipo de video NI canal oficial (score < 4) no hay confianza
+            if (score >= 4) scored.Add((score, (id, duration, url)));
         }
 
-        // Sin keyword del tipo de video NI canal oficial (score < 4) no hay confianza
-        return bestScore >= 4 ? best : null;
+        return [.. scored.OrderByDescending(x => x.Score).Select(x => x.Result)];
     }
 
     /// <summary>Palabras clave que confirman que el resultado es el tipo de video buscado.</summary>
@@ -497,6 +544,12 @@ public partial class TrailerDownloadService(
         "adaptacion", "fecha", "nuevo", "nueva", "nuevos", "nuevas", "primer",
         "primera", "segundo", "segunda", "gran", "grupo", "staff", "elenco",
         "arte", "promocional",
+        // Palabras de "material gráfico" que ensucian la query sin identificar
+        // la obra: "revela un nuevo tráiler e imagen promocional" mandaba
+        // "…Arc imagen PV" a bilibili y volvía con longplays de videojuegos
+        // (24-ago-2026).
+        "imagen", "imagenes", "visual", "visuales", "poster", "posters",
+        "clave", "ilustracion", "portada", "reparto",
         "enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto",
         "septiembre", "octubre", "noviembre", "diciembre",
         // palabras de formato de video (van en el sufijo de la query, no son obra)
@@ -805,10 +858,15 @@ public partial class TrailerDownloadService(
     /// yt-dlp, los únicos que bajan sin GVS PO token: forzar android_vr devuelve
     /// 403 (ver <see cref="InstagramSettings.YtDlpPlayerClients"/>).
     /// </summary>
-    private string PlayerClientArg(string? target) =>
-        !string.IsNullOrWhiteSpace(settings.YtDlpPlayerClients) && IsYouTube(target)
-            ? $"--extractor-args \"youtube:player_client={settings.YtDlpPlayerClients}\" "
+    private string PlayerClientArg(string? target, string? overrideClients = null)
+    {
+        var clients = string.IsNullOrWhiteSpace(overrideClients)
+            ? settings.YtDlpPlayerClients
+            : overrideClients;
+        return !string.IsNullOrWhiteSpace(clients) && IsYouTube(target)
+            ? $"--extractor-args \"youtube:player_client={clients}\" "
             : string.Empty;
+    }
 
     /// <summary>
     /// --js-runtimes: sin runtime JS, yt-dlp no resuelve el "n challenge" de
@@ -854,8 +912,8 @@ public partial class TrailerDownloadService(
         && File.Exists(cookiesPath);
 
     /// <summary>Flags comunes a todo comando de yt-dlp: cliente, runtime JS, cookies y proxy.</summary>
-    private string CommonArgs(string? target) =>
-        PlayerClientArg(target) + JsRuntimeArgs() + CookiesArg(target) + ProxyArg(target);
+    private string CommonArgs(string? target, string? overrideClients = null) =>
+        PlayerClientArg(target, overrideClients) + JsRuntimeArgs() + CookiesArg(target) + ProxyArg(target);
 
     /// <summary>Cuántos resultados planos se resuelven de a uno (cada uno es una llamada).</summary>
     private const int FlatResolveLimit = 4;
