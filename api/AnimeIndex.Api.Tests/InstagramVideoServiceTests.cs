@@ -1115,3 +1115,78 @@ public class YtDlpCookiesTests
             Path.Combine(Path.GetTempPath(), $"no-existe-{Guid.NewGuid():N}.txt"), yt));
     }
 }
+
+/// <summary>
+/// Regresiones del tercer post-mortem (24-ago-2026). El reel de "Tokyo
+/// Revengers: War of the Three Titans Arc revela un nuevo tráiler e imagen
+/// promocional" salió SIN video aunque la búsqueda había encontrado 6 tráilers
+/// válidos: se probó uno solo, comió el bot-check en sus dos intentos idénticos
+/// y los otros 5 nunca se tocaron.
+/// </summary>
+public class RankedCandidatesTests
+{
+    // Las 6 líneas REALES que devolvió ytsearch6 para la query de esa corrida.
+    private static readonly string[] TokyoRevengersResults =
+    [
+        "oVpkKSlQ4xg|~|111|~|Tokyo Revengers Season 4 \"War of the Three Titans Arc\" - Official Trailer 3|~|AnimeSelect",
+        "di3WrXsDelw|~|54|~|Tokyo Revengers Tercera temporada | Tráiler 2 sub. español|~|IsekTrailers",
+        "P-02MjZ27yQ|~|114|~|Tokyo Revengers Season 4 \"War of the Three Titans Arc\" - Official Trailer 2|~|AnimeSelect",
+        "N5FVCA6OdCM|~|111|~|Tokyo Revengers Season 4 \"War of the Three Titans Arc\" - Official Trailer|~|AnimeSelect",
+        "1pr4908hpCc|~|69|~|tokyo revengers 3 temporada el arco de tenjiku tráiler|~|Multifandom_stay1",
+        "nQ2-FdO83ZY|~|135|~|TOKYO REVENGERS TEMPORADA 3 TRAILER #1 SUB ESPAÑOL Y FECHA DE ESTRENO|~|ZONA ANIME",
+    ];
+
+    [Fact]
+    public void PickRanked_ReturnsEverySuplente_NotJustTheWinner()
+    {
+        // Sin filtro de idioma (la 2da pasada de la cadena) hay VARIOS tráilers
+        // válidos de la obra. Que la lista traiga más de uno es justamente lo
+        // que le da red al reel cuando el primero muere por bot-check.
+        var ranked = TrailerDownloadService.PickRankedSearchResults(
+            TokyoRevengersResults, requireSpanish: false, subject: "Tokyo Revengers Tenjiku Arc");
+
+        Assert.True(ranked.Count > 1,
+            $"se esperaban suplentes, vino {ranked.Count}");
+        // Todos los devueltos tienen que ser de la obra
+        Assert.All(ranked, r => Assert.False(string.IsNullOrWhiteSpace(r.Id)));
+        // Y sin repetidos: el caller los prueba en orden
+        Assert.Equal(ranked.Count, ranked.Select(r => r.Id).Distinct().Count());
+    }
+
+    [Fact]
+    public void PickBest_IsStillTheFirstOfTheRankedList()
+    {
+        // PickBestSearchResult pasó a ser "el primero de PickRankedSearchResults":
+        // el comportamiento viejo no cambia, solo se expone el resto.
+        var ranked = TrailerDownloadService.PickRankedSearchResults(
+            TokyoRevengersResults, requireSpanish: false, subject: "Tokyo Revengers Tenjiku Arc");
+        var best = TrailerDownloadService.PickBestSearchResult(
+            TokyoRevengersResults, requireSpanish: false, subject: "Tokyo Revengers Tenjiku Arc");
+
+        Assert.Equal(ranked[0].Id, best?.Id);
+    }
+
+    [Fact]
+    public void PickRanked_EmptyWhenNothingIsTrustworthy()
+    {
+        // El gate de relevancia sigue mandando: obra equivocada = lista vacía,
+        // que es lo que mantiene vivo "mejor slideshow que el video equivocado".
+        var ranked = TrailerDownloadService.PickRankedSearchResults(
+            TokyoRevengersResults, requireSpanish: false, subject: "Frieren Beyond Journey End");
+
+        Assert.Empty(ranked);
+    }
+
+    [Fact]
+    public void SubjectFromTitle_DropsGraphicMaterialWords_RealCase()
+    {
+        // "revela un nuevo tráiler e imagen promocional" mandaba a bilibili la
+        // query "...Arc imagen PV" y volvía con longplays de videojuegos.
+        var obra = TrailerDownloadService.SubjectFromTitle(
+            "Tokyo Revengers: War of the Three Titans Arc revela un nuevo tráiler e imagen promocional");
+
+        Assert.DoesNotContain("imagen", obra, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Tokyo", obra);
+        Assert.Contains("Revengers", obra);
+    }
+}
