@@ -1,4 +1,4 @@
-using System.Text;
+﻿using System.Text;
 using AnimeIndex.Api.Data;
 using AnimeIndex.Api.Data.Entities;
 using AnimeIndex.Scraper.Infrastructure;
@@ -354,15 +354,27 @@ public class AnimeNewsPublisherService(
                     ? null
                     : await trailerService.ValidateAsync(trailerUrl, ct: ct);
                 var plan = embedded is not null
-                    ? new NewsVideoPlan(embedded, true,
+                    ? new NewsVideoPlan([embedded], true,
                         HeuristicVideoQuery(item.Title)?.Query ?? "", null,
                         HeuristicVideoQuery(item.Title)?.Kind ?? NewsVideoKind.Trailer)
                     : igSettings.TrailerSearchEnabled
                         ? await FindNewsVideoAsync(item, content, trailerUrl, ct)
                         : NewsVideoPlan.None;
-                var candidate = plan.Candidate;
 
-                var clipPath = candidate is null ? null : await trailerService.DownloadAsync(candidate.Url, ct);
+                // Se BAJA POR LA LISTA hasta que uno entre. Antes se probaba un
+                // solo candidato y si ese moría el reel salía sin video aunque
+                // hubiera alternativas buenas: el 24-ago-2026 la búsqueda de
+                // Tokyo Revengers devolvió 6 tráilers válidos, el elegido comió
+                // el bot-check en sus dos intentos y los otros 5 ni se tocaron.
+                TrailerCandidate? candidate = null;
+                string? clipPath = null;
+                foreach (var option in plan.Candidates.Take(igSettings.MaxVideoCandidates))
+                {
+                    clipPath = await trailerService.DownloadAsync(option.Url, ct);
+                    if (clipPath is not null) { candidate = option; break; }
+                    logger.LogInformation(
+                        "AnimeNews: no se pudo bajar {Url} — probando el próximo candidato", option.Url);
+                }
 
                 // Respaldo X/Twitter (18-jul-2026): la descarga de YouTube está
                 // bloqueada desde CI (34 combos FAIL) pero X no bloquea a los
@@ -632,7 +644,7 @@ public class AnimeNewsPublisherService(
         // vía IA → bilibili) corra igual — la garantía "si el video existe, el
         // reel sale con video" depende de esto (hueco real 18-jul: la búsqueda
         // no dio candidato y los respaldos ni corrieron).
-        var plan = new NewsVideoPlan(null, true, query!, subject, kind);
+        var plan = new NewsVideoPlan([], true, query!, subject, kind);
 
         // ── Temas (opening/ending/MV) y cortos: el video ES la noticia ──────
         // El idioma no aplica (canción japonesa / animación) pero el upload
@@ -640,102 +652,131 @@ public class AnimeNewsPublisherService(
         // exacto — se prueba antes que la búsqueda.
         if (kind is NewsVideoKind.ThemeSong or NewsVideoKind.Short)
         {
-            var candidate = embeddedUrl is null
+            var candidates = new List<TrailerCandidate>();
+
+            var embedded = embeddedUrl is null
                 ? null
                 : await trailerService.ValidateAsync(embeddedUrl, requireSpanish: false, kind, ct);
-            if (candidate is not null)
-                logger.LogInformation("AnimeNews: video {Kind} embebido del artículo aceptado (upload oficial)", kind);
-            else
+            if (embedded is not null)
             {
-                // Subject COMBINADO artista+obra: los MV oficiales titulan por
-                // el artista (Tanya/MYTH & ROID, 17-jul) y los creditless por
-                // el ANIME (Cat and Dragon/宝島, 18-jul) — con el subject solo
-                // artista, el creditless oficial no matcheaba ni un token y la
-                // relevancia lo tiraba. MentionsSubject acepta ≥2 tokens.
-                var themeSubject = $"{subject} {TrailerDownloadService.SubjectFromTitle(item.Title)}".Trim();
-                logger.LogInformation("AnimeNews: buscando {Kind} en YouTube → \"{Query}\" (obra: {Subject})",
-                    kind, query, themeSubject);
-                candidate = await trailerService.SearchAsync(
-                    query, requireSpanish: false, kind, themeSubject, ct: ct);
-
-                // Escalera: si la query de la IA no encontró candidato, probar la
-                // heurística (obra + palabra de tipo). Una query recargada de
-                // serie+artista+canción atrae videos fan que repiten todas esas
-                // palabras y entierran al oficial (caso real 17-jul: Tanya the
-                // Evil / MYTH & ROID — los 6 resultados eran mashups y covers).
-                var heur = HeuristicVideoQuery(item.Title);
-                if (candidate is null && heur is not null && heur.Value.Query != query)
-                {
-                    logger.LogInformation("AnimeNews: reintento con query heurística → \"{Query}\"", heur.Value.Query);
-                    candidate = await trailerService.SearchAsync(
-                        heur.Value.Query, requireSpanish: false, kind, themeSubject, ct: ct);
-                }
+                logger.LogInformation("AnimeNews: video {Kind} embebido del articulo aceptado (upload oficial)", kind);
+                candidates.Add(embedded);
             }
 
-            // Los cortos tienen diálogo: si hay subs es manuales, se queman
-            // (bonus best-effort — sin subs el corto va igual, es la noticia).
-            if (candidate is not null && kind == NewsVideoKind.Short)
+            // La busqueda corre IGUAL con embebido aceptado: cuesta ~2 s y deja
+            // suplentes por si el embebido no se puede bajar (bot-check, borrado,
+            // region-lock). Con video obligatorio, tener red vale mas que el ahorro.
+            // Subject COMBINADO artista+obra: los MV oficiales titulan por el
+            // artista (Tanya/MYTH & ROID, 17-jul) y los creditless por el ANIME
+            // (Cat and Dragon, 18-jul) - con el subject solo artista, el
+            // creditless oficial no matcheaba ni un token y la relevancia lo
+            // tiraba. MentionsSubject acepta >=2 tokens.
+            var themeSubject = $"{subject} {TrailerDownloadService.SubjectFromTitle(item.Title)}".Trim();
+            logger.LogInformation("AnimeNews: buscando {Kind} en YouTube -> \"{Query}\" (obra: {Subject})",
+                kind, query, themeSubject);
+            candidates.AddRange(await trailerService.SearchManyAsync(
+                query, requireSpanish: false, kind, themeSubject, ct: ct));
+
+            // Escalera: si la query de la IA no encontro nada, probar la
+            // heuristica (obra + palabra de tipo). Una query recargada de
+            // serie+artista+cancion atrae videos fan que repiten todas esas
+            // palabras y entierran al oficial (caso real 17-jul: Tanya the
+            // Evil / MYTH & ROID - los 6 resultados eran mashups y covers).
+            var heur = HeuristicVideoQuery(item.Title);
+            if (candidates.Count == 0 && heur is not null && heur.Value.Query != query)
             {
-                var shortSubs = await trailerService.DownloadSpanishSubtitlesAsync(candidate.Url, ct);
-                if (shortSubs is not null) candidate = candidate with { SubtitlesPath = shortSubs };
+                logger.LogInformation("AnimeNews: reintento con query heuristica -> \"{Query}\"", heur.Value.Query);
+                candidates.AddRange(await trailerService.SearchManyAsync(
+                    heur.Value.Query, requireSpanish: false, kind, themeSubject, ct: ct));
             }
-            return plan with { Candidate = candidate };
+
+            // Los cortos tienen dialogo: si hay subs es manuales, se queman. Solo
+            // se buscan para el PRIMER candidato - bajarlos para todos serian N
+            // llamadas de yt-dlp por un extra best-effort. Si el primero no se
+            // puede bajar, el suplente va sin subs: es la noticia igual.
+            if (candidates.Count > 0 && kind == NewsVideoKind.Short)
+            {
+                var shortSubs = await trailerService.DownloadSpanishSubtitlesAsync(candidates[0].Url, ct);
+                if (shortSubs is not null) candidates[0] = candidates[0] with { SubtitlesPath = shortSubs };
+            }
+            return plan with { Candidates = Dedupe(candidates) };
         }
 
-        // ── Tráiler: cadena español → cualquier idioma + subs es quemados ───
-        logger.LogInformation("AnimeNews: buscando tráiler en YouTube → \"{Query}\" (obra: {Subject})",
+        // Trailer: cadena espanol -> cualquier idioma + subs es quemados
+        logger.LogInformation("AnimeNews: buscando trailer en YouTube -> \"{Query}\" (obra: {Subject})",
             query, subject ?? "(derivada de la query)");
-        var spanish = await trailerService.SearchAsync(query, requireSpanish: true, subject: subject, ct: ct);
-        if (spanish is not null) return plan with { Candidate = spanish };
 
-        // 2do intento: sin versión latina, el tráiler oficial en cualquier
-        // idioma — con subtítulos es manuales quemados si existen, y si no, en
-        // su idioma original (último recurso, toggle abajo). El PV embebido en
-        // el artículo (rechazado antes por idioma) también entra acá.
-        var anyQuery = query.Replace("español latino", "", StringComparison.OrdinalIgnoreCase).Trim();
-        var any = await trailerService.SearchAsync(anyQuery, requireSpanish: false, subject: subject, ct: ct);
+        // Los en espanol van primero en la lista: son los preferidos. Los de
+        // otro idioma quedan detras como suplentes.
+        var spanish = new List<TrailerCandidate>(
+            await trailerService.SearchManyAsync(query, requireSpanish: true, subject: subject, ct: ct));
 
-        // Escalera: misma red de seguridad que en temas — si la query de la IA
-        // no dio candidato en ninguno de los dos pasos, se prueba la heurística.
-        if (any is null)
+        // 2do intento: sin version latina, el trailer oficial en cualquier
+        // idioma - con subtitulos es manuales quemados si existen, y si no, en
+        // su idioma original (ultimo recurso, toggle abajo). El PV embebido en
+        // el articulo (rechazado antes por idioma) tambien entra aca.
+        var anyQuery = query.Replace("espanol latino", "", StringComparison.OrdinalIgnoreCase).Trim();
+        var any = new List<TrailerCandidate>(
+            await trailerService.SearchManyAsync(anyQuery, requireSpanish: false, subject: subject, ct: ct));
+
+        // Escalera: misma red de seguridad que en temas - si la query de la IA
+        // no dio candidato en ninguno de los dos pasos, se prueba la heuristica.
+        if (spanish.Count == 0 && any.Count == 0)
         {
             var heur = HeuristicVideoQuery(item.Title);
             if (heur is not null && heur.Value.Kind == NewsVideoKind.Trailer && heur.Value.Query != query)
             {
-                logger.LogInformation("AnimeNews: reintento con query heurística → \"{Query}\"", heur.Value.Query);
-                any = await trailerService.SearchAsync(heur.Value.Query, requireSpanish: true, subject: subject, ct: ct)
-                   ?? await trailerService.SearchAsync(
-                          heur.Value.Query.Replace("español latino", "", StringComparison.OrdinalIgnoreCase).Trim(),
-                          requireSpanish: false, subject: subject, ct: ct);
+                logger.LogInformation("AnimeNews: reintento con query heuristica -> \"{Query}\"", heur.Value.Query);
+                spanish.AddRange(await trailerService.SearchManyAsync(
+                    heur.Value.Query, requireSpanish: true, subject: subject, ct: ct));
+                any.AddRange(await trailerService.SearchManyAsync(
+                    heur.Value.Query.Replace("espanol latino", "", StringComparison.OrdinalIgnoreCase).Trim(),
+                    requireSpanish: false, subject: subject, ct: ct));
             }
         }
-        if (any is null && embeddedUrl is not null)
-            any = await trailerService.ValidateAsync(embeddedUrl, requireSpanish: false, ct: ct);
-        if (any is null) return plan;
-
-        var subs = await trailerService.DownloadSpanishSubtitlesAsync(any.Url, ct);
-        if (subs is not null)
+        if (any.Count == 0 && embeddedUrl is not null)
         {
-            logger.LogInformation("AnimeNews: tráiler {Url} con subtítulos es para quemar", any.Url);
-            return plan with { Candidate = any with { SubtitlesPath = subs } };
+            var embedded = await trailerService.ValidateAsync(embeddedUrl, requireSpanish: false, ct: ct);
+            if (embedded is not null) any.Add(embedded);
         }
 
-        // Último recurso (decisión del usuario, jul-2026): el tráiler oficial
-        // va en su idioma original — el titular y las slides en español encima
-        // dan el contexto, y el video correcto en japonés vale más que un
-        // slideshow (la relevancia ya está garantizada por el gate de obra).
-        if (igSettings.TrailerOriginalLanguageFallback)
+        // Los que no estan en espanol llevan subtitulos es quemados si existen.
+        // Solo se buscan para el primero de esa tanda: es el que mas chances
+        // tiene de usarse y cada busqueda es una llamada de yt-dlp.
+        if (any.Count > 0)
         {
-            logger.LogInformation(
-                "AnimeNews: tráiler {Url} sin versión latina ni subs es — va en idioma original",
-                any.Url);
-            return plan with { Candidate = any };
+            var subs = await trailerService.DownloadSpanishSubtitlesAsync(any[0].Url, ct);
+            if (subs is not null)
+            {
+                logger.LogInformation("AnimeNews: trailer {Url} con subtitulos es para quemar", any[0].Url);
+                any[0] = any[0] with { SubtitlesPath = subs };
+            }
+            else if (igSettings.TrailerOriginalLanguageFallback)
+            {
+                // Ultimo recurso (decision del usuario, jul-2026): el trailer
+                // oficial va en su idioma original - el titular y las slides en
+                // espanol encima dan el contexto, y el video correcto en japones
+                // vale mas que un slideshow (la relevancia ya esta garantizada
+                // por el gate de obra).
+                logger.LogInformation(
+                    "AnimeNews: trailer {Url} sin version latina ni subs es - va en idioma original", any[0].Url);
+            }
+            else
+            {
+                logger.LogInformation(
+                    "AnimeNews: trailers sin version latina ni subtitulos manuales en espanol - descartados");
+                any.Clear();
+            }
         }
 
-        logger.LogInformation(
-            "AnimeNews: tráiler {Url} sin versión latina ni subtítulos manuales en español — slideshow",
-            any.Url);
-        return plan;
+        return plan with { Candidates = Dedupe([.. spanish, .. any]) };
+    }
+
+    /// <summary>Candidatos sin URLs repetidas, respetando el orden de preferencia.</summary>
+    private static IReadOnlyList<TrailerCandidate> Dedupe(IEnumerable<TrailerCandidate> candidates)
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        return [.. candidates.Where(c => seen.Add(c.Url))];
     }
 
     /// <summary>
@@ -745,9 +786,9 @@ public class AnimeNewsPublisherService(
     /// corra aunque YouTube no haya dado candidato.
     /// </summary>
     private sealed record NewsVideoPlan(
-        TrailerCandidate? Candidate, bool WantsVideo, string Query, string? Subject, NewsVideoKind Kind)
+        IReadOnlyList<TrailerCandidate> Candidates, bool WantsVideo, string Query, string? Subject, NewsVideoKind Kind)
     {
-        public static readonly NewsVideoPlan None = new(null, false, "", null, NewsVideoKind.Trailer);
+        public static readonly NewsVideoPlan None = new([], false, "", null, NewsVideoKind.Trailer);
     }
 
     private static NewsVideoKind ParseVideoKind(string? tipo) => tipo?.ToLowerInvariant() switch
