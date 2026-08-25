@@ -1,0 +1,27 @@
+name: Render API — Keep-alive
+
+# El plan free de Render duerme la instancia tras ~15 min sin tráfico.
+# El primer request después de eso paga un cold-start de 20-30s, que supera
+# el timeout de 12s que usa el frontend (web/src/lib/api.ts) para pedir datos
+# al API — el resultado es que las secciones de la home caen en el catch y
+# se muestran vacías ("no hay feed"). Este ping evita que la instancia
+# llegue a dormirse.
+#
+# /health es liveness puro (no toca DB ni cache), así que este ping no
+# agrega carga real al pool de Postgres.
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'   # cada 10 minutos, por debajo del idle timeout de 15 min
+  workflow_dispatch:          # allow manual runs
+
+jobs:
+  ping:
+    name: Ping /health
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+
+    steps:
+      - name: Ping Render API health endpoint
+        run: |
+          curl -fsS --max-time 60 https://sheicobanime-api.onrender.com/health
