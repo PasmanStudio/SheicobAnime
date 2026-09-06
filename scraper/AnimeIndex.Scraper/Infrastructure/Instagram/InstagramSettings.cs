@@ -23,6 +23,18 @@ public class InstagramSettings
     // Optional folder to keep the uploaded promo images tidy in the media library.
     public string CloudinaryFolder { get; set; } = "ig";
 
+    /// <summary>
+    /// Borrar de Cloudinary, al terminar la corrida, todo lo que ella subió.
+    /// Los assets son de un solo uso: Meta copia el archivo a su CDN cuando
+    /// procesa el container, y si la publicación falló no se reintenta entre
+    /// corridas. Sin esto no se borraba nada NUNCA — 6,95 GB acumulados al
+    /// 6-sep-2026, el 59% del consumo de créditos del plan free.
+    /// NO toca la biblioteca de música ("{CloudinaryFolder}/music"): solo borra
+    /// lo que subió el propio MetaGraphApiClient en esta corrida.
+    /// Apagar con Instagram__CloudinaryPurgeAfterRun=false.
+    /// </summary>
+    public bool CloudinaryPurgeAfterRun { get; set; } = true;
+
     // Public-facing site URL used in captions and CTAs.
     // Override via Instagram__SiteUrl secret (e.g. https://sheicobanime.sheicob.workers.dev)
     public string SiteUrl { get; set; } = "https://sheicobanime.sheicob.workers.dev";

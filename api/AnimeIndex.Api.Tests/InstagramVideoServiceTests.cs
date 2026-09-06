@@ -1190,3 +1190,254 @@ public class RankedCandidatesTests
         Assert.Contains("Revengers", obra);
     }
 }
+
+/// <summary>
+/// La escalera de idioma del reel: la 2da pasada de búsqueda tiene que dejar de
+/// exigir "español latino". El PR #167 la rompió al comparar contra el literal
+/// SIN ñ ("espanol latino"), que nunca matchea la query real — la pasada
+/// relajada repetía la MISMA query en español y las obras sin doblaje latino
+/// quedaban sin video (31-ago → 5-sep-2026: 8 de 20 reels fallidos).
+/// </summary>
+public class SpanishSuffixStripTests
+{
+    [Theory]
+    // Lo que escriben de verdad el prompt de la IA y HeuristicVideoQuery: CON ñ
+    [InlineData("Solo Leveling temporada 2 tráiler oficial español latino",
+                "Solo Leveling temporada 2 tráiler oficial")]
+    [InlineData("KochiKame: Tokyo Beat Cops tráiler oficial español latino",
+                "KochiKame: Tokyo Beat Cops tráiler oficial")]
+    // Sin ñ y con mayúsculas: mismo resultado, la comparación es normalizada
+    [InlineData("Frieren trailer oficial Espanol Latino", "Frieren trailer oficial")]
+    [InlineData("Frieren tráiler oficial ESPAÑOL LATINO", "Frieren tráiler oficial")]
+    public void StripSpanishSuffix_RemovesLanguageSuffix_AccentInsensitive(string query, string expected)
+        => Assert.Equal(expected, AnimeNewsPublisherService.StripSpanishSuffix(query));
+
+    [Theory]
+    // Queries que no llevan el sufijo quedan intactas (temas, cortos, PVs)
+    [InlineData("MYTH & ROID Why? RED induction MV")]
+    [InlineData("Giant Ojo-sama teaser trailer")]
+    [InlineData("Mob Psycho 100 special movie")]
+    public void StripSpanishSuffix_LeavesOtherQueriesUntouched(string query)
+        => Assert.Equal(query, AnimeNewsPublisherService.StripSpanishSuffix(query));
+
+    [Fact]
+    public void StripSpanishSuffix_ActuallyChangesTheAiQuery_RegressionPr167()
+    {
+        // El caso exacto que salía sin video: las dos pasadas corrían idénticas
+        var aiQuery = AnimeNewsPublisherService
+            .HeuristicVideoQuery("Frieren confirma su segunda temporada con un tráiler")!.Value.Query;
+
+        Assert.NotEqual(aiQuery, AnimeNewsPublisherService.StripSpanishSuffix(aiQuery));
+        Assert.DoesNotContain("español", AnimeNewsPublisherService.StripSpanishSuffix(aiQuery));
+        Assert.DoesNotContain("latino", AnimeNewsPublisherService.StripSpanishSuffix(aiQuery));
+    }
+}
+
+/// <summary>
+/// Casos reales que el gate heurístico dejaba pasar como "sin video".
+/// </summary>
+public class HeuristicVideoQueryAccentTests
+{
+    [Theory]
+    // "live action" SIN guion — el titular real del 3-sep-2026 que salió sin
+    // video porque la lista solo tenía la forma guionada
+    [InlineData("The Apothecary Diaries dará el salto al live action en 2028")]
+    [InlineData("El live-action de One Piece ya tiene fecha de estreno")]
+    // Entradas cuya única forma en la lista estaba acentuada: se comparan
+    // contra el titular NORMALIZADO, así que el literal con tilde no matcheaba
+    // y solo funcionaban por su duplicado sin tilde (ya eliminado)
+    [InlineData("Chainsaw Man estrena tráiler de su nueva película")]
+    [InlineData("Dandadan confirma la adaptación de su segundo arco")]
+    public void HeuristicVideoQuery_DetectsAudiovisualSignal(string title)
+    {
+        var result = AnimeNewsPublisherService.HeuristicVideoQuery(title);
+
+        Assert.NotNull(result);
+        Assert.Equal(NewsVideoKind.Trailer, result!.Value.Kind);
+    }
+}
+
+/// <summary>
+/// Clasificación de errores de publicación de Meta. El 6-sep-2026 el fetcher de
+/// Meta falló en 2 de 4 reels y 3 de 3 carruseles mientras las imágenes seguían
+/// sirviéndose bien (200, image/jpeg, 1080x1080, ~180 KB): el fallo era
+/// transitorio y el código no reintentaba ni una vez.
+/// </summary>
+public class MetaPublishRetryTests
+{
+    // El cuerpo EXACTO que devolvió Meta el 6-sep-2026 (run 34052811639).
+    // Ojo con "is_transient":false — Meta lo marca permanente y NO lo es.
+    private const string MediaDownloadFailureBody = """
+        {"error":{"message":"Only photo or video can be accepted as media type.",
+        "type":"OAuthException","code":9004,"error_subcode":2207052,"is_transient":false,
+        "error_user_title":"Error al descargar el contenido multimedia.",
+        "error_user_msg":"No se pudo recuperar el contenido multimedia de este URI",
+        "fbtrace_id":"AfulXDO2_i31-9c3c1xIz1x"}}
+        """;
+
+    [Fact]
+    public void MediaDownloadFailure_IsRetried_DespiteIsTransientFalse()
+        => Assert.True(MetaGraphApiClient.IsTransientPublishError(
+            System.Net.HttpStatusCode.BadRequest, MediaDownloadFailureBody));
+
+    [Theory]
+    [InlineData(500)]
+    [InlineData(502)]
+    [InlineData(503)]
+    public void ServerErrors_AreRetried(int status)
+        => Assert.True(MetaGraphApiClient.IsTransientPublishError(
+            (System.Net.HttpStatusCode)status, "{}"));
+
+    [Fact]
+    public void MetaDeclaredTransient_IsRetried()
+        => Assert.True(MetaGraphApiClient.IsTransientPublishError(
+            System.Net.HttpStatusCode.BadRequest,
+            """{"error":{"message":"Please retry","code":2,"is_transient":true}}"""));
+
+    [Theory]
+    // Token vencido y caption inválido: reintentar solo quema tiempo
+    [InlineData("""{"error":{"message":"Error validating access token","code":190,"error_subcode":463}}""")]
+    [InlineData("""{"error":{"message":"The caption is too long","code":100,"error_subcode":2207042}}""")]
+    // Respuestas que no son JSON no pueden clasificarse como transitorias
+    [InlineData("<html>502 Bad Gateway</html>")]
+    [InlineData("")]
+    public void PermanentErrors_AreNotRetried(string body)
+        => Assert.False(MetaGraphApiClient.IsTransientPublishError(
+            System.Net.HttpStatusCode.BadRequest, body));
+}
+
+/// <summary>
+/// Canales oficiales JAPONESES. La lista de distribuidores era solo-latina, así
+/// que un canal escrito en katakana no daba señal de "oficial" y el gate
+/// relajado (requireSpanish=false) lo descartaba.
+/// </summary>
+public class OfficialJapaneseChannelTests
+{
+    [Fact]
+    public void EmbeddedOfficialPv_FromKatakanaChannel_IsAccepted_RealCase()
+    {
+        // Caso exacto del run 34055519423 (6-sep-2026): kudasai embebió el PV
+        // oficial y el reel salió igual como slideshow.
+        string[] lines =
+        [
+            "8_Lxr7vO9l0|~|109|~|『転生貴族、鑑定スキルで成り上がる 第3期』PV第2弾【2026年9月27日より放送開始！】|~|isekai channel @バンダイナムコフィルムワークス"
+        ];
+
+        // requireSpanish=false es el modo del 2do intento: exige señal de oficial
+        var best = TrailerDownloadService.PickBestSearchResult(lines, requireSpanish: false);
+
+        Assert.NotNull(best);
+        Assert.Equal("8_Lxr7vO9l0", best!.Value.Id);
+    }
+
+    [Theory]
+    [InlineData("アニプレックス・チャンネル")]
+    [InlineData("東宝MOVIEチャンネル")]
+    [InlineData("東映アニメーション公式YouTubeチャンネル")]
+    [InlineData("TVアニメ「株式会社マジルミエ」製作委員会")]
+    [InlineData("京都アニメーション")]
+    public void JapaneseDistributorChannels_CountAsOfficial(string channel)
+    {
+        string[] lines = [$"abc123xyz|~|95|~|テレビアニメ PV第1弾|~|{channel}"];
+
+        Assert.NotNull(TrailerDownloadService.PickBestSearchResult(lines, requireSpanish: false));
+    }
+
+    [Fact]
+    public void FanChannel_StillRejected_NoFalsePositives()
+    {
+        // Sin señal de oficial el gate relajado sigue cerrado: la lista japonesa
+        // suma casas reales, no afloja la regla.
+        string[] lines = ["abc123xyz|~|95|~|anime trailer 2026|~|AnimeFanEdits"];
+
+        Assert.Null(TrailerDownloadService.PickBestSearchResult(lines, requireSpanish: false));
+    }
+}
+
+/// <summary>
+/// El video EMBEBIDO en el artículo se juzga por PROCEDENCIA: lo eligió la
+/// redacción de la fuente para esa noticia. Mismo trato que el tweet embebido.
+/// Solo aplica en la pasada relajada; con requireSpanish=true el gate sigue entero.
+/// </summary>
+public class EmbeddedProvenanceTests
+{
+    [Fact]
+    public void OfficialJapanesePv_Accepted_EvenWithoutRecognizableChannel_RealCase()
+    {
+        // Caso 6-sep-2026 con el canal FUERA de la lista de distribuidores: ni el
+        // canal, ni el título en japonés, ni la palabra del tipo lo salvaban
+        // ("PV第2弾" no da frontera para \bpv\b — .NET cuenta los kanji como
+        // caracteres de palabra).
+        const string line =
+            "8_Lxr7vO9l0|~|109|~|『転生貴族、鑑定スキルで成り上がる 第3期』PV第2弾|~|アニメ公式ちゃんねる";
+
+        var c = TrailerDownloadService.EvaluateEmbeddedByProvenance("https://youtu.be/8_Lxr7vO9l0", line);
+
+        Assert.NotNull(c);
+        Assert.Equal(109, c!.DurationSeconds);
+    }
+
+    [Theory]
+    // Los dos filtros que SÍ se mantienen, porque no dependen de reconocer el canal:
+    // episodio completo / compilado / live (>6 min) y contenido fan.
+    [InlineData("abc123|~|2400|~|Episodio completo|~|canal")]
+    [InlineData("abc123|~|3|~|clip cortito|~|canal")]
+    [InlineData("abc123|~|120|~|My honest reaction to the new trailer|~|canal")]
+    [InlineData("abc123|~|120|~|Reseña y análisis del PV|~|canal")]
+    [InlineData("abc123|~|120|~|Naruto AMV 2026|~|canal")]
+    public void DurationAndFanContent_StillFilter(string line)
+        => Assert.Null(TrailerDownloadService.EvaluateEmbeddedByProvenance("https://youtu.be/abc123", line));
+
+    [Fact]
+    public void MalformedLine_ReturnsNull()
+        => Assert.Null(TrailerDownloadService.EvaluateEmbeddedByProvenance("https://youtu.be/x", "basura"));
+}
+
+/// <summary>
+/// Fronteras de palabra contra títulos japoneses. `\b` se apoya en `\w`, que en
+/// .NET incluye kanji y kana, así que "PV第2弾" no daba frontera y `\bpv\b`
+/// fallaba — justo como titulan los canales oficiales japoneses. Afecta al
+/// score de la BÚSQUEDA (kindMatch vale 4 puntos), no solo al embebido.
+/// </summary>
+public class CjkWordBoundaryTests
+{
+    // Un canal oficial reconocido aísla la variable: lo único que decide es si
+    // la palabra del tipo matchea el título.
+    private static string Line(string title) => $"abc123xyz|~|100|~|{title}|~|バンダイナムコフィルムワークス";
+
+    [Theory]
+    // Formas japonesas reales: la palabra latina pegada al kanji
+    [InlineData("『転生貴族、鑑定スキルで成り上がる 第3期』PV第2弾")]
+    [InlineData("第1弾PV【2026年10月放送開始】")]
+    [InlineData("アニメ『薬屋のひとりごと』本予告PV")]
+    // Y las de siempre, que no deben romperse
+    [InlineData("Official Trailer 2026")]
+    [InlineData("TEASER")]
+    public void KindWord_MatchesAcrossScriptBoundaries(string title)
+        => Assert.NotNull(TrailerDownloadService.PickBestSearchResult(
+            [Line(title)], requireSpanish: false));
+
+    // Con canal NO oficial y obra verificada, lo ÚNICO que abre el gate relajado
+    // es la palabra del tipo (kindMatch && subjectVerified) — así queda aislada.
+    private static string[] UnofficialLine(string title) =>
+        [$"abc123xyz|~|100|~|{title}|~|RandomUploader"];
+
+    [Fact]
+    public void KindWord_GluedToKanji_OpensTheRelaxedGate()
+        => Assert.NotNull(TrailerDownloadService.PickBestSearchResult(
+            UnofficialLine("アニメ『鬼滅の刃』第2弾PV"), requireSpanish: false, subject: "鬼滅の刃"));
+
+    [Theory]
+    // Los falsos positivos que la frontera existía para evitar siguen afuera:
+    // "pvc"/"spv" NO son "pv", así que sin palabra del tipo el gate no abre.
+    [InlineData("鬼滅の刃 PVC figure unboxing")]
+    [InlineData("鬼滅の刃 SPV highlights")]
+    public void KindWord_StillRejectsPartialWords(string title)
+        => Assert.Null(TrailerDownloadService.PickBestSearchResult(
+            UnofficialLine(title), requireSpanish: false, subject: "鬼滅の刃"));
+
+    [Fact]
+    public void FanContent_GluedToKanji_IsNowCaught()
+        => Assert.Null(TrailerDownloadService.PickBestSearchResult(
+            [Line("【感想】my honest reaction【神回】")], requireSpanish: false));
+}

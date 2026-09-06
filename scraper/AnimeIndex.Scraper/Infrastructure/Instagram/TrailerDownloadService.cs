@@ -565,21 +565,37 @@ public partial class TrailerDownloadService(
     [GeneratedRegex(@"^(19|20)\d{2}$")]
     private static partial Regex YearRegex();
 
-    // trailer/teaser/PV/avance en varios idiomas; \b evita falsos positivos
-    // (p. ej. "pvp"). 予告/特報/ティザー son los usos japoneses estándar;
-    // 预告 es el chino de bilibili.
-    [GeneratedRegex(@"\b(trailer|tráiler|teaser|avance|pv|promo)\b|予告|特報|ティザー|预告", RegexOptions.IgnoreCase)]
+    // Frontera de palabra SEGURA PARA TÍTULOS JAPONESES. `\b` se apoya en `\w`,
+    // que en .NET incluye kanji y kana (categoría Unicode Lo), así que entre la
+    // "V" de "PV" y el "第" de "PV第2弾" NO hay frontera y `\bpv\b` no matchea —
+    // y así es exactamente como titulan los canales oficiales japoneses
+    // ("第1弾PV", "本予告PV"). Estos lookarounds sacan a los ideogramas del
+    // concepto de "carácter de palabra", con lo cual un kanji corta la palabra
+    // igual que lo haría un espacio.
+    //
+    // Importa más allá del video embebido: en la BÚSQUEDA, kindMatch vale 4
+    // puntos de score y habilita el escape `kindMatch && subjectVerified`, así
+    // que sin esto todos los PV japoneses puntuaban de menos. Verificado el
+    // 6-sep-2026 contra el título real del run 34055519423: pasa a matchear sin
+    // aflojar ningún negativo ("trailers", "pvc", "spv", "pv2" siguen sin dar).
+    private const string WordStart = @"(?<![\w-[\p{Lo}]])";
+    private const string WordEnd   = @"(?![\w-[\p{Lo}]])";
+
+    // trailer/teaser/PV/avance en varios idiomas; la frontera evita falsos
+    // positivos (p. ej. "pvp"). 予告/特報/ティザー son los usos japoneses
+    // estándar; 预告 es el chino de bilibili.
+    [GeneratedRegex(WordStart + @"(trailer|tráiler|teaser|avance|pv|promo)" + WordEnd + @"|予告|特報|ティザー|预告", RegexOptions.IgnoreCase)]
     private static partial Regex TrailerWordRegex();
 
     // opening/ending/MV: incluye los usos japoneses (主題歌 = theme song,
     // ノンクレジット/ノンテロップ = creditless, オープニング/エンディング,
     // OP/ED映像) y "creditless" de los uploads oficiales.
-    [GeneratedRegex(@"\b(opening|ending|mv|music video|video musical|theme)\b|主題歌|ノンクレジット|ノンテロップ|オープニング|エンディング|op映像|ed映像|creditless", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(WordStart + @"(opening|ending|mv|music video|video musical|theme)" + WordEnd + @"|主題歌|ノンクレジット|ノンテロップ|オープニング|エンディング|op映像|ed映像|creditless", RegexOptions.IgnoreCase)]
     private static partial Regex ThemeWordRegex();
 
     // corto animado / video especial / aniversario: 特別映像 = special movie,
     // 短編 = short, 記念 = conmemorativo (aniversarios).
-    [GeneratedRegex(@"\b(short|corto|cortometraje|special|especial|anniversary|aniversario)\b|特別|短編|記念", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(WordStart + @"(short|corto|cortometraje|special|especial|anniversary|aniversario)" + WordEnd + @"|特別|短編|記念", RegexOptions.IgnoreCase)]
     private static partial Regex ShortWordRegex();
 
     // Señal de que el video está en español: doblaje latino o subtítulos
@@ -594,12 +610,31 @@ public partial class TrailerDownloadService(
     [GeneratedRegex(@"españ|espanol|spanish|castellano|latino|latam|doblaje|doblad|subtitulad|sub\.? esp|onegai", RegexOptions.IgnoreCase)]
     private static partial Regex SpanishRegex();
 
-    [GeneratedRegex(@"\b(reaction|reacci[oó]n|review|rese[ñn]a|an[aá]lisis|analysis|explicado|explained|resumen|recap|amv|cosplay|theory|teor[ií]a|concept|fan[ -]?made|just dropped|breakdown|everything we know|ranked|ranking|top \d+)\b", RegexOptions.IgnoreCase)]
+    // Misma frontera CJK-segura: sin esto un "reaction" pegado a kanji se
+    // colaba. Acá el efecto es puramente protector — solo rechaza MÁS.
+    [GeneratedRegex(WordStart + @"(reaction|reacci[oó]n|review|rese[ñn]a|an[aá]lisis|analysis|explicado|explained|resumen|recap|amv|cosplay|theory|teor[ií]a|concept|fan[ -]?made|just dropped|breakdown|everything we know|ranked|ranking|top \d+)" + WordEnd, RegexOptions.IgnoreCase)]
     private static partial Regex FanContentRegex();
 
     // Distribuidores/estudios que suben los PV reales. La lista no necesita ser
     // exhaustiva: es solo un bonus — el título con "trailer/teaser" alcanza solo.
-    [GeneratedRegex(@"aniplex|crunchyroll|toho|kadokawa|avex|toei|bandai|netflix|warner|pony canyon|king records|muse|ani-one|shueisha|kodansha|square enix|ufotable|mappa|wit studio|cloverworks|a-1 pictures|bones|kyoto animation|remow|tms", RegexOptions.IgnoreCase)]
+    //
+    // Van TAMBIÉN las grafías japonesas: los canales oficiales japoneses casi
+    // nunca escriben el nombre en alfabeto latino, y con la lista solo-latina el
+    // PV oficial embebido en el artículo terminaba descartado. Caso real del
+    // 6-sep-2026 (run 34055519423): el PV de "Tensei Kizoku, Kantei Skill de
+    // Nariagaru" lo subió «isekai channel @バンダイナムコフィルムワークス»
+    // —Bandai Namco Filmworks, el licenciante— y "bandai" no matcheaba contra
+    // バンダイ, así que el reel salió como slideshow teniendo EL video al lado.
+    [GeneratedRegex(
+        @"aniplex|crunchyroll|toho|kadokawa|avex|toei|bandai|netflix|warner|pony canyon|" +
+        @"king records|muse|ani-one|shueisha|kodansha|square enix|ufotable|mappa|wit studio|" +
+        @"cloverworks|a-1 pictures|bones|kyoto animation|remow|tms|" +
+        // Mismas casas en katakana/kanji + marcadores de canal oficial japonés
+        @"アニプレックス|クランチロール|東宝|カドカワ|角川|エイベックス|東映|バンダイ|" +
+        @"フィルムワークス|ネットフリックス|ワーナー|ポニーキャニオン|キングレコード|" +
+        @"集英社|講談社|小学館|スクウェア・エニックス|ウィットスタジオ|クローバーワークス|" +
+        @"ボンズ|京都アニメーション|京アニ|トムス|ソニー|製作委員会|製作委員會",
+        RegexOptions.IgnoreCase)]
     private static partial Regex OfficialChannelRegex();
 
     /// <summary>
@@ -614,7 +649,8 @@ public partial class TrailerDownloadService(
     /// </summary>
     public async Task<TrailerCandidate?> ValidateAsync(
         string videoUrl, bool requireSpanish = true,
-        NewsVideoKind kind = NewsVideoKind.Trailer, CancellationToken ct = default)
+        NewsVideoKind kind = NewsVideoKind.Trailer,
+        bool trustProvenance = false, CancellationToken ct = default)
     {
         var line = await RunYtDlpPrintAsync(
             $"--skip-download --print \"%(id)s{FieldSeparator}%(duration)s{FieldSeparator}%(title)s{FieldSeparator}%(channel)s\" " +
@@ -622,6 +658,20 @@ public partial class TrailerDownloadService(
             $"--no-warnings --socket-timeout 20 \"{videoUrl}\"", ct);
 
         if (line is null) return null;
+
+        if (trustProvenance)
+        {
+            var trusted = EvaluateEmbeddedByProvenance(videoUrl, line);
+            if (trusted is null)
+                logger.LogInformation(
+                    "Video embebido descartado por duración o contenido fan: {Line}",
+                    line.Length > 120 ? line[..120] : line);
+            else
+                logger.LogInformation(
+                    "Video embebido aceptado por PROCEDENCIA ({Dur}s): {Url}",
+                    trusted.DurationSeconds, videoUrl);
+            return trusted;
+        }
 
         var best = PickBestSearchResult([line], requireSpanish, kind);
         if (best is null)
@@ -632,6 +682,41 @@ public partial class TrailerDownloadService(
             return null;
         }
         return new TrailerCandidate(videoUrl, best.Value.DurationSeconds);
+    }
+
+    /// <summary>
+    /// El video EMBEBIDO en el artículo, juzgado por su procedencia en vez de por
+    /// su título: lo eligió la redacción de la fuente para ESA noticia, así que la
+    /// relevancia ya está dada. Mismo trato que el tweet embebido
+    /// (<see cref="EvaluateExternalPost"/> con requireTrustSignal=false), que hasta
+    /// ahora era el único que lo tenía pese a que el comentario decía lo contrario.
+    ///
+    /// Hace falta porque el gate por título no puede validar uploads japoneses:
+    /// el canal va en katakana (バンダイナムコフィルムワークス), el título en
+    /// japonés no matchea tokens romaji, y hasta la palabra del tipo falla —
+    /// "PV第2弾" no da frontera de palabra para <c>\bpv\b</c> porque .NET cuenta
+    /// los kanji como caracteres de palabra. Caso real 6-sep-2026.
+    ///
+    /// Se mantienen los DOS filtros que no dependen de reconocer el canal:
+    /// duración de clip promocional y contenido fan. Solo se usa en la pasada
+    /// relajada: con requireSpanish=true el gate sigue entero, porque ahí el
+    /// objetivo es preferir la versión latina antes de conformarse con el PV
+    /// japonés. Público estático para tests.
+    /// </summary>
+    public static TrailerCandidate? EvaluateEmbeddedByProvenance(string videoUrl, string printedLine)
+    {
+        var parts = printedLine.Split(FieldSeparator);
+        if (parts.Length < 3) return null;
+
+        double.TryParse(parts[1], NumberStyles.Any, CultureInfo.InvariantCulture, out var duration);
+        var title = parts[2];
+
+        // 5s..6min: material promocional real, no un episodio, compilado o live
+        if (duration is < 5 or > 360) return null;
+        // Reacciones, reviews, AMVs y demás: nunca, venga de donde venga
+        if (FanContentRegex().IsMatch(title)) return null;
+
+        return new TrailerCandidate(videoUrl, duration);
     }
 
     /// <summary>

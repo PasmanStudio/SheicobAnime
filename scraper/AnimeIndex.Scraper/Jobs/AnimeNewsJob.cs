@@ -15,10 +15,27 @@ namespace AnimeIndex.Scraper.Jobs;
 public class AnimeNewsJob(
     AnimeNewsFeedService feedService,
     AnimeNewsPublisherService publisher,
+    MetaGraphApiClient api,
     AnimeNewsSettings settings,
     ILogger<AnimeNewsJob> logger)
 {
     public async Task RunAsync(CancellationToken ct = default)
+    {
+        try
+        {
+            await RunCoreAsync(ct);
+        }
+        finally
+        {
+            // Los assets de Cloudinary son de un solo uso: Meta ya los copió a su
+            // CDN, y si la publicación falló no se reintentan entre corridas. Va en
+            // finally para que las corridas que fallan —las que MÁS basura dejan—
+            // también limpien. Best-effort: PurgeUploadedAsync no propaga.
+            await api.PurgeUploadedAsync(ct);
+        }
+    }
+
+    private async Task RunCoreAsync(CancellationToken ct)
     {
         if (!settings.IsEnabled)
         {

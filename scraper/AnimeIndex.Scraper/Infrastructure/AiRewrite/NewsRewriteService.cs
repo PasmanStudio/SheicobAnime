@@ -41,15 +41,19 @@ public class NewsRewriteService(
         try
         {
             var prompt = BuildUserPrompt(item);
-            var raw    = await gemini.GenerateAsync(SystemInstruction, prompt, settings.UseWebSearch, ct);
-            var dto    = ParseJson(raw);
+            var result = await gemini.GenerateDetailedAsync(
+                SystemInstruction, prompt, settings.UseWebSearch, ct: ct);
+            var dto    = ParseJson(result.Text);
 
             var content = ToContent(dto, item);
             if (content is not null)
             {
+                // Modelo y grounding REALES, no los configurados: hasta sep-2026
+                // esta línea imprimía settings.Model y websearch=true mientras
+                // todos los rewrites corrían en Gemma sin grounding.
                 logger.LogInformation(
                     "AiRewrite: rewrote [{Source}] \"{Title}\" via {Model} (websearch={Ws})",
-                    item.SourceKey, Truncate(item.Title, 50), settings.Model, settings.UseWebSearch);
+                    item.SourceKey, Truncate(item.Title, 50), result.Model, result.Grounded);
                 return content;
             }
 
