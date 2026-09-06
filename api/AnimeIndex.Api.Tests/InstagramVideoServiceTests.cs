@@ -1256,3 +1256,52 @@ public class HeuristicVideoQueryAccentTests
         Assert.Equal(NewsVideoKind.Trailer, result!.Value.Kind);
     }
 }
+
+/// <summary>
+/// Clasificación de errores de publicación de Meta. El 6-sep-2026 el fetcher de
+/// Meta falló en 2 de 4 reels y 3 de 3 carruseles mientras las imágenes seguían
+/// sirviéndose bien (200, image/jpeg, 1080x1080, ~180 KB): el fallo era
+/// transitorio y el código no reintentaba ni una vez.
+/// </summary>
+public class MetaPublishRetryTests
+{
+    // El cuerpo EXACTO que devolvió Meta el 6-sep-2026 (run 34052811639).
+    // Ojo con "is_transient":false — Meta lo marca permanente y NO lo es.
+    private const string MediaDownloadFailureBody = """
+        {"error":{"message":"Only photo or video can be accepted as media type.",
+        "type":"OAuthException","code":9004,"error_subcode":2207052,"is_transient":false,
+        "error_user_title":"Error al descargar el contenido multimedia.",
+        "error_user_msg":"No se pudo recuperar el contenido multimedia de este URI",
+        "fbtrace_id":"AfulXDO2_i31-9c3c1xIz1x"}}
+        """;
+
+    [Fact]
+    public void MediaDownloadFailure_IsRetried_DespiteIsTransientFalse()
+        => Assert.True(MetaGraphApiClient.IsTransientPublishError(
+            System.Net.HttpStatusCode.BadRequest, MediaDownloadFailureBody));
+
+    [Theory]
+    [InlineData(500)]
+    [InlineData(502)]
+    [InlineData(503)]
+    public void ServerErrors_AreRetried(int status)
+        => Assert.True(MetaGraphApiClient.IsTransientPublishError(
+            (System.Net.HttpStatusCode)status, "{}"));
+
+    [Fact]
+    public void MetaDeclaredTransient_IsRetried()
+        => Assert.True(MetaGraphApiClient.IsTransientPublishError(
+            System.Net.HttpStatusCode.BadRequest,
+            """{"error":{"message":"Please retry","code":2,"is_transient":true}}"""));
+
+    [Theory]
+    // Token vencido y caption inválido: reintentar solo quema tiempo
+    [InlineData("""{"error":{"message":"Error validating access token","code":190,"error_subcode":463}}""")]
+    [InlineData("""{"error":{"message":"The caption is too long","code":100,"error_subcode":2207042}}""")]
+    // Respuestas que no son JSON no pueden clasificarse como transitorias
+    [InlineData("<html>502 Bad Gateway</html>")]
+    [InlineData("")]
+    public void PermanentErrors_AreNotRetried(string body)
+        => Assert.False(MetaGraphApiClient.IsTransientPublishError(
+            System.Net.HttpStatusCode.BadRequest, body));
+}

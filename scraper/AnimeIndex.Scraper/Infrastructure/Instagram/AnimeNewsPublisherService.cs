@@ -525,9 +525,13 @@ public class AnimeNewsPublisherService(
             }
 
             var caption = BuildCaption(content);
-            var containerId = await api.CreateReelContainerAsync(videoUrl, caption, shareToFeed: true, coverUrl, ct);
-            await api.WaitForContainerReadyAsync(containerId, ct, VideoProcessingTimeout);
-            var mediaId = await api.PublishContainerAsync(containerId, ct);
+            // Crear + esperar + publicar CON reintento: el 6-sep-2026 dos reels
+            // ya renderizados murieron en "Container ... terminal status: ERROR"
+            // mientras el video seguía sirviéndose bien desde Cloudinary. El
+            // container quemado no se recupera, se crea uno nuevo con la misma URL.
+            var mediaId = await api.CreateWaitPublishAsync(
+                token => api.CreateReelContainerAsync(videoUrl, caption, shareToFeed: true, coverUrl, token),
+                VideoProcessingTimeout, ct);
 
             logger.LogInformation("AnimeNews: published REEL for [{Source}] {Title} → {MediaId}",
                 item.SourceKey, Truncate(item.Title, 60), mediaId);

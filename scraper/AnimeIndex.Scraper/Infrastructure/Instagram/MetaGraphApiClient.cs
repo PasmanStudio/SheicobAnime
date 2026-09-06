@@ -42,6 +42,48 @@ public class MetaGraphApiClient(
     private Cloudinary Cloudinary => _cloudinary ??= new Cloudinary(
         new Account(settings.CloudinaryCloudName, settings.CloudinaryApiKey, settings.CloudinaryApiSecret));
 
+    // Todo lo que ESTA corrida subió a Cloudinary, para poder borrarlo al final
+    // (ver PurgeUploadedAsync). Solo se registra acá lo que sube este cliente:
+    // la biblioteca de música de ReelMusicService ("{CloudinaryFolder}/music")
+    // sube por otro camino y por eso NUNCA entra en esta lista.
+    private readonly List<(string PublicId, ResourceType Type)> _uploaded = [];
+
+    /// <summary>
+    /// Borra de Cloudinary todo lo que subió esta corrida. Se llama al terminar,
+    /// haya salido bien o mal: una vez que Meta procesó el container, copia el
+    /// archivo a su propio CDN y la URL deja de hacer falta; y si la publicación
+    /// falló, el asset no sirve para nada (no hay reintento entre corridas).
+    ///
+    /// Sin esto no se borraba NADA nunca: ~130 MB por día acumulándose (6,95 GB
+    /// al 6-sep-2026, el 59% del consumo de créditos del plan free).
+    ///
+    /// Best-effort a propósito: un fallo borrando no puede tirar una corrida que
+    /// ya publicó — a lo sumo queda un huérfano que la próxima purga se lleva.
+    /// </summary>
+    public async Task PurgeUploadedAsync(CancellationToken ct = default)
+    {
+        if (!settings.CloudinaryPurgeAfterRun || _uploaded.Count == 0) return;
+
+        var borrados = 0;
+        foreach (var (publicId, type) in _uploaded)
+        {
+            try
+            {
+                var result = await Cloudinary.DestroyAsync(new DeletionParams(publicId) { ResourceType = type });
+                if (string.Equals(result.Result, "ok", StringComparison.OrdinalIgnoreCase)) borrados++;
+                else logger.LogDebug("Cloudinary destroy {Id}: {Result}", publicId, result.Result);
+            }
+            catch (Exception ex) when (!ct.IsCancellationRequested)
+            {
+                logger.LogDebug(ex, "No se pudo borrar {Id} de Cloudinary", publicId);
+            }
+        }
+
+        logger.LogInformation("Cloudinary: {Deleted}/{Total} asset(s) de la corrida borrados",
+            borrados, _uploaded.Count);
+        _uploaded.Clear();
+    }
+
     /// <summary>
     /// Uploads image bytes to Cloudinary and returns the secure (HTTPS) URL.
     /// Cloudinary authenticates by API key, so unlike imgbb it is immune to the
@@ -64,6 +106,9 @@ public class MetaGraphApiClient(
 
         var url = result.SecureUrl?.ToString()
             ?? throw new InvalidOperationException("Cloudinary response missing secure_url");
+
+        if (result.PublicId is { Length: > 0 } pid)
+            _uploaded.Add((pid, ResourceType.Image));
 
         logger.LogDebug("Uploaded {File} to Cloudinary: {Url}", fileName, url);
         return url;
@@ -128,6 +173,9 @@ public class MetaGraphApiClient(
         var url = result.SecureUrl?.ToString()
             ?? throw new InvalidOperationException("Cloudinary response missing secure_url");
 
+        if (result.PublicId is { Length: > 0 } pid)
+            _uploaded.Add((pid, ResourceType.Video));
+
         logger.LogDebug("Uploaded {File} to Cloudinary: {Url}", fileName, url);
         return url;
     }
@@ -159,16 +207,7 @@ public class MetaGraphApiClient(
         if (!string.IsNullOrWhiteSpace(coverUrl))
             fields["cover_url"] = coverUrl;
 
-        using var form = new FormUrlEncodedContent(fields);
-        var resp = await Http.PostAsync($"{BaseUrl}/{settings.IgUserId}/media", form, ct);
-        var body = await resp.Content.ReadAsStringAsync(ct);
-
-        if (!resp.IsSuccessStatusCode)
-            throw new InvalidOperationException($"CreateReel failed ({resp.StatusCode}): {body}");
-
-        using var doc = JsonDocument.Parse(body);
-        return doc.RootElement.GetProperty("id").GetString()
-            ?? throw new InvalidOperationException("Reel container response missing id");
+        return await CreateContainerAsync("CreateReel", fields, ct);
     }
 
     /// <summary>
@@ -186,16 +225,7 @@ public class MetaGraphApiClient(
             ["access_token"]     = settings.AccessToken
         };
 
-        using var form = new FormUrlEncodedContent(fields);
-        var resp = await Http.PostAsync($"{BaseUrl}/{settings.IgUserId}/media", form, ct);
-        var body = await resp.Content.ReadAsStringAsync(ct);
-
-        if (!resp.IsSuccessStatusCode)
-            throw new InvalidOperationException($"CreateVideoStory failed ({resp.StatusCode}): {body}");
-
-        using var doc = JsonDocument.Parse(body);
-        return doc.RootElement.GetProperty("id").GetString()
-            ?? throw new InvalidOperationException("Video story container response missing id");
+        return await CreateContainerAsync("CreateVideoStory", fields, ct);
     }
 
     // ── Carousel workflow ─────────────────────────────────────────────
@@ -204,27 +234,14 @@ public class MetaGraphApiClient(
     /// Creates a carousel child (item) container for one image.
     /// Must be called for each image before creating the carousel container.
     /// </summary>
-    public async Task<string> CreateCarouselItemContainerAsync(
+    public Task<string> CreateCarouselItemContainerAsync(
         string imageUrl, CancellationToken ct = default)
-    {
-        using var form = new FormUrlEncodedContent(new Dictionary<string, string>
+        => CreateContainerAsync("CreateCarouselItem", new Dictionary<string, string>
         {
             ["image_url"]        = imageUrl,
             ["is_carousel_item"] = "true",
             ["access_token"]     = settings.AccessToken
-        });
-
-        var resp = await Http.PostAsync($"{BaseUrl}/{settings.IgUserId}/media", form, ct);
-        var body = await resp.Content.ReadAsStringAsync(ct);
-
-        if (!resp.IsSuccessStatusCode)
-            throw new InvalidOperationException(
-                $"CreateCarouselItem failed ({resp.StatusCode}): {body}");
-
-        using var doc = JsonDocument.Parse(body);
-        return doc.RootElement.GetProperty("id").GetString()
-            ?? throw new InvalidOperationException("Carousel item response missing id");
-    }
+        }, ct);
 
     /// <summary>
     /// Creates the carousel (parent) container referencing pre-created child containers.
@@ -249,17 +266,7 @@ public class MetaGraphApiClient(
         if (!string.IsNullOrWhiteSpace(caption))
             fields["caption"] = caption;
 
-        using var form = new FormUrlEncodedContent(fields);
-        var resp = await Http.PostAsync($"{BaseUrl}/{settings.IgUserId}/media", form, ct);
-        var body = await resp.Content.ReadAsStringAsync(ct);
-
-        if (!resp.IsSuccessStatusCode)
-            throw new InvalidOperationException(
-                $"CreateCarouselContainer failed ({resp.StatusCode}): {body}");
-
-        using var doc = JsonDocument.Parse(body);
-        var id = doc.RootElement.GetProperty("id").GetString()
-            ?? throw new InvalidOperationException("Carousel container response missing id");
+        var id = await CreateContainerAsync("CreateCarouselContainer", fields, ct);
 
         logger.LogInformation("Created carousel container {Id} with {Count} items", id, childContainerIds.Count);
         return id;
@@ -280,17 +287,7 @@ public class MetaGraphApiClient(
         if (!string.IsNullOrWhiteSpace(caption))
             fields["caption"] = caption;
 
-        using var form = new FormUrlEncodedContent(fields);
-        var resp = await Http.PostAsync($"{BaseUrl}/{settings.IgUserId}/media", form, ct);
-        var body = await resp.Content.ReadAsStringAsync(ct);
-
-        if (!resp.IsSuccessStatusCode)
-            throw new InvalidOperationException(
-                $"CreateSingleImage failed ({resp.StatusCode}): {body}");
-
-        using var doc = JsonDocument.Parse(body);
-        return doc.RootElement.GetProperty("id").GetString()
-            ?? throw new InvalidOperationException("Single image container response missing id");
+        return await CreateContainerAsync("CreateSingleImage", fields, ct);
     }
 
     /// <summary>
@@ -308,16 +305,116 @@ public class MetaGraphApiClient(
             ["access_token"]     = settings.AccessToken
         };
 
-        using var form = new FormUrlEncodedContent(fields);
-        var resp = await Http.PostAsync($"{BaseUrl}/{settings.IgUserId}/media", form, ct);
-        var body = await resp.Content.ReadAsStringAsync(ct);
+        return await CreateContainerAsync("CreateStory", fields, ct);
+    }
 
-        if (!resp.IsSuccessStatusCode)
-            throw new InvalidOperationException($"CreateStory failed ({resp.StatusCode}): {body}");
+    // ── Reintentos ante fallos transitorios de Meta ───────────────────
 
-        using var doc = JsonDocument.Parse(body);
-        return doc.RootElement.GetProperty("id").GetString()
-            ?? throw new InvalidOperationException("Story container response missing id");
+    /// <summary>
+    /// Subcódigo de Meta para "no pude descargar el contenido multimedia de esa
+    /// URI". Meta lo marca <c>is_transient:false</c> pero NO lo es: el 6-sep-2026
+    /// tiró 2 de 4 reels y 3 de 3 carruseles mientras las MISMAS imágenes seguían
+    /// sirviéndose horas después (HTTP 200, image/jpeg, 1080x1080, ~180 KB —
+    /// dentro de todos los límites de Instagram). Los assets estaban bien; el
+    /// fetcher de Meta parpadeó y el código no reintentaba ni una vez.
+    /// </summary>
+    private const int MediaDownloadFailureSubcode = 2207052;
+
+    private const int PublishAttempts = 3;
+
+    /// <summary>
+    /// ¿Vale la pena reintentar esta respuesta de error? Los 5xx y el
+    /// <see cref="MediaDownloadFailureSubcode"/> sí; un token vencido o un
+    /// caption inválido no — reintentar eso solo quema tiempo.
+    /// Público estático para tests.
+    /// </summary>
+    public static bool IsTransientPublishError(System.Net.HttpStatusCode status, string body)
+    {
+        if ((int)status >= 500) return true;
+
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            if (!doc.RootElement.TryGetProperty("error", out var err)) return false;
+
+            if (err.TryGetProperty("error_subcode", out var sub)
+                && sub.TryGetInt32(out var subcode)
+                && subcode == MediaDownloadFailureSubcode)
+                return true;
+
+            // Meta marca así sus fallos internos declarados; se respeta cuando viene
+            return err.TryGetProperty("is_transient", out var tr)
+                && tr.ValueKind == JsonValueKind.True;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// POST a /media reintentando ante fallos transitorios. Devuelve el id del
+    /// container. Lo usan TODOS los tipos de container (carrusel, reel, story):
+    /// el parpadeo del fetcher de Meta no distingue formato.
+    /// </summary>
+    private async Task<string> CreateContainerAsync(
+        string what, Dictionary<string, string> fields, CancellationToken ct)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            using var form = new FormUrlEncodedContent(fields);
+            var resp = await Http.PostAsync($"{BaseUrl}/{settings.IgUserId}/media", form, ct);
+            var body = await resp.Content.ReadAsStringAsync(ct);
+
+            if (resp.IsSuccessStatusCode)
+            {
+                using var doc = JsonDocument.Parse(body);
+                return doc.RootElement.GetProperty("id").GetString()
+                    ?? throw new InvalidOperationException($"{what} response missing id");
+            }
+
+            if (attempt >= PublishAttempts || !IsTransientPublishError(resp.StatusCode, body))
+                throw new InvalidOperationException($"{what} failed ({resp.StatusCode}): {body}");
+
+            // Backoff generoso: lo que falla es que Meta vaya a buscar el archivo
+            // a Cloudinary, y reintentar al toque suele comerse el mismo parpadeo.
+            var wait = TimeSpan.FromSeconds(5 * attempt);
+            logger.LogWarning(
+                "{What}: fallo transitorio de Meta (intento {Attempt}/{Total}) — reintento en {Wait}s. {Body}",
+                what, attempt, PublishAttempts, wait.TotalSeconds, Truncate(body, 300));
+            await Task.Delay(wait, ct);
+        }
+    }
+
+    /// <summary>
+    /// Crea el container, espera a que Meta lo procese y lo publica, reintentando
+    /// la SECUENCIA COMPLETA ante un <c>status_code=ERROR</c>. Hace falta el ciclo
+    /// entero: un container que terminó en ERROR queda quemado, así que reintentar
+    /// solo el publish no sirve — hay que crear uno nuevo apuntando a la misma URL
+    /// (que sigue viva en Cloudinary, no se resube nada).
+    /// </summary>
+    public async Task<string> CreateWaitPublishAsync(
+        Func<CancellationToken, Task<string>> createContainer,
+        TimeSpan? processingTimeout = null,
+        CancellationToken ct = default)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            var containerId = await createContainer(ct);
+            try
+            {
+                await WaitForContainerReadyAsync(containerId, ct, processingTimeout);
+                return await PublishContainerAsync(containerId, ct);
+            }
+            catch (ContainerProcessingException ex) when (attempt < PublishAttempts)
+            {
+                var wait = TimeSpan.FromSeconds(5 * attempt);
+                logger.LogWarning(
+                    "Container {Id} terminó en {Status} (intento {Attempt}/{Total}) — se recrea en {Wait}s",
+                    containerId, ex.Status, attempt, PublishAttempts, wait.TotalSeconds);
+                await Task.Delay(wait, ct);
+            }
+        }
     }
 
     // ── Shared publish flow ───────────────────────────────────────────
@@ -352,8 +449,10 @@ public class MetaGraphApiClient(
                 case "FINISHED":   return;
                 case "ERROR":
                 case "EXPIRED":
-                    throw new InvalidOperationException(
-                        $"Container {containerId} reached terminal status: {status}");
+                    // Excepción propia para que CreateWaitPublishAsync pueda
+                    // distinguir "Meta no pudo procesar este container" (recreable)
+                    // de cualquier otro fallo.
+                    throw new ContainerProcessingException(containerId, status ?? "UNKNOWN");
             }
         }
 
@@ -470,4 +569,20 @@ public class MetaGraphApiClient(
         }
         catch { return double.MaxValue; }
     }
+
+    private static string Truncate(string s, int max) =>
+        s.Length <= max ? s : s[..max] + "…";
+}
+
+/// <summary>
+/// Meta terminó de procesar el container y lo dejó en ERROR/EXPIRED. Es un
+/// estado del CONTAINER, no del contenido: el mismo video/imagen suele entrar
+/// bien en un container nuevo, así que <see cref="MetaGraphApiClient.CreateWaitPublishAsync"/>
+/// lo trata como reintentable.
+/// </summary>
+public sealed class ContainerProcessingException(string containerId, string status)
+    : InvalidOperationException($"Container {containerId} reached terminal status: {status}")
+{
+    public string ContainerId { get; } = containerId;
+    public string Status { get; } = status;
 }
