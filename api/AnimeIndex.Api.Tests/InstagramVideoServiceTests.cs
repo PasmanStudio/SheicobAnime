@@ -1392,3 +1392,52 @@ public class EmbeddedProvenanceTests
     public void MalformedLine_ReturnsNull()
         => Assert.Null(TrailerDownloadService.EvaluateEmbeddedByProvenance("https://youtu.be/x", "basura"));
 }
+
+/// <summary>
+/// Fronteras de palabra contra títulos japoneses. `\b` se apoya en `\w`, que en
+/// .NET incluye kanji y kana, así que "PV第2弾" no daba frontera y `\bpv\b`
+/// fallaba — justo como titulan los canales oficiales japoneses. Afecta al
+/// score de la BÚSQUEDA (kindMatch vale 4 puntos), no solo al embebido.
+/// </summary>
+public class CjkWordBoundaryTests
+{
+    // Un canal oficial reconocido aísla la variable: lo único que decide es si
+    // la palabra del tipo matchea el título.
+    private static string Line(string title) => $"abc123xyz|~|100|~|{title}|~|バンダイナムコフィルムワークス";
+
+    [Theory]
+    // Formas japonesas reales: la palabra latina pegada al kanji
+    [InlineData("『転生貴族、鑑定スキルで成り上がる 第3期』PV第2弾")]
+    [InlineData("第1弾PV【2026年10月放送開始】")]
+    [InlineData("アニメ『薬屋のひとりごと』本予告PV")]
+    // Y las de siempre, que no deben romperse
+    [InlineData("Official Trailer 2026")]
+    [InlineData("TEASER")]
+    public void KindWord_MatchesAcrossScriptBoundaries(string title)
+        => Assert.NotNull(TrailerDownloadService.PickBestSearchResult(
+            [Line(title)], requireSpanish: false));
+
+    // Con canal NO oficial y obra verificada, lo ÚNICO que abre el gate relajado
+    // es la palabra del tipo (kindMatch && subjectVerified) — así queda aislada.
+    private static string[] UnofficialLine(string title) =>
+        [$"abc123xyz|~|100|~|{title}|~|RandomUploader"];
+
+    [Fact]
+    public void KindWord_GluedToKanji_OpensTheRelaxedGate()
+        => Assert.NotNull(TrailerDownloadService.PickBestSearchResult(
+            UnofficialLine("アニメ『鬼滅の刃』第2弾PV"), requireSpanish: false, subject: "鬼滅の刃"));
+
+    [Theory]
+    // Los falsos positivos que la frontera existía para evitar siguen afuera:
+    // "pvc"/"spv" NO son "pv", así que sin palabra del tipo el gate no abre.
+    [InlineData("鬼滅の刃 PVC figure unboxing")]
+    [InlineData("鬼滅の刃 SPV highlights")]
+    public void KindWord_StillRejectsPartialWords(string title)
+        => Assert.Null(TrailerDownloadService.PickBestSearchResult(
+            UnofficialLine(title), requireSpanish: false, subject: "鬼滅の刃"));
+
+    [Fact]
+    public void FanContent_GluedToKanji_IsNowCaught()
+        => Assert.Null(TrailerDownloadService.PickBestSearchResult(
+            [Line("【感想】my honest reaction【神回】")], requireSpanish: false));
+}

@@ -1,4 +1,4 @@
-using System.Text;
+﻿using System.Text;
 using AnimeIndex.Api.Data;
 using AnimeIndex.Api.Data.Entities;
 using AnimeIndex.Scraper.Infrastructure;

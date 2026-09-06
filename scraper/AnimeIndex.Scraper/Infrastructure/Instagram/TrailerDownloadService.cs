@@ -565,21 +565,37 @@ public partial class TrailerDownloadService(
     [GeneratedRegex(@"^(19|20)\d{2}$")]
     private static partial Regex YearRegex();
 
-    // trailer/teaser/PV/avance en varios idiomas; \b evita falsos positivos
-    // (p. ej. "pvp"). 予告/特報/ティザー son los usos japoneses estándar;
-    // 预告 es el chino de bilibili.
-    [GeneratedRegex(@"\b(trailer|tráiler|teaser|avance|pv|promo)\b|予告|特報|ティザー|预告", RegexOptions.IgnoreCase)]
+    // Frontera de palabra SEGURA PARA TÍTULOS JAPONESES. `\b` se apoya en `\w`,
+    // que en .NET incluye kanji y kana (categoría Unicode Lo), así que entre la
+    // "V" de "PV" y el "第" de "PV第2弾" NO hay frontera y `\bpv\b` no matchea —
+    // y así es exactamente como titulan los canales oficiales japoneses
+    // ("第1弾PV", "本予告PV"). Estos lookarounds sacan a los ideogramas del
+    // concepto de "carácter de palabra", con lo cual un kanji corta la palabra
+    // igual que lo haría un espacio.
+    //
+    // Importa más allá del video embebido: en la BÚSQUEDA, kindMatch vale 4
+    // puntos de score y habilita el escape `kindMatch && subjectVerified`, así
+    // que sin esto todos los PV japoneses puntuaban de menos. Verificado el
+    // 6-sep-2026 contra el título real del run 34055519423: pasa a matchear sin
+    // aflojar ningún negativo ("trailers", "pvc", "spv", "pv2" siguen sin dar).
+    private const string WordStart = @"(?<![\w-[\p{Lo}]])";
+    private const string WordEnd   = @"(?![\w-[\p{Lo}]])";
+
+    // trailer/teaser/PV/avance en varios idiomas; la frontera evita falsos
+    // positivos (p. ej. "pvp"). 予告/特報/ティザー son los usos japoneses
+    // estándar; 预告 es el chino de bilibili.
+    [GeneratedRegex(WordStart + @"(trailer|tráiler|teaser|avance|pv|promo)" + WordEnd + @"|予告|特報|ティザー|预告", RegexOptions.IgnoreCase)]
     private static partial Regex TrailerWordRegex();
 
     // opening/ending/MV: incluye los usos japoneses (主題歌 = theme song,
     // ノンクレジット/ノンテロップ = creditless, オープニング/エンディング,
     // OP/ED映像) y "creditless" de los uploads oficiales.
-    [GeneratedRegex(@"\b(opening|ending|mv|music video|video musical|theme)\b|主題歌|ノンクレジット|ノンテロップ|オープニング|エンディング|op映像|ed映像|creditless", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(WordStart + @"(opening|ending|mv|music video|video musical|theme)" + WordEnd + @"|主題歌|ノンクレジット|ノンテロップ|オープニング|エンディング|op映像|ed映像|creditless", RegexOptions.IgnoreCase)]
     private static partial Regex ThemeWordRegex();
 
     // corto animado / video especial / aniversario: 特別映像 = special movie,
     // 短編 = short, 記念 = conmemorativo (aniversarios).
-    [GeneratedRegex(@"\b(short|corto|cortometraje|special|especial|anniversary|aniversario)\b|特別|短編|記念", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(WordStart + @"(short|corto|cortometraje|special|especial|anniversary|aniversario)" + WordEnd + @"|特別|短編|記念", RegexOptions.IgnoreCase)]
     private static partial Regex ShortWordRegex();
 
     // Señal de que el video está en español: doblaje latino o subtítulos
@@ -594,7 +610,9 @@ public partial class TrailerDownloadService(
     [GeneratedRegex(@"españ|espanol|spanish|castellano|latino|latam|doblaje|doblad|subtitulad|sub\.? esp|onegai", RegexOptions.IgnoreCase)]
     private static partial Regex SpanishRegex();
 
-    [GeneratedRegex(@"\b(reaction|reacci[oó]n|review|rese[ñn]a|an[aá]lisis|analysis|explicado|explained|resumen|recap|amv|cosplay|theory|teor[ií]a|concept|fan[ -]?made|just dropped|breakdown|everything we know|ranked|ranking|top \d+)\b", RegexOptions.IgnoreCase)]
+    // Misma frontera CJK-segura: sin esto un "reaction" pegado a kanji se
+    // colaba. Acá el efecto es puramente protector — solo rechaza MÁS.
+    [GeneratedRegex(WordStart + @"(reaction|reacci[oó]n|review|rese[ñn]a|an[aá]lisis|analysis|explicado|explained|resumen|recap|amv|cosplay|theory|teor[ií]a|concept|fan[ -]?made|just dropped|breakdown|everything we know|ranked|ranking|top \d+)" + WordEnd, RegexOptions.IgnoreCase)]
     private static partial Regex FanContentRegex();
 
     // Distribuidores/estudios que suben los PV reales. La lista no necesita ser
