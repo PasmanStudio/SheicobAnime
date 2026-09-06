@@ -1,4 +1,4 @@
-﻿using System.Text;
+using System.Text;
 using AnimeIndex.Api.Data;
 using AnimeIndex.Api.Data.Entities;
 using AnimeIndex.Scraper.Infrastructure;
@@ -672,7 +672,8 @@ public class AnimeNewsPublisherService(
 
             var embedded = embeddedUrl is null
                 ? null
-                : await trailerService.ValidateAsync(embeddedUrl, requireSpanish: false, kind, ct);
+                : await trailerService.ValidateAsync(embeddedUrl, requireSpanish: false, kind,
+                      trustProvenance: true, ct);
             if (embedded is not null)
             {
                 logger.LogInformation("AnimeNews: video {Kind} embebido del articulo aceptado (upload oficial)", kind);
@@ -752,7 +753,8 @@ public class AnimeNewsPublisherService(
         }
         if (any.Count == 0 && embeddedUrl is not null)
         {
-            var embedded = await trailerService.ValidateAsync(embeddedUrl, requireSpanish: false, ct: ct);
+            var embedded = await trailerService.ValidateAsync(
+                embeddedUrl, requireSpanish: false, trustProvenance: true, ct: ct);
             if (embedded is not null) any.Add(embedded);
         }
 

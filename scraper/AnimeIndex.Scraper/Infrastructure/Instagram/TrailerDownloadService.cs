@@ -631,7 +631,8 @@ public partial class TrailerDownloadService(
     /// </summary>
     public async Task<TrailerCandidate?> ValidateAsync(
         string videoUrl, bool requireSpanish = true,
-        NewsVideoKind kind = NewsVideoKind.Trailer, CancellationToken ct = default)
+        NewsVideoKind kind = NewsVideoKind.Trailer,
+        bool trustProvenance = false, CancellationToken ct = default)
     {
         var line = await RunYtDlpPrintAsync(
             $"--skip-download --print \"%(id)s{FieldSeparator}%(duration)s{FieldSeparator}%(title)s{FieldSeparator}%(channel)s\" " +
@@ -639,6 +640,20 @@ public partial class TrailerDownloadService(
             $"--no-warnings --socket-timeout 20 \"{videoUrl}\"", ct);
 
         if (line is null) return null;
+
+        if (trustProvenance)
+        {
+            var trusted = EvaluateEmbeddedByProvenance(videoUrl, line);
+            if (trusted is null)
+                logger.LogInformation(
+                    "Video embebido descartado por duración o contenido fan: {Line}",
+                    line.Length > 120 ? line[..120] : line);
+            else
+                logger.LogInformation(
+                    "Video embebido aceptado por PROCEDENCIA ({Dur}s): {Url}",
+                    trusted.DurationSeconds, videoUrl);
+            return trusted;
+        }
 
         var best = PickBestSearchResult([line], requireSpanish, kind);
         if (best is null)
@@ -649,6 +664,41 @@ public partial class TrailerDownloadService(
             return null;
         }
         return new TrailerCandidate(videoUrl, best.Value.DurationSeconds);
+    }
+
+    /// <summary>
+    /// El video EMBEBIDO en el artículo, juzgado por su procedencia en vez de por
+    /// su título: lo eligió la redacción de la fuente para ESA noticia, así que la
+    /// relevancia ya está dada. Mismo trato que el tweet embebido
+    /// (<see cref="EvaluateExternalPost"/> con requireTrustSignal=false), que hasta
+    /// ahora era el único que lo tenía pese a que el comentario decía lo contrario.
+    ///
+    /// Hace falta porque el gate por título no puede validar uploads japoneses:
+    /// el canal va en katakana (バンダイナムコフィルムワークス), el título en
+    /// japonés no matchea tokens romaji, y hasta la palabra del tipo falla —
+    /// "PV第2弾" no da frontera de palabra para <c>\bpv\b</c> porque .NET cuenta
+    /// los kanji como caracteres de palabra. Caso real 6-sep-2026.
+    ///
+    /// Se mantienen los DOS filtros que no dependen de reconocer el canal:
+    /// duración de clip promocional y contenido fan. Solo se usa en la pasada
+    /// relajada: con requireSpanish=true el gate sigue entero, porque ahí el
+    /// objetivo es preferir la versión latina antes de conformarse con el PV
+    /// japonés. Público estático para tests.
+    /// </summary>
+    public static TrailerCandidate? EvaluateEmbeddedByProvenance(string videoUrl, string printedLine)
+    {
+        var parts = printedLine.Split(FieldSeparator);
+        if (parts.Length < 3) return null;
+
+        double.TryParse(parts[1], NumberStyles.Any, CultureInfo.InvariantCulture, out var duration);
+        var title = parts[2];
+
+        // 5s..6min: material promocional real, no un episodio, compilado o live
+        if (duration is < 5 or > 360) return null;
+        // Reacciones, reviews, AMVs y demás: nunca, venga de donde venga
+        if (FanContentRegex().IsMatch(title)) return null;
+
+        return new TrailerCandidate(videoUrl, duration);
     }
 
     /// <summary>

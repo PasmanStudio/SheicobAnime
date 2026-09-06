@@ -1353,3 +1353,42 @@ public class OfficialJapaneseChannelTests
         Assert.Null(TrailerDownloadService.PickBestSearchResult(lines, requireSpanish: false));
     }
 }
+
+/// <summary>
+/// El video EMBEBIDO en el artículo se juzga por PROCEDENCIA: lo eligió la
+/// redacción de la fuente para esa noticia. Mismo trato que el tweet embebido.
+/// Solo aplica en la pasada relajada; con requireSpanish=true el gate sigue entero.
+/// </summary>
+public class EmbeddedProvenanceTests
+{
+    [Fact]
+    public void OfficialJapanesePv_Accepted_EvenWithoutRecognizableChannel_RealCase()
+    {
+        // Caso 6-sep-2026 con el canal FUERA de la lista de distribuidores: ni el
+        // canal, ni el título en japonés, ni la palabra del tipo lo salvaban
+        // ("PV第2弾" no da frontera para \bpv\b — .NET cuenta los kanji como
+        // caracteres de palabra).
+        const string line =
+            "8_Lxr7vO9l0|~|109|~|『転生貴族、鑑定スキルで成り上がる 第3期』PV第2弾|~|アニメ公式ちゃんねる";
+
+        var c = TrailerDownloadService.EvaluateEmbeddedByProvenance("https://youtu.be/8_Lxr7vO9l0", line);
+
+        Assert.NotNull(c);
+        Assert.Equal(109, c!.DurationSeconds);
+    }
+
+    [Theory]
+    // Los dos filtros que SÍ se mantienen, porque no dependen de reconocer el canal:
+    // episodio completo / compilado / live (>6 min) y contenido fan.
+    [InlineData("abc123|~|2400|~|Episodio completo|~|canal")]
+    [InlineData("abc123|~|3|~|clip cortito|~|canal")]
+    [InlineData("abc123|~|120|~|My honest reaction to the new trailer|~|canal")]
+    [InlineData("abc123|~|120|~|Reseña y análisis del PV|~|canal")]
+    [InlineData("abc123|~|120|~|Naruto AMV 2026|~|canal")]
+    public void DurationAndFanContent_StillFilter(string line)
+        => Assert.Null(TrailerDownloadService.EvaluateEmbeddedByProvenance("https://youtu.be/abc123", line));
+
+    [Fact]
+    public void MalformedLine_ReturnsNull()
+        => Assert.Null(TrailerDownloadService.EvaluateEmbeddedByProvenance("https://youtu.be/x", "basura"));
+}
