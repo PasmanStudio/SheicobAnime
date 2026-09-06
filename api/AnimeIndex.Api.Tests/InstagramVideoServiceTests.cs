@@ -1190,3 +1190,69 @@ public class RankedCandidatesTests
         Assert.Contains("Revengers", obra);
     }
 }
+
+/// <summary>
+/// La escalera de idioma del reel: la 2da pasada de búsqueda tiene que dejar de
+/// exigir "español latino". El PR #167 la rompió al comparar contra el literal
+/// SIN ñ ("espanol latino"), que nunca matchea la query real — la pasada
+/// relajada repetía la MISMA query en español y las obras sin doblaje latino
+/// quedaban sin video (31-ago → 5-sep-2026: 8 de 20 reels fallidos).
+/// </summary>
+public class SpanishSuffixStripTests
+{
+    [Theory]
+    // Lo que escriben de verdad el prompt de la IA y HeuristicVideoQuery: CON ñ
+    [InlineData("Solo Leveling temporada 2 tráiler oficial español latino",
+                "Solo Leveling temporada 2 tráiler oficial")]
+    [InlineData("KochiKame: Tokyo Beat Cops tráiler oficial español latino",
+                "KochiKame: Tokyo Beat Cops tráiler oficial")]
+    // Sin ñ y con mayúsculas: mismo resultado, la comparación es normalizada
+    [InlineData("Frieren trailer oficial Espanol Latino", "Frieren trailer oficial")]
+    [InlineData("Frieren tráiler oficial ESPAÑOL LATINO", "Frieren tráiler oficial")]
+    public void StripSpanishSuffix_RemovesLanguageSuffix_AccentInsensitive(string query, string expected)
+        => Assert.Equal(expected, AnimeNewsPublisherService.StripSpanishSuffix(query));
+
+    [Theory]
+    // Queries que no llevan el sufijo quedan intactas (temas, cortos, PVs)
+    [InlineData("MYTH & ROID Why? RED induction MV")]
+    [InlineData("Giant Ojo-sama teaser trailer")]
+    [InlineData("Mob Psycho 100 special movie")]
+    public void StripSpanishSuffix_LeavesOtherQueriesUntouched(string query)
+        => Assert.Equal(query, AnimeNewsPublisherService.StripSpanishSuffix(query));
+
+    [Fact]
+    public void StripSpanishSuffix_ActuallyChangesTheAiQuery_RegressionPr167()
+    {
+        // El caso exacto que salía sin video: las dos pasadas corrían idénticas
+        var aiQuery = AnimeNewsPublisherService
+            .HeuristicVideoQuery("Frieren confirma su segunda temporada con un tráiler")!.Value.Query;
+
+        Assert.NotEqual(aiQuery, AnimeNewsPublisherService.StripSpanishSuffix(aiQuery));
+        Assert.DoesNotContain("español", AnimeNewsPublisherService.StripSpanishSuffix(aiQuery));
+        Assert.DoesNotContain("latino", AnimeNewsPublisherService.StripSpanishSuffix(aiQuery));
+    }
+}
+
+/// <summary>
+/// Casos reales que el gate heurístico dejaba pasar como "sin video".
+/// </summary>
+public class HeuristicVideoQueryAccentTests
+{
+    [Theory]
+    // "live action" SIN guion — el titular real del 3-sep-2026 que salió sin
+    // video porque la lista solo tenía la forma guionada
+    [InlineData("The Apothecary Diaries dará el salto al live action en 2028")]
+    [InlineData("El live-action de One Piece ya tiene fecha de estreno")]
+    // Entradas cuya única forma en la lista estaba acentuada: se comparan
+    // contra el titular NORMALIZADO, así que el literal con tilde no matcheaba
+    // y solo funcionaban por su duplicado sin tilde (ya eliminado)
+    [InlineData("Chainsaw Man estrena tráiler de su nueva película")]
+    [InlineData("Dandadan confirma la adaptación de su segundo arco")]
+    public void HeuristicVideoQuery_DetectsAudiovisualSignal(string title)
+    {
+        var result = AnimeNewsPublisherService.HeuristicVideoQuery(title);
+
+        Assert.NotNull(result);
+        Assert.Equal(NewsVideoKind.Trailer, result!.Value.Kind);
+    }
+}

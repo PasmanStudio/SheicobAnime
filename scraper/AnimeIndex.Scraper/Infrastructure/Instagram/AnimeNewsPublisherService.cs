@@ -433,6 +433,18 @@ public class AnimeNewsPublisherService(
                     }
                 }
 
+                // La noticia AMERITABA video y la escalera entera (YouTube → X →
+                // bilibili) se quedó sin nada: es una FALLA, no el camino normal.
+                // Va como Warning porque todo acá es best-effort y la corrida
+                // termina verde igual — sin esta línea, "el reel salió sin video"
+                // no deja ninguna señal y el post-mortem arranca bajando los logs
+                // de 40 corridas a mano (semana del 31-ago-2026).
+                if (clipPath is null && plan.WantsVideo)
+                    logger.LogWarning(
+                        "AnimeNews: REEL SIN VIDEO — la noticia amerita {Kind} pero ningún candidato bajó " +
+                        "(query \"{Query}\", {Count} candidato(s) de YouTube, respaldos X y bilibili sin suerte): \"{Title}\"",
+                        plan.Kind, plan.Query, plan.Candidates.Count, Truncate(item.Title, 60));
+
                 if (clipPath is not null)
                 {
                     try
@@ -711,26 +723,26 @@ public class AnimeNewsPublisherService(
         var spanish = new List<TrailerCandidate>(
             await trailerService.SearchManyAsync(query, requireSpanish: true, subject: subject, ct: ct));
 
-        // 2do intento: sin version latina, el trailer oficial en cualquier
-        // idioma - con subtitulos es manuales quemados si existen, y si no, en
-        // su idioma original (ultimo recurso, toggle abajo). El PV embebido en
-        // el articulo (rechazado antes por idioma) tambien entra aca.
-        var anyQuery = query.Replace("espanol latino", "", StringComparison.OrdinalIgnoreCase).Trim();
+        // 2do intento: sin versión latina, el tráiler oficial en cualquier
+        // idioma — con subtítulos es manuales quemados si existen, y si no, en
+        // su idioma original (último recurso, toggle abajo). El PV embebido en
+        // el artículo (rechazado antes por idioma) también entra acá.
+        var anyQuery = StripSpanishSuffix(query);
         var any = new List<TrailerCandidate>(
             await trailerService.SearchManyAsync(anyQuery, requireSpanish: false, subject: subject, ct: ct));
 
-        // Escalera: misma red de seguridad que en temas - si la query de la IA
-        // no dio candidato en ninguno de los dos pasos, se prueba la heuristica.
+        // Escalera: misma red de seguridad que en temas — si la query de la IA
+        // no dio candidato en ninguno de los dos pasos, se prueba la heurística.
         if (spanish.Count == 0 && any.Count == 0)
         {
             var heur = HeuristicVideoQuery(item.Title);
             if (heur is not null && heur.Value.Kind == NewsVideoKind.Trailer && heur.Value.Query != query)
             {
-                logger.LogInformation("AnimeNews: reintento con query heuristica -> \"{Query}\"", heur.Value.Query);
+                logger.LogInformation("AnimeNews: reintento con query heurística → \"{Query}\"", heur.Value.Query);
                 spanish.AddRange(await trailerService.SearchManyAsync(
                     heur.Value.Query, requireSpanish: true, subject: subject, ct: ct));
                 any.AddRange(await trailerService.SearchManyAsync(
-                    heur.Value.Query.Replace("espanol latino", "", StringComparison.OrdinalIgnoreCase).Trim(),
+                    StripSpanishSuffix(heur.Value.Query),
                     requireSpanish: false, subject: subject, ct: ct));
             }
         }
@@ -818,10 +830,10 @@ public class AnimeNewsPublisherService(
     {
         if (string.IsNullOrWhiteSpace(aiSettings.ApiKey)) return null;
 
-        string? response = null;
+        GeminiResult? response = null;
         try
         {
-            response = await gemini.GenerateAsync(
+            response = await gemini.GenerateDetailedAsync(
                 "Buscá en X (Twitter) el post de una cuenta OFICIAL que contenga el VIDEO promocional " +
                 "de esta noticia de anime (tráiler/teaser/opening/MV/corto). Cuentas válidas, en orden " +
                 "de preferencia: @crunchyroll_la o @crunchyroll_es (versión en español), la cuenta " +
@@ -834,9 +846,13 @@ public class AnimeNewsPublisherService(
                 "Respondé SOLO un JSON: {\"url\": \"https://x.com/<cuenta>/status/<id>\"} " +
                 "o {\"url\": null} si no encontrás ninguno.",
                 $"Titular: {item.Title}\nResumen: {Truncate(item.Summary ?? content.Lede ?? string.Empty, 300)}",
-                useWebSearch: true, ct);
+                // groundingEssential: sin google_search esta llamada no busca
+                // nada, inventa una URL de X. Con esto un 429 de grounding no
+                // baja a Gemma (8 de 8 corridas de sep-2026 terminaban en "la IA
+                // no encontró post de X usable", que ocultaba la causa real).
+                useWebSearch: true, groundingEssential: true, ct: ct);
 
-            using var doc = System.Text.Json.JsonDocument.Parse(GeminiClient.ExtractJsonObject(response));
+            using var doc = System.Text.Json.JsonDocument.Parse(GeminiClient.ExtractJsonObject(response.Text));
             var url = doc.RootElement.TryGetProperty("url", out var u)
                       && u.ValueKind == System.Text.Json.JsonValueKind.String
                 ? u.GetString()
@@ -854,10 +870,32 @@ public class AnimeNewsPublisherService(
         catch (Exception ex) when (!ct.IsCancellationRequested)
         {
             logger.LogInformation(ex, "AnimeNews: búsqueda del post de X falló. Respuesta: {Response}",
-                response is null ? "(sin respuesta)" : Truncate(response, 200));
+                response is null ? "(sin respuesta)" : Truncate(response.Text, 200));
             return null;
         }
     }
+
+    /// <summary>
+    /// Saca el sufijo de idioma ("español latino") de la query para la pasada
+    /// en CUALQUIER idioma. Compara token a token SIN diacríticos y no contra
+    /// un literal: el literal <c>"espanol latino"</c> (sin ñ) que dejó el
+    /// PR #167 nunca matcheaba la query real —que la escriben el prompt de la
+    /// IA y <see cref="HeuristicVideoQuery"/> CON ñ—, así que la pasada
+    /// relajada corría la MISMA query en español y la escalera de idioma no
+    /// existía. Entre el 24-ago y el 5-sep-2026 eso dejó sin video a las obras
+    /// sin doblaje latino ("KochiKame: Tokyo Beat Cops tráiler oficial español
+    /// latino" → 0 resultados, dos veces) y duplicó los requests a YouTube
+    /// desde la misma IP de WARP. Público estático para tests.
+    /// </summary>
+    public static string StripSpanishSuffix(string query) =>
+        string.Join(' ', query
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(w => !SpanishSuffixWords.Contains(TrailerDownloadService.Normalize(w))));
+
+    // Formas ya normalizadas (minúsculas sin diacríticos) — se comparan contra
+    // el token normalizado, nunca contra el crudo.
+    private static readonly HashSet<string> SpanishSuffixWords =
+        new(StringComparer.Ordinal) { "espanol", "latino" };
 
     /// <summary>
     /// Fallback sin IA: solo busca cuando el titular anuncia material
@@ -878,8 +916,7 @@ public class AnimeNewsPublisherService(
         var obra = TrailerDownloadService.SubjectFromTitle(title);
         if (obra.Length == 0) return null;
 
-        var theme = new[] { "opening", "ending", "video musical", "tema musical" };
-        if (theme.Any(t.Contains))
+        if (ThemeWords.Any(t.Contains))
         {
             var themeWord = t.Contains("opening") ? "opening"
                           : t.Contains("ending") ? "ending"
@@ -887,17 +924,35 @@ public class AnimeNewsPublisherService(
             return ($"{obra} {themeWord}", NewsVideoKind.ThemeSong);
         }
 
-        var shortFilm = new[] { "corto animado", "cortometraje", "video especial", "aniversario" };
-        if (shortFilm.Any(t.Contains)) return ($"{obra} special movie", NewsVideoKind.Short);
+        if (ShortFilmWords.Any(t.Contains)) return ($"{obra} special movie", NewsVideoKind.Short);
 
-        // "estren" (raíz) cubre estreno/estrena/estrenará — "estrena un corto
-        // animado" se caía por buscar el sustantivo exacto (bug real, jul-2026)
-        var audiovisual = new[] { "tráiler", "trailer", "teaser", "avance", "temporada",
-                                  "película", "pelicula", "live-action", "adaptación", "adaptacion", "estren" };
-        return audiovisual.Any(t.Contains)
+        return AudiovisualWords.Any(t.Contains)
             ? ($"{obra} tráiler oficial español latino", NewsVideoKind.Trailer)
             : null;
     }
+
+    // Listas de detección de HeuristicVideoQuery. Se comparan contra `t`, que
+    // sale de Normalize() (minúsculas SIN diacríticos), así que se normalizan
+    // ACÁ en vez de confiar en cómo se escriba cada entrada: los literales
+    // acentuados que había ("tráiler", "película", "adaptación") no matcheaban
+    // nunca y solo sobrevivían por sus duplicados sin tilde.
+    private static readonly string[] ThemeWords =
+        Normalized("opening", "ending", "video musical", "tema musical");
+
+    private static readonly string[] ShortFilmWords =
+        Normalized("corto animado", "cortometraje", "video especial", "aniversario");
+
+    // "estren" (raíz) cubre estreno/estrena/estrenará — "estrena un corto
+    // animado" se caía por buscar el sustantivo exacto (bug real, jul-2026).
+    // "live action" SIN guion va aparte del guionado: "The Apothecary Diaries
+    // dará el salto al live action en 2028" salió sin video el 3-sep-2026
+    // porque solo estaba la forma con guion.
+    private static readonly string[] AudiovisualWords =
+        Normalized("tráiler", "teaser", "avance", "temporada", "película",
+                   "live-action", "live action", "adaptación", "estren");
+
+    private static string[] Normalized(params string[] words) =>
+        [.. words.Select(TrailerDownloadService.Normalize).Distinct(StringComparer.Ordinal)];
 
     /// <summary>
     /// ¿El titular anuncia material audiovisual (tráiler/opening/corto)? Las

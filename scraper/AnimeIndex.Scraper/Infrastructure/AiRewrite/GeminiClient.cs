@@ -42,35 +42,107 @@ public class GeminiClient(
         string userPrompt,
         bool useWebSearch,
         CancellationToken ct = default)
+        => (await GenerateDetailedAsync(systemInstruction, userPrompt, useWebSearch, false, ct)).Text;
+
+    /// <summary>
+    /// Igual que <see cref="GenerateAsync"/> pero dice QUÉ modelo respondió y
+    /// si respondió con grounding. Los callers que loguean el modelo tienen que
+    /// usar esto: imprimir <c>settings.Model</c> miente cada vez que entra el
+    /// fallback, y en sep-2026 eso ocultó que TODOS los rewrites corrían en
+    /// Gemma.
+    ///
+    /// <paramref name="groundingEssential"/>: el grounding no es un extra sino
+    /// el punto de la llamada (buscar un post real en X). Con eso en true, un
+    /// 429 no baja a Gemma —que no tiene grounding y solo devolvería una URL
+    /// inventada— sino que propaga para que el caller degrade.
+    /// </summary>
+    public async Task<GeminiResult> GenerateDetailedAsync(
+        string systemInstruction,
+        string userPrompt,
+        bool useWebSearch,
+        bool groundingEssential = false,
+        CancellationToken ct = default)
     {
         try
         {
-            return await GenerateWithModelAsync(settings.Model, systemInstruction, userPrompt, useWebSearch, ct);
+            return new GeminiResult(
+                await GenerateWithModelAsync(settings.Model, systemInstruction, userPrompt, useWebSearch, ct),
+                settings.Model, useWebSearch);
         }
-        catch (GeminiQuotaException) when (
-            !string.IsNullOrWhiteSpace(settings.FallbackModel)
-            && !string.Equals(settings.FallbackModel, settings.Model, StringComparison.OrdinalIgnoreCase))
+        catch (GeminiQuotaException) when (useWebSearch && !groundingEssential)
         {
-            var fallback = _resolvedFallback ?? settings.FallbackModel;
-            logger.LogWarning("Gemini {Model} sin cuota (429) — fallback a {Fallback}",
-                settings.Model, fallback);
+            // El 429 del free tier es del GROUNDING, no de la cuota diaria del
+            // modelo: verificado el 5-sep-2026 sobre 40 corridas de news-cron —
+            // toda llamada con google_search dio 429 (primera del día incluida,
+            // post-reset) y la siguiente SIN grounding pasó en el mismo run,
+            // segundos después. Antes de resignar el modelo bueno se reintenta
+            // sin la herramienta: el grounding es "contexto extra si el artículo
+            // viene flaco", no un requisito.
+            logger.LogWarning(
+                "Gemini {Model} sin cuota de grounding (429) — reintento SIN google_search", settings.Model);
             try
             {
-                return await GenerateWithModelAsync(fallback, systemInstruction, userPrompt, useWebSearch, ct);
+                return new GeminiResult(
+                    await GenerateWithModelAsync(settings.Model, systemInstruction, userPrompt, false, ct),
+                    settings.Model, false);
             }
-            catch (GeminiModelNotFoundException) when (_resolvedFallback is null)
+            catch (GeminiQuotaException ungrounded)
             {
-                var discovered = await DiscoverFallbackModelAsync(ct);
-                if (discovered is null
-                    || string.Equals(discovered, fallback, StringComparison.OrdinalIgnoreCase))
-                    throw;
-
-                _resolvedFallback = discovered;
-                logger.LogWarning(
-                    "Fallback {Fallback} no existe (404) — usando {Discovered} descubierto vía ListModels",
-                    fallback, discovered);
-                return await GenerateWithModelAsync(discovered, systemInstruction, userPrompt, useWebSearch, ct);
+                // Sin grounding y IGUAL 429 → ahora sí es la cuota del modelo.
+                return await FallbackAsync(systemInstruction, userPrompt, false, ungrounded, ct);
             }
+        }
+        catch (GeminiQuotaException) when (groundingEssential)
+        {
+            // Gemma no tiene grounding: mandarle esta llamada solo produce una
+            // respuesta inventada que el caller descarta igual (8 de 8 corridas
+            // → "la IA no encontró post de X usable"). Mejor decir la verdad.
+            logger.LogWarning(
+                "Gemini {Model} sin cuota de grounding (429) y esta llamada LO NECESITA — sin fallback",
+                settings.Model);
+            throw;
+        }
+        catch (GeminiQuotaException quota)
+        {
+            return await FallbackAsync(systemInstruction, userPrompt, useWebSearch, quota, ct);
+        }
+    }
+
+    /// <summary>
+    /// Reintento en el modelo de respaldo (Gemma: cuota separada, sin grounding).
+    /// Sin fallback utilizable se propaga el 429 ORIGINAL —con el cuerpo que
+    /// devolvió la API— en vez de una excepción nueva que lo tape.
+    /// </summary>
+    private async Task<GeminiResult> FallbackAsync(
+        string systemInstruction, string userPrompt, bool useWebSearch,
+        Exception original, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(settings.FallbackModel)
+            || string.Equals(settings.FallbackModel, settings.Model, StringComparison.OrdinalIgnoreCase))
+            throw original;
+
+        var fallback = _resolvedFallback ?? settings.FallbackModel;
+        logger.LogWarning("Gemini {Model} sin cuota (429) — fallback a {Fallback}", settings.Model, fallback);
+        try
+        {
+            return new GeminiResult(
+                await GenerateWithModelAsync(fallback, systemInstruction, userPrompt, useWebSearch, ct),
+                fallback, false);
+        }
+        catch (GeminiModelNotFoundException) when (_resolvedFallback is null)
+        {
+            var discovered = await DiscoverFallbackModelAsync(ct);
+            if (discovered is null
+                || string.Equals(discovered, fallback, StringComparison.OrdinalIgnoreCase))
+                throw;
+
+            _resolvedFallback = discovered;
+            logger.LogWarning(
+                "Fallback {Fallback} no existe (404) — usando {Discovered} descubierto vía ListModels",
+                fallback, discovered);
+            return new GeminiResult(
+                await GenerateWithModelAsync(discovered, systemInstruction, userPrompt, useWebSearch, ct),
+                discovered, false);
         }
     }
 
@@ -317,3 +389,11 @@ public class GeminiClient(
     private static string Truncate(string s, int max) =>
         s.Length <= max ? s : s[..max] + "…";
 }
+
+/// <summary>
+/// Respuesta del modelo junto con QUIÉN la produjo: <paramref name="Model"/> es
+/// el modelo que realmente contestó (puede ser el fallback) y
+/// <paramref name="Grounded"/> dice si salió con google_search. Existe para que
+/// los logs no afirmen el modelo configurado cuando contestó otro.
+/// </summary>
+public sealed record GeminiResult(string Text, string Model, bool Grounded);
