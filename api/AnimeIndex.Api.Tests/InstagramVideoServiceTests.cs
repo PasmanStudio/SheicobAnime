@@ -1305,3 +1305,51 @@ public class MetaPublishRetryTests
         => Assert.False(MetaGraphApiClient.IsTransientPublishError(
             System.Net.HttpStatusCode.BadRequest, body));
 }
+
+/// <summary>
+/// Canales oficiales JAPONESES. La lista de distribuidores era solo-latina, así
+/// que un canal escrito en katakana no daba señal de "oficial" y el gate
+/// relajado (requireSpanish=false) lo descartaba.
+/// </summary>
+public class OfficialJapaneseChannelTests
+{
+    [Fact]
+    public void EmbeddedOfficialPv_FromKatakanaChannel_IsAccepted_RealCase()
+    {
+        // Caso exacto del run 34055519423 (6-sep-2026): kudasai embebió el PV
+        // oficial y el reel salió igual como slideshow.
+        string[] lines =
+        [
+            "8_Lxr7vO9l0|~|109|~|『転生貴族、鑑定スキルで成り上がる 第3期』PV第2弾【2026年9月27日より放送開始！】|~|isekai channel @バンダイナムコフィルムワークス"
+        ];
+
+        // requireSpanish=false es el modo del 2do intento: exige señal de oficial
+        var best = TrailerDownloadService.PickBestSearchResult(lines, requireSpanish: false);
+
+        Assert.NotNull(best);
+        Assert.Equal("8_Lxr7vO9l0", best!.Value.Id);
+    }
+
+    [Theory]
+    [InlineData("アニプレックス・チャンネル")]
+    [InlineData("東宝MOVIEチャンネル")]
+    [InlineData("東映アニメーション公式YouTubeチャンネル")]
+    [InlineData("TVアニメ「株式会社マジルミエ」製作委員会")]
+    [InlineData("京都アニメーション")]
+    public void JapaneseDistributorChannels_CountAsOfficial(string channel)
+    {
+        string[] lines = [$"abc123xyz|~|95|~|テレビアニメ PV第1弾|~|{channel}"];
+
+        Assert.NotNull(TrailerDownloadService.PickBestSearchResult(lines, requireSpanish: false));
+    }
+
+    [Fact]
+    public void FanChannel_StillRejected_NoFalsePositives()
+    {
+        // Sin señal de oficial el gate relajado sigue cerrado: la lista japonesa
+        // suma casas reales, no afloja la regla.
+        string[] lines = ["abc123xyz|~|95|~|anime trailer 2026|~|AnimeFanEdits"];
+
+        Assert.Null(TrailerDownloadService.PickBestSearchResult(lines, requireSpanish: false));
+    }
+}

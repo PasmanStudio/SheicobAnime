@@ -599,7 +599,24 @@ public partial class TrailerDownloadService(
 
     // Distribuidores/estudios que suben los PV reales. La lista no necesita ser
     // exhaustiva: es solo un bonus — el título con "trailer/teaser" alcanza solo.
-    [GeneratedRegex(@"aniplex|crunchyroll|toho|kadokawa|avex|toei|bandai|netflix|warner|pony canyon|king records|muse|ani-one|shueisha|kodansha|square enix|ufotable|mappa|wit studio|cloverworks|a-1 pictures|bones|kyoto animation|remow|tms", RegexOptions.IgnoreCase)]
+    //
+    // Van TAMBIÉN las grafías japonesas: los canales oficiales japoneses casi
+    // nunca escriben el nombre en alfabeto latino, y con la lista solo-latina el
+    // PV oficial embebido en el artículo terminaba descartado. Caso real del
+    // 6-sep-2026 (run 34055519423): el PV de "Tensei Kizoku, Kantei Skill de
+    // Nariagaru" lo subió «isekai channel @バンダイナムコフィルムワークス»
+    // —Bandai Namco Filmworks, el licenciante— y "bandai" no matcheaba contra
+    // バンダイ, así que el reel salió como slideshow teniendo EL video al lado.
+    [GeneratedRegex(
+        @"aniplex|crunchyroll|toho|kadokawa|avex|toei|bandai|netflix|warner|pony canyon|" +
+        @"king records|muse|ani-one|shueisha|kodansha|square enix|ufotable|mappa|wit studio|" +
+        @"cloverworks|a-1 pictures|bones|kyoto animation|remow|tms|" +
+        // Mismas casas en katakana/kanji + marcadores de canal oficial japonés
+        @"アニプレックス|クランチロール|東宝|カドカワ|角川|エイベックス|東映|バンダイ|" +
+        @"フィルムワークス|ネットフリックス|ワーナー|ポニーキャニオン|キングレコード|" +
+        @"集英社|講談社|小学館|スクウェア・エニックス|ウィットスタジオ|クローバーワークス|" +
+        @"ボンズ|京都アニメーション|京アニ|トムス|ソニー|製作委員会|製作委員會",
+        RegexOptions.IgnoreCase)]
     private static partial Regex OfficialChannelRegex();
 
     /// <summary>
