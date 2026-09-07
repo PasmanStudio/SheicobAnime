@@ -63,7 +63,15 @@ jobs:
   deploy:
     name: Deploy to Cloudflare Workers
     needs: typecheck-and-build
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # `workflow_dispatch` estaba declarado arriba "para re-deployar sin commit",
+    # pero esta condición lo excluía: un disparo manual pasaba el build y saltaba
+    # el deploy en silencio. Se lo habilita, en cualquier ref, que es también lo
+    # que permite deployar una rama para probarla antes de mergear.
+    # OJO: un dispatch desde una rama publica ESA rama en el worker de
+    # producción — no hay entorno de staging separado.
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/main')
+      || github.event_name == 'workflow_dispatch' 
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4

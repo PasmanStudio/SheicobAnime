@@ -50,6 +50,24 @@ public class RedactingJsonFormatterTests
     }
 
     [Fact]
+    public void Redacts_Password_That_Contains_Spaces()
+    {
+        // Regresión: la primera versión de la regex excluía el espacio de la
+        // clase de caracteres, así que cortaba en el primer espacio y publicaba
+        // el resto de la password. Un separador de valores en una connection
+        // string es ';' — el espacio es un caracter perfectamente válido dentro
+        // de una password, y las passphrases suelen tenerlos.
+        var output = Format(
+            "Hosting environment: {p0}",
+            "Host=db.example.com;Password=cor rect horse battery;SSL Mode=Require");
+
+        Assert.DoesNotContain("horse", output);
+        Assert.DoesNotContain("battery", output);
+        Assert.Contains("REDACTED", output);
+        Assert.Contains("SSL Mode=Require", output);
+    }
+
+    [Fact]
     public void Redacts_Credentials_From_Uri_Style_ConnectionString()
     {
         var output = Format("conectando a {p0}", "postgresql://admin:hunter2@db.example.com:5432/postgres");

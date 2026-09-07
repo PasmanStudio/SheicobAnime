@@ -33,6 +33,17 @@
     "crons": ["*/5 13-23 * * *", "*/5 0-5 * * *"]
   },
 
+  // Sin ruta pública: el worker existe para el cron, no para atender tráfico.
+  //
+  // Con workers_dev en true (el default) quedaba expuesto en
+  // sheicobanime-keepalive.<sub>.workers.dev, y su handler `fetch` ejecuta el
+  // mismo ping que el cron sin ninguna auth. Cualquiera —o un bot crawleando
+  // subdominios de workers.dev, que a este proyecto ya le pasó— podía llamarlo
+  // en loop y mantener Render despierto 24/7, quemando justo el presupuesto de
+  // ~750 h/mes que este worker existe para cuidar. Los Cron Triggers no
+  // necesitan ruta, así que apagarlo no cuesta nada.
+  "workers_dev": false,
+
   "observability": { "enabled": true },
 
   "vars": {

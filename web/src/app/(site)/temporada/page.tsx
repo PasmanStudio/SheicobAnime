@@ -30,6 +30,17 @@ export const dynamic = "force-dynamic";
 // límite y reventaba el render entero — otra causa, independiente de Render, de
 // que /temporada saliera vacía. Se priorizan los más populares, que son los que
 // el usuario espera ver marcados como disponibles.
+//
+// PRESUPUESTO DE SUBREQUESTS DE ESTA PÁGINA (límite: 50 en el plan free).
+// Peor caso, con los reintentos de lib/api.ts contados:
+//     getSeasonalAnime .....  3  (hasta 3 intentos)
+//     getSeries ongoing ....  3
+//     getSeries por score ..  3
+//     searchSeriesFast ..... 30  (1 intento cada una, por eso es "Fast")
+//                            ──
+//                            39  → quedan 11 de margen
+// Si agregás un fetch nuevo a esta página, restalo de esos 11 o bajá este tope.
+// Pasarse del límite no degrada: tira el render entero.
 const MAX_TITLE_SEARCHES = 30;
 
 interface Props {
@@ -110,10 +121,15 @@ export default async function TemporadaPage({ searchParams }: Props) {
   // entry still unmatched, we run a targeted search against our DB. This runs
   // server-to-server (low latency) and all searches fire in parallel.
   //
-  const unmatched = firstPass
+  const allUnmatched = firstPass
     .filter((m) => m.match === null)
-    .sort((a, b) => (b.media.popularity ?? 0) - (a.media.popularity ?? 0))
-    .slice(0, MAX_TITLE_SEARCHES);
+    .sort((a, b) => (b.media.popularity ?? 0) - (a.media.popularity ?? 0));
+  const unmatched = allUnmatched.slice(0, MAX_TITLE_SEARCHES);
+  // Cuando se trunca, el conteo de disponibles es una COTA INFERIOR: puede
+  // haber series indexadas entre las que no llegamos a buscar, y se muestran
+  // como "No indexado aún". Se marca con un "+" en vez de dar un número exacto
+  // que sabemos que puede estar bajo.
+  const searchTruncated = allUnmatched.length > unmatched.length;
   const fallbackMap = new Map<number, Series>(); // AniList media.id → matched Series
 
   if (unmatched.length > 0) {
@@ -159,7 +175,7 @@ export default async function TemporadaPage({ searchParams }: Props) {
           <span className="sh-label">
             {seasonUnavailable
               ? "Temporada no disponible"
-              : `${availableCount} de ${anilistData.length} títulos disponibles`}
+              : `${availableCount}${searchTruncated ? "+" : ""} de ${anilistData.length} títulos disponibles`}
           </span>
           <span className="sh-section-header items-center">
             <span className="sh-cut" />

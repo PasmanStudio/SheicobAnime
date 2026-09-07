@@ -90,8 +90,21 @@ export default {
     ctx.waitUntil(run(env));
   },
 
-  // Invocación manual para probar: `curl https://sheicobanime-keepalive.<sub>.workers.dev`
+  // Invocación manual, para probar sin esperar al cron.
+  //
+  // Defensa en profundidad: `workers_dev` está en false, así que en condiciones
+  // normales este handler no es alcanzable. Igual pide un secreto, porque una
+  // ruta agregada por error en el dashboard no debería convertir esto en un
+  // botón anónimo para quemar las horas de instancia de Render.
+  //
+  // Setear con: wrangler secret put KEEPALIVE_TRIGGER_SECRET
+  // Llamar con: curl -H "x-keepalive-secret: <valor>" <url>
   async fetch(request, env) {
+    const expected = env.KEEPALIVE_TRIGGER_SECRET;
+    if (!expected || request.headers.get("x-keepalive-secret") !== expected) {
+      return new Response("Not found", { status: 404 });
+    }
+
     const result = await run(env);
     return new Response(JSON.stringify(result, null, 2), {
       status: result.ok ? 200 : 503,

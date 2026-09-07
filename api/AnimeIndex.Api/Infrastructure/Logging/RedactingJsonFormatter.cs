@@ -30,7 +30,7 @@ public sealed class RedactingJsonFormatter : ITextFormatter
 
     // Pares clave=valor de una connection string de Npgsql/ADO.NET.
     private static readonly Regex KeyValueSecret = new(
-        @"\b(Password|Pwd|User ID|Username)\s*=\s*[^;"" ]+",
+        @"\b(Password|Pwd|User ID|Username)\s*=\s*[^;""]+",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     // Credenciales embebidas en una URI: postgres://user:pass@host, redis://...

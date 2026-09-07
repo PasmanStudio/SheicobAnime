@@ -46,4 +46,11 @@ jobs:
             echo "intento $attempt falló (probable cold start), reintentando..."
             sleep 5
           done
-          echo "::warning::el API no respondió tras 3 intentos"
+          # Falla en ROJO a propósito. Los 3 intentos x 40 s ya absorben un cold
+          # start de 20-36 s, así que llegar acá significa que el API realmente
+          # no está respondiendo — y eso tiene que verse en la lista de runs.
+          # (El historial de runs fallidos de este workflow fue justamente lo que
+          # permitió diagnosticar el incidente de sep-2026; degradarlo a warning
+          # habría tapado la única señal que quedaba fuera de Cloudflare.)
+          echo "::error::el API no respondió tras 3 intentos"
+          exit 1

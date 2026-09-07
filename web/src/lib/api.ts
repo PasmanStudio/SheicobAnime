@@ -127,11 +127,24 @@ async function request<T>(
   const startedAt = Date.now();
   let lastReason = "unknown";
 
-  for (let attempt = 0; attempt < timeouts.length; attempt++) {
+  // Reintentar SOLO métodos idempotentes.
+  //
+  // Un timeout no significa "no llegó": significa "no sabemos". Si el API
+  // procesó el PATCH y lo que se perdió fue la respuesta, reintentar lo aplica
+  // de nuevo. El caso concreto acá es `reportMirrorFailure` (PATCH a
+  // /mirrors/{id}/report): son 3 intentos contra un contador de fallas, así que
+  // un mirror sano podía sumar 3 fallas por UN corte de red y quedar degradado.
+  // Los reintentos existen para el cold start de Render, que solo hace falta
+  // absorber en lecturas.
+  const method = (options.method ?? "GET").toUpperCase();
+  const isIdempotent = method === "GET" || method === "HEAD";
+  const effectiveTimeouts = isIdempotent ? timeouts : timeouts.slice(0, 1);
+
+  for (let attempt = 0; attempt < effectiveTimeouts.length; attempt++) {
     try {
       const res = await fetch(url, {
         ...options,
-        signal: AbortSignal.timeout(timeouts[attempt]),
+        signal: AbortSignal.timeout(effectiveTimeouts[attempt]),
         headers: {
           "Content-Type": "application/json",
           ...options.headers,
@@ -151,7 +164,7 @@ async function request<T>(
       // instancia dormida o arrancando — el request ni llegó a la app. Ese es
       // exactamente el caso que hay que reintentar, porque el propio intento
       // fallido ya disparó el arranque y el siguiente suele encontrarla viva.
-      if (isRetryableStatus(res.status) && attempt < timeouts.length - 1) {
+      if (isRetryableStatus(res.status) && attempt < effectiveTimeouts.length - 1) {
         lastReason = `http_${res.status}`;
         await sleep(RETRY_BACKOFF_MS[Math.min(attempt, RETRY_BACKOFF_MS.length - 1)]);
         continue;
@@ -159,7 +172,7 @@ async function request<T>(
 
       if (isRetryableStatus(res.status)) {
         logApiFailure({
-          path, reason: `http_${res.status}`,
+          path, method, reason: `http_${res.status}`,
           attempts: attempt + 1, elapsedMs: Date.now() - startedAt,
         });
         throw new ApiUnavailableError(
@@ -180,12 +193,12 @@ async function request<T>(
 
       // Timeout (AbortSignal) o error de red. Ambos = "no contestó".
       lastReason = err instanceof Error && err.name === "TimeoutError" ? "timeout" : "network";
-      if (attempt < timeouts.length - 1) {
+      if (attempt < effectiveTimeouts.length - 1) {
         await sleep(RETRY_BACKOFF_MS[Math.min(attempt, RETRY_BACKOFF_MS.length - 1)]);
         continue;
       }
       logApiFailure({
-        path, reason: lastReason,
+        path, method, reason: lastReason,
         attempts: attempt + 1, elapsedMs: Date.now() - startedAt,
         message: err instanceof Error ? err.message : String(err),
       });
@@ -197,7 +210,7 @@ async function request<T>(
   }
 
   // Inalcanzable: el loop siempre sale por return o por throw.
-  throw new ApiUnavailableError(`API no respondió (${lastReason})`, timeouts.length);
+  throw new ApiUnavailableError(`API no respondió (${lastReason})`, effectiveTimeouts.length);
 }
 
 function sleep(ms: number): Promise<void> {
