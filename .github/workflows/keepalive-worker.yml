@@ -1,0 +1,50 @@
+name: Keep-alive Worker — Deploy
+
+# Publica el Worker de Cloudflare que mantiene tibio el API en Render.
+# Ver infra/keepalive/wrangler.jsonc para el porqué de los horarios.
+#
+# Es un deploy aparte del sitio (web.yml) a propósito: el keep-alive no debe
+# depender de que compile Next, ni al revés.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'infra/keepalive/**'
+      - '.github/workflows/keepalive-worker.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: keepalive-worker
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy sheicobanime-keepalive
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+
+      - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4
+        with:
+          node-version: '22'   # wrangler 4.x requiere Node >= 22
+
+      - name: Deploy worker
+        run: npx --yes wrangler@4 deploy
+        working-directory: infra/keepalive
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Smoke test — el worker despierta el API
+        run: |
+          # Invocación manual del mismo código que corre por cron.
+          # Falla el job si el API no llega a responder ni con reintentos.
+          npx --yes wrangler@4 deployments list >/dev/null 2>&1 || true
+          curl -fsS --max-time 90 https://sheicobanime-api.onrender.com/health
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

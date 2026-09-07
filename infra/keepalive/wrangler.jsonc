@@ -1,0 +1,47 @@
+{
+  // Worker de keep-alive del API en Render. Vive APARTE del worker del sitio a
+  // propósito: es un archivo de 60 líneas que no se puede permitir romper el
+  // deploy de la web, y al revés, un rebuild de OpenNext no debe poder apagar
+  // el keep-alive.
+  //
+  // Reemplaza a .github/workflows/keepalive-cron.yml como mecanismo PRIMARIO.
+  // Motivo, medido el 7-sep-2026 sobre 13 días de runs: ese workflow declara
+  // `*/10 * * * *` (144 runs/día) pero GitHub Actions lo corría entre 2 y 9
+  // veces por día, con un gap medio de 167 min. De 114 gaps, los 114 superaban
+  // los 15 min de idle timeout de Render → el ping no evitó ni un solo
+  // spin-down. Los cron de GHA se desprioriza y se descartan bajo carga; no
+  // sirven como keep-alive. Los Cron Triggers de Cloudflare sí se respetan.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "sheicobanime-keepalive",
+  "main": "worker.js",
+  "compatibility_date": "2025-09-01",
+
+  // ── Por qué NO es 24/7 ──────────────────────────────────────────────────────
+  // El plan free de Render da ~750 horas de instancia por mes para TODO el
+  // workspace. Un mes de 31 días son 744 h: mantener el API despierto las 24 h
+  // deja 6 h de margen para los deploys y para vetdoc-api, y si se pasa, Render
+  // suspende los servicios hasta el mes siguiente. Sería cambiar "se cae a cada
+  // rato" por "se cae entero el día 28".
+  //
+  // Así que se lo mantiene tibio SOLO en el horario en que hay gente: 13:00 UTC
+  // → 05:59 UTC = 10:00 → 02:59 de Argentina (UTC-3). Son 17 h/día ≈ 527 h/mes,
+  // con margen cómodo. Fuera de esa ventana el sitio se sigue sirviendo del
+  // cache de KV, y el visitante raro de las 6 AM paga un cold start que ahora
+  // los reintentos de web/src/lib/api.ts sí esperan (antes el timeout de 12 s
+  // era menor que el arranque de 20-36 s y fallaba siempre).
+  "triggers": {
+    "crons": ["*/5 13-23 * * *", "*/5 0-5 * * *"]
+  },
+
+  "observability": { "enabled": true },
+
+  "vars": {
+    "API_BASE_URL": "https://sheicobanime-api.onrender.com",
+    // Rutas que se "calientan" después de que /health responde. No alcanza con
+    // tener el proceso vivo: medido con la instancia despierta, /episodes/recent
+    // tardaba 6,5 s la primera vez (JIT + primer query de EF + abrir conexión al
+    // pooler). Tocarlas acá hace que el primer visitante real las encuentre ya
+    // compiladas y con el pool caliente.
+    "WARM_PATHS": "/episodes/recent?limit=12,/series?sort=updated&pageSize=12"
+  }
+}

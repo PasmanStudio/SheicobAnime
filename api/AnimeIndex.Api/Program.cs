@@ -8,6 +8,7 @@ using AnimeIndex.Api.Endpoints;
 using AnimeIndex.Api.Infrastructure;
 using AnimeIndex.Api.Infrastructure.Auth;
 using AnimeIndex.Api.Infrastructure.Cache;
+using AnimeIndex.Api.Infrastructure.Logging;
 using AnimeIndex.Api.Infrastructure.Scraping;
 using AnimeIndex.Api.Validators;
 using FluentValidation;
@@ -25,7 +26,7 @@ var isTesting = string.Equals(
 if (!isTesting)
 {
     Log.Logger = new LoggerConfiguration()
-        .WriteTo.Console(new Serilog.Formatting.Json.JsonFormatter())
+        .WriteTo.Console(new RedactingJsonFormatter())
         .CreateBootstrapLogger();
 }
 
@@ -33,8 +34,44 @@ try
 {
     var builder = WebApplication.CreateBuilder(args);
 
+    // ─── Guarda del nombre de entorno ────────────────────
+    //
+    // El 7-sep-2026 se encontró `ASPNETCORE_ENVIRONMENT` con 223 caracteres en
+    // Render: el literal "Production" con el `DATABASE_URL` entero pegado atrás
+    // (un pegado mal hecho en el dashboard). Nada falló de forma visible, y ese
+    // es el problema: `IsProduction()` pasó a devolver false, así que durante
+    // semanas se saltearon EN SILENCIO la validación de env vars de acá abajo y
+    // el bloque de migraciones de arranque, y `appsettings.Production.json`
+    // nunca se cargó (ASP.NET buscaba `appsettings.ProductionHost=aws-1...json`).
+    //
+    // Un `IsProduction()` que devuelve false por un typo no debe ser silencioso.
+    // Se detecta la corrupción, se grita en los logs, y se sigue tratando al
+    // entorno como Production para que el comportamiento sea el correcto — NO se
+    // tira una excepción a propósito: un fallo fatal en el arranque por un env
+    // var mal puesto es exactamente el bucle de reinicios del PR #164.
+    var rawEnvName = builder.Environment.EnvironmentName;
+    var envNameIsCorrupted =
+        rawEnvName.Contains(';') || rawEnvName.Contains('=') || rawEnvName.Length > 32;
+
+    if (envNameIsCorrupted)
+    {
+        Log.Error(
+            "ASPNETCORE_ENVIRONMENT está corrupto: {Length} caracteres, empieza con {Prefix}. " +
+            "Casi seguro tiene otra variable pegada atrás. Efecto: IsProduction()/IsDevelopment() " +
+            "devuelven false y appsettings.{{Environment}}.json no se carga. " +
+            "Corregilo en el dashboard de Render (debe ser exactamente 'Production')",
+            rawEnvName.Length,
+            rawEnvName[..Math.Min(12, rawEnvName.Length)]);
+    }
+
+    // Usar SIEMPRE esto en vez de builder.Environment.IsProduction(): tolera el
+    // env var corrupto en lugar de desactivar medio arranque sin avisar.
+    var isProduction =
+        builder.Environment.IsProduction()
+        || (envNameIsCorrupted && rawEnvName.StartsWith("Production", StringComparison.OrdinalIgnoreCase));
+
     // ─── Production env var validation (fail fast) ───────
-    if (builder.Environment.IsProduction())
+    if (isProduction)
     {
         var missing = new List<string>();
         if (string.IsNullOrEmpty(builder.Configuration["DATABASE_URL"])
@@ -60,7 +97,7 @@ try
             .ReadFrom.Configuration(context.Configuration)
             .ReadFrom.Services(services)
             .Enrich.FromLogContext()
-            .WriteTo.Console(new Serilog.Formatting.Json.JsonFormatter()));
+            .WriteTo.Console(new RedactingJsonFormatter()));
     }
 
     // ─── Sentry ──────────────────────────────────────────
@@ -75,7 +112,11 @@ try
                 o.Dsn = sentryDsn;
                 o.TracesSampleRate = 0.1; // 10% of transactions — free tier friendly
                 o.SendDefaultPii = false;
-                o.Environment = builder.Environment.EnvironmentName;
+                // Nombre saneado, no el crudo: si el env var vuelve a venir con
+                // una connection string pegada, no la mandamos a un tercero.
+                o.Environment = envNameIsCorrupted && isProduction
+                    ? "Production"
+                    : builder.Environment.EnvironmentName;
                 // OperationCanceledException = client closed the request (navigated away / tab closed).
                 // This is expected behavior, not an application error — filter it out to avoid noise.
                 o.SetBeforeSend((sentryEvent, _) =>
@@ -373,7 +414,7 @@ try
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         await db.Database.EnsureCreatedAsync();
     }
-    else if (app.Environment.IsProduction())
+    else if (isProduction)
     {
         // Migración + seed al arrancar, PERO nunca fatal.
         //
