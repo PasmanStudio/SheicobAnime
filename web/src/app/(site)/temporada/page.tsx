@@ -1,5 +1,6 @@
 import AdSlot from "@/components/ads/AdSlot";
 import SeasonCard from "@/components/ui/SeasonCard";
+import SeriesCard from "@/components/ui/SeriesCard";
 import {
   getCurrentSeason,
   getSeasonalAnime,
@@ -100,6 +101,40 @@ export default async function TemporadaPage({ searchParams }: Props) {
     getSeries({ pageSize: 500, sort: "score" }).catch(() => fallback),
   ]);
 
+  // ── Fallback: nuestro propio catálogo cuando AniList no está ────────────────
+  //
+  // AniList apagó su API pública (403 "temporarily disabled due to severe
+  // stability issues", verificado el 7-sep-2026 desde Render y desde una IP
+  // residencial). Sin esto la página quedaría mostrando un cartel de error de
+  // forma indefinida, porque toda su grilla salía de AniList.
+  //
+  // Pero los datos ya los tenemos: `Series.season` viene poblado en 94 de 95
+  // series en emisión — 69 de ellas marcadas "Verano 2026". Así que cuando el
+  // upstream se cae, la grilla se arma con lo NUESTRO. Es una página distinta y
+  // en algún sentido mejor: en vez del top-50 de popularidad de AniList (del que
+  // el usuario solo puede ver lo que tengamos indexado), muestra exactamente los
+  // títulos de la temporada que sí se pueden mirar acá. Se avisa el cambio para
+  // no fingir que es la misma información.
+  //
+  // `Series.season` es texto en español ("Verano 2026"), el mismo label que
+  // SEASON_LABELS, así que el match es directo.
+  // Se dispara tanto si el API avisó el fallo (503 → seasonUnavailable) como si
+  // devolvió una lista vacía. Hoy hacen falta las dos: el endpoint del API
+  // todavía enmascara el 403 de AniList como `200 []`, y aunque eso se corrija,
+  // una lista vacía con títulos nuestros para esa temporada significa lo mismo
+  // para el usuario — hay algo para mostrar y no lo estábamos mostrando.
+  const anilistUnusable = seasonUnavailable || anilistData.length === 0;
+
+  const ownCatalogue: Series[] = anilistUnusable
+    ? await getSeries({ year, pageSize: 500 })
+        .then((r) =>
+          r.data.filter((serie) =>
+            (serie.season ?? "").toLowerCase().startsWith(SEASON_LABELS[season].toLowerCase()),
+          ),
+        )
+        .catch(() => [] as Series[])
+    : [];
+
   // Merge and deduplicate by slug (ongoing takes priority)
   const seenSlugs = new Set<string>();
   const prefetched = [...ongoingResult.data, ...topByScoreResult.data].filter((s) => {
@@ -173,9 +208,11 @@ export default async function TemporadaPage({ searchParams }: Props) {
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
         <div className="flex flex-col gap-1">
           <span className="sh-label">
-            {seasonUnavailable
-              ? "Temporada no disponible"
-              : `${availableCount}${searchTruncated ? "+" : ""} de ${anilistData.length} títulos disponibles`}
+            {anilistUnusable && ownCatalogue.length > 0
+              ? `${ownCatalogue.length} ${ownCatalogue.length === 1 ? "título" : "títulos"} en SheicobAnime`
+              : seasonUnavailable
+                ? "Temporada no disponible"
+                : `${availableCount}${searchTruncated ? "+" : ""} de ${anilistData.length} títulos disponibles`}
           </span>
           <span className="sh-section-header items-center">
             <span className="sh-cut" />
@@ -231,7 +268,19 @@ export default async function TemporadaPage({ searchParams }: Props) {
       </div>
 
       {/* Grid */}
-      {seasonUnavailable ? (
+      {anilistUnusable && ownCatalogue.length > 0 ? (
+        <>
+          <p className="text-xs text-ink-3 border border-line-1 bg-abyss-2 rounded-btn px-3 py-2">
+            La guía de estrenos externa no está disponible en este momento. Mientras tanto,
+            estos son los títulos de la temporada que ya están en SheicobAnime.
+          </p>
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
+            {ownCatalogue.map((serie) => (
+              <SeriesCard key={serie.slug} series={serie} />
+            ))}
+          </div>
+        </>
+      ) : seasonUnavailable ? (
         <div className="text-center py-20 text-sm">
           <p className="text-ink-2">No pudimos cargar la temporada en este momento.</p>
           <p className="mt-1 text-ink-3">
