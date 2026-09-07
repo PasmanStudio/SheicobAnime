@@ -109,9 +109,11 @@ export async function getSeasonalAnime(
   const url = `${API_BASE_URL}/anilist/season/${encodeURIComponent(season)}/${year}`;
   const started = Date.now();
 
-  // Mismo criterio que lib/api.ts: un intento corto para el caso tibio y dos
-  // largos que le dan tiempo al cold start de Render (20-36 s medidos).
-  const timeouts = [8_000, 20_000, 20_000];
+  // Mismo presupuesto acotado que lib/api.ts: 4 s + 6 s. Esperar el cold start
+  // entero acá fue lo que tumbó el Worker por wall time el 7-sep-2026 (ver el
+  // comentario largo en lib/api.ts). Si el API está frío, esta página cae en su
+  // fallback al catálogo propio, que es mejor que hacer esperar 40 s.
+  const timeouts = [4_000, 6_000];
   let reason = "unknown";
 
   for (let attempt = 0; attempt < timeouts.length; attempt++) {
@@ -134,7 +136,7 @@ export async function getSeasonalAnime(
     }
 
     if (attempt < timeouts.length - 1) {
-      await new Promise((r) => setTimeout(r, attempt === 0 ? 500 : 1_500));
+      await new Promise((r) => setTimeout(r, 300));
     }
   }
 

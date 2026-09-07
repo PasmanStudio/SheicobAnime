@@ -11,7 +11,7 @@ import {
   titlesMatch,
   type AniListSeason,
 } from "@/lib/anilist";
-import { getSeries, searchSeriesFast } from "@/lib/api";
+import { getSeries, getSeriesFast, searchSeriesFast } from "@/lib/api";
 import type { Series } from "@/lib/types";
 import type { Metadata } from "next";
 import Link from "next/link";
@@ -127,8 +127,12 @@ export default async function TemporadaPage({ searchParams }: Props) {
   // para el usuario: hay algo para mostrar y no lo estábamos mostrando.
   const anilistUnusable = seasonUnavailable || anilistData.length === 0;
 
+  // getSeriesFast (un intento, 6 s): esta es la SEGUNDA fase de la página, ya
+  // gastamos presupuesto arriba. Sumar dos presupuestos completos de reintentos
+  // es lo que llevó el wall time del Worker a 40 s y lo hizo exceder sus
+  // límites (error 1102) el 7-sep-2026.
   const ownCatalogue: Series[] = anilistUnusable
-    ? await getSeries({ year, pageSize: 500 })
+    ? await getSeriesFast({ year, pageSize: 500 })
         .then((r) =>
           r.data.filter((serie) =>
             (serie.season ?? "").toLowerCase().startsWith(SEASON_LABELS[season].toLowerCase()),

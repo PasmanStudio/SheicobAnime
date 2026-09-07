@@ -21,18 +21,32 @@ const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5000";
 
 // El API corre en Render free-tier y DUERME la instancia tras ~15 min sin
-// tráfico. Auditoría del 7-sep-2026 sobre los logs de Render: el servicio está
-// arriba el 11% del tiempo, y un cold start mide 20-36 s. El timeout único de
-// 12 s que había acá era MENOR que el cold start, así que el primer visitante
-// después de cada siesta se comía un abort garantizado → la sección caía en su
-// `.catch(() => [])` → home/temporada vacíos. Un solo intento corto no puede
-// ganarle a un arranque en frío: hay que ESPERARLO.
+// tráfico. Auditoría del 7-sep-2026: el servicio está arriba el 11% del tiempo y
+// un cold start mide 20-36 s. El timeout único de 12 s que había acá era MENOR
+// que el cold start, así que el primer visitante después de cada siesta se comía
+// un abort garantizado → la sección caía en su `.catch(() => [])` → vacío.
 //
-// Presupuesto por intento (no un timeout único): el primero es corto porque
-// cubre el caso normal (API tibio, responde en <1 s); los reintentos son largos
-// porque solo se llega a ellos cuando la instancia está arrancando.
-const RETRY_TIMEOUTS_MS = [8_000, 20_000, 20_000];
-const RETRY_BACKOFF_MS = [500, 1_500];
+// PERO: reintentar hasta absorber el cold start entero fue peor. Con un
+// presupuesto de 8s+20s+20s el sitio se cayó con `error code: 1102` el
+// 7-sep-2026 a las 23:14 UTC. Analytics de Cloudflare, hora 23:00:
+// `exceededResources` 6 requests / 6 errores, con **wallTimeP99 = 40,6 s**
+// (cpuP99 apenas 150 ms → el límite que se rompe es el de WALL TIME del Worker,
+// no el de CPU). La hora anterior ya venía con wallTimeP99 de 47 s "exitosos":
+// estaba al borde.
+//
+// La lección: **los reintentos NO son la defensa contra el cold start — el
+// keep-alive lo es.** Acá solo cubren un hipo de red. El presupuesto total tiene
+// que quedar bien por debajo del límite del Worker (~30 s) contando que una
+// misma request puede encadenar más de un fetch, y además nadie va a esperar 50
+// segundos una página igual. Si el API está frío, la respuesta correcta es
+// fallar rápido hacia el cache, no hacer esperar al usuario.
+//
+// Presupuesto: 4 s (caso tibio) + 6 s (un reintento) + 300 ms de backoff ≈ 10,3 s
+// por fetch. Los fetches de una página corren en paralelo, así que una página
+// normal no pasa de ~10 s; la que encadena dos fases (temporada) usa la política
+// best-effort en la segunda para no sumar dos presupuestos completos.
+const RETRY_TIMEOUTS_MS = [4_000, 6_000];
+const RETRY_BACKOFF_MS = [300];
 
 // Camino interactivo (client components / route handlers): acá SÍ hay un humano
 // esperando, así que un intento corto y a otra cosa.
@@ -292,6 +306,24 @@ export async function getSeries(
  * sin mejorar nada — si no matchean, la tarjeta ya cae en "No indexado aún".
  */
 const BEST_EFFORT_TIMEOUTS_MS = [6_000];
+
+/**
+ * Listado "best effort": un intento corto, sin reintentos.
+ *
+ * Para la SEGUNDA fase de una página que ya gastó presupuesto en la primera
+ * (el fallback al catálogo propio de /temporada). Encadenar dos presupuestos
+ * completos es justamente lo que llevó el wall time del Worker a 40 s y lo hizo
+ * exceder sus límites.
+ */
+export async function getSeriesFast(
+  params: SeriesQueryParams = {}
+): Promise<PaginatedResponse<Series>> {
+  return request<PaginatedResponse<Series>>(
+    `/series${toQueryString({ ...params })}`,
+    CONTENT_CACHE,
+    BEST_EFFORT_TIMEOUTS_MS
+  );
+}
 
 /**
  * Búsqueda "best effort": un intento corto, sin reintentos.
