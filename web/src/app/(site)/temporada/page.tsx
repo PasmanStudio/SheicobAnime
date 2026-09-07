@@ -118,11 +118,13 @@ export default async function TemporadaPage({ searchParams }: Props) {
   //
   // `Series.season` es texto en español ("Verano 2026"), el mismo label que
   // SEASON_LABELS, así que el match es directo.
+  //
   // Se dispara tanto si el API avisó el fallo (503 → seasonUnavailable) como si
   // devolvió una lista vacía. Hoy hacen falta las dos: el endpoint del API
-  // todavía enmascara el 403 de AniList como `200 []`, y aunque eso se corrija,
+  // todavía enmascara el 403 de AniList como `200 []` (el fix solo llega al
+  // mergear, porque Render auto-deploya desde main), y aunque eso se corrija,
   // una lista vacía con títulos nuestros para esa temporada significa lo mismo
-  // para el usuario — hay algo para mostrar y no lo estábamos mostrando.
+  // para el usuario: hay algo para mostrar y no lo estábamos mostrando.
   const anilistUnusable = seasonUnavailable || anilistData.length === 0;
 
   const ownCatalogue: Series[] = anilistUnusable
