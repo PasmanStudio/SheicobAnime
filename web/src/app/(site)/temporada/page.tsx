@@ -89,17 +89,35 @@ export default async function TemporadaPage({ searchParams }: Props) {
   // estrenos todavía". Sin esa distinción los dos casos mostraban el mismo
   // cartel y una caída del API se leía como una temporada vacía.
   let seasonUnavailable = false;
-  const [anilistData, ongoingResult, topByScoreResult] = await Promise.all([
-    getSeasonalAnime(season, year).catch((err) => {
-      if (err instanceof SeasonUnavailableError) {
-        seasonUnavailable = true;
-        return [];
-      }
-      throw err;
-    }),
-    getSeries({ pageSize: 500, status: "ongoing" }).catch(() => fallback),
-    getSeries({ pageSize: 500, sort: "score" }).catch(() => fallback),
-  ]);
+
+  // AniList PRIMERO y solo — antes iba en un Promise.all junto a los dos
+  // catálogos de 500 series.
+  //
+  // Esos dos fetches existen únicamente para MATCHEAR entradas de AniList
+  // contra lo nuestro. Si AniList no devuelve nada, no hay nada que matchear y
+  // parsear ~1000 objetos Series es trabajo tirado — trabajo CARO: el plan free
+  // de Cloudflare Workers da 10 ms de CPU por invocación, y las analytics
+  // muestran 640 requests muertas con `exceededResources` en ago-2026 con
+  // cpuP50 = cpuP90 = cpuP99 = 10,0 ms exactos, o sea el techo clavado, con
+  // wall time de apenas 1,8-2,4 s. No era lentitud: era CPU.
+  //
+  // Serializar cuesta un salto de latencia cuando AniList SÍ funciona, y hoy
+  // nunca funciona. Vale mucho más ahorrarse el JSON.parse.
+  const anilistData = await getSeasonalAnime(season, year).catch((err) => {
+    if (err instanceof SeasonUnavailableError) {
+      seasonUnavailable = true;
+      return [];
+    }
+    throw err;
+  });
+
+  const needsMatching = anilistData.length > 0;
+  const [ongoingResult, topByScoreResult] = needsMatching
+    ? await Promise.all([
+        getSeries({ pageSize: 500, status: "ongoing" }).catch(() => fallback),
+        getSeries({ pageSize: 500, sort: "score" }).catch(() => fallback),
+      ])
+    : [fallback, fallback];
 
   // ── Fallback: nuestro propio catálogo cuando AniList no está ────────────────
   //
