@@ -9,7 +9,7 @@ import RankNumber from "@/components/ui/RankNumber";
 import RecentEpisodes from "@/components/ui/RecentEpisodes";
 import SectionHeader from "@/components/ui/SectionHeader";
 import SeriesCard from "@/components/ui/SeriesCard";
-import { getGenres, getRecentEpisodes, getSeries } from "@/lib/api";
+import { ApiUnavailableError, getGenres, getRecentEpisodes, getSeries } from "@/lib/api";
 import type { Episode, Genre, PaginatedResponse, Series } from "@/lib/types";
 import type { Metadata } from "next";
 
@@ -34,12 +34,48 @@ export default async function HomePage() {
   // Cada fetch falla de forma independiente: si Render está frío y uno se cae,
   // las demás secciones siguen renderizando (antes un solo Promise.all que
   // rechazaba dejaba TODA la home vacía).
+  //
+  // PERO degradar en silencio tiene un costo que no era obvio: esta página es
+  // ISR (`revalidate = 3600`). Si la regeneración corre justo cuando Render
+  // duerme, el render NO tira error — devuelve una home vacía perfectamente
+  // válida — y Next la cachea en KV por una hora. Un solo mal momento envenena
+  // el home para todos los visitantes de la hora siguiente, aunque el API haya
+  // despertado dos segundos después. Ese es el amplificador que hacía que
+  // "entro y está vacío" durara tanto.
+  //
+  // Por eso ahora se distingue por qué falló cada fetch:
+  //   - ApiUnavailableError (timeout / 5xx tras reintentos) = no sabemos qué hay
+  //     → si afecta al CONTENIDO PRINCIPAL, se deja subir el error. Next
+  //       descarta el render fallido y sigue sirviendo la última copia buena
+  //       (y si no hay ninguna, error.tsx ofrece reintentar). Nunca cachea vacío.
+  //   - Cualquier otro error, o una sección secundaria (top 10, géneros)
+  //     → se degrada en silencio como antes.
+  let primaryUnavailable = false;
+  const onPrimaryError = <T,>(fallbackValue: T) => (err: unknown): T => {
+    if (err instanceof ApiUnavailableError) primaryUnavailable = true;
+    return fallbackValue;
+  };
+
   const [recent, topRated, recentEpisodes, genres] = await Promise.all([
-    getSeries({ sort: "updated", pageSize: 12 }).catch(() => EMPTY_PAGE),
+    getSeries({ sort: "updated", pageSize: 12 }).catch(onPrimaryError(EMPTY_PAGE)),
     getSeries({ sort: "score", pageSize: 10 }).catch(() => EMPTY_PAGE),
-    getRecentEpisodes({ days: 3, pageSize: 30 }).catch(() => [] as Episode[]),
+    getRecentEpisodes({ days: 3, pageSize: 30 }).catch(onPrimaryError([] as Episode[])),
     getGenres().catch(() => [] as Genre[]),
   ]);
+
+  // Durante `next build` NO hay API que consultar (CI apunta a localhost:5000 a
+  // propósito: el build no debe depender de que producción esté viva). Ahí sí
+  // corresponde degradar en silencio, o el build entero falla.
+  const isBuildTime = process.env.NEXT_PHASE === "phase-production-build";
+
+  // Solo si además quedó sin contenido: si el API se cayó pero una de las dos
+  // fuentes principales respondió, la home es perfectamente servible.
+  if (!isBuildTime && primaryUnavailable && recent.data.length === 0 && recentEpisodes.length === 0) {
+    throw new ApiUnavailableError(
+      "El API no respondió y no hay contenido para renderizar el home",
+      3
+    );
+  }
 
   return (
     <div className="mx-auto max-w-container px-4 py-6 space-y-10">

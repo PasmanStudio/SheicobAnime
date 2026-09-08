@@ -132,7 +132,10 @@ REDIS_URL=<host>:6379,password=<token>,ssl=True,abortConnect=False
    - Everything else: respect origin headers
 6. **Rate limiting** (free tier):
    - `/api/*` → 100 requests per 10 seconds per IP → challenge or block
-7. Deploy keep-alive Worker (see `infra/cloudflare-worker-keepalive.js`)
+7. Deploy del Worker de keep-alive: `infra/keepalive/` — lo publica solo
+   `.github/workflows/keepalive-worker.yml` en cada push a `main` que lo toque
+   (o a mano con `workflow_dispatch`). Necesita los secrets `CLOUDFLARE_API_TOKEN`
+   y `CLOUDFLARE_ACCOUNT_ID`, que ya existen en el repo.
 
 ---
 

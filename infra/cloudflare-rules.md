@@ -83,10 +83,18 @@
 
 ## Workers
 
-### Keep-alive (prevent Railway sleep)
-- Script: `infra/cloudflare-worker-keepalive.js`
-- Cron Trigger: `*/25 * * * *` (every 25 minutes)
-- Env var: `API_HEALTH_URL = https://api.<domain>/health`
+### Keep-alive (evita que Render duerma el API)
+- Worker: `infra/keepalive/` (`sheicobanime-keepalive`)
+- Deploy: automático desde `.github/workflows/keepalive-worker.yml`
+- Cron Triggers: `*/5 13-23 * * *` y `*/5 0-5 * * *` — 13:00-05:59 UTC
+  (10:00-02:59 ART). NO es 24/7: el free tier de Render son ~750 h de instancia
+  al mes para todo el workspace y un mes de 31 días son 744 h, así que
+  mantenerlo despierto siempre no entra. Fuera de esa ventana el sitio se sirve
+  del cache de KV.
+- Config: `API_BASE_URL` y `WARM_PATHS` en `infra/keepalive/wrangler.jsonc`
+- El cron equivalente en GitHub Actions (`keepalive-cron.yml`) quedó como
+  respaldo: GHA corría el `*/10` cada ~167 min en la práctica y nunca evitó un
+  spin-down. Ver el encabezado de ese archivo para los números.
 
 ---
 

@@ -75,6 +75,20 @@ export function getSeasonNav(year: number): { season: AniListSeason; year: numbe
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5000";
 
+/**
+ * Lanzado cuando NO pudimos averiguar qué hay en la temporada.
+ *
+ * Distinto de "la temporada está vacía": /temporada mostraba el mismo cartel
+ * ("Todavía no hay información de esta temporada") en los dos casos, así que
+ * cada siesta de Render se veía como una temporada sin estrenos.
+ */
+export class SeasonUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SeasonUnavailableError";
+  }
+}
+
 export async function getSeasonalAnime(
   season: AniListSeason,
   year: number,
@@ -82,23 +96,60 @@ export async function getSeasonalAnime(
   // Vía el proxy del API (Render): el fetch directo a graphql.anilist.co desde
   // Cloudflare Workers falla intermitentemente (bot-protection de AniList contra
   // requests datacenter-a-datacenter). El proxy además cachea 6 h en Redis.
-  try {
-    const res = await fetch(
-      `${API_BASE_URL}/anilist/season/${encodeURIComponent(season)}/${year}`,
-      { cache: "no-store" },
-    );
+  //
+  // ANTES: `cache: "no-store"` y sin timeout. Como /temporada es dinámica, CADA
+  // visita pegaba en vivo a un Render que está dormido el 88% del tiempo → 503
+  // → `return []` → "no hay información de esta temporada". Y al no cachearse
+  // nada, no había copia buena de la cual caer.
+  //
+  // AHORA: se cachea el payload 6 h en el incremental cache (KV). El contenido
+  // de una temporada cambia de a poco, así que 6 h es de sobra, y con eso la
+  // página deja de depender de que Render esté despierto en ese instante.
+  // Son ~4 keys por año navegado: no mueve la aguja del free tier de KV.
+  const url = `${API_BASE_URL}/anilist/season/${encodeURIComponent(season)}/${year}`;
+  const started = Date.now();
 
-    if (!res.ok) {
-      console.error(`AniList proxy error: ${res.status} ${res.statusText}`);
-      return [];
+  // Mismo presupuesto acotado que lib/api.ts: 4 s + 6 s. Esperar el cold start
+  // entero acá fue lo que tumbó el Worker por wall time el 7-sep-2026 (ver el
+  // comentario largo en lib/api.ts). Si el API está frío, esta página cae en su
+  // fallback al catálogo propio, que es mejor que hacer esperar 40 s.
+  const timeouts = [4_000, 6_000];
+  let reason = "unknown";
+
+  for (let attempt = 0; attempt < timeouts.length; attempt++) {
+    try {
+      const res = await fetch(url, {
+        signal: AbortSignal.timeout(timeouts[attempt]),
+        next: { revalidate: 21_600, tags: ["season"] },
+      });
+
+      if (res.ok) {
+        const json = await res.json();
+        return (Array.isArray(json) ? json : []) as AniListMedia[];
+      }
+
+      reason = `http_${res.status}`;
+      // 5xx/429 = Render dormido o arrancando → reintentar. 4xx = respuesta real.
+      if (!(res.status >= 500 || res.status === 429 || res.status === 408)) break;
+    } catch (err) {
+      reason = err instanceof Error && err.name === "TimeoutError" ? "timeout" : "network";
     }
 
-    const json = await res.json();
-    return (Array.isArray(json) ? json : []) as AniListMedia[];
-  } catch (err) {
-    console.error("AniList proxy fetch failed:", err);
-    return [];
+    if (attempt < timeouts.length - 1) {
+      await new Promise((r) => setTimeout(r, 300));
+    }
   }
+
+  console.error(
+    JSON.stringify({
+      event: "anilist_season_failed",
+      season,
+      year,
+      reason,
+      elapsedMs: Date.now() - started,
+    }),
+  );
+  throw new SeasonUnavailableError(`No se pudo cargar la temporada ${season} ${year} (${reason})`);
 }
 
 // ─── Title matching ────────────────────────────────────────────────────────────

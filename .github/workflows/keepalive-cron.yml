@@ -1,27 +1,56 @@
-name: Render API — Keep-alive
+name: Render API — Keep-alive (respaldo)
 
-# El plan free de Render duerme la instancia tras ~15 min sin tráfico.
-# El primer request después de eso paga un cold-start de 20-30s, que supera
-# el timeout de 12s que usa el frontend (web/src/lib/api.ts) para pedir datos
-# al API — el resultado es que las secciones de la home caen en el catch y
-# se muestran vacías ("no hay feed"). Este ping evita que la instancia
-# llegue a dormirse.
+# ⚠️  Este workflow es SOLO UN RESPALDO. El keep-alive real vive en Cloudflare:
+#     infra/keepalive/ (Cron Trigger cada 5 min, ese sí se respeta).
 #
-# /health es liveness puro (no toca DB ni cache), así que este ping no
-# agrega carga real al pool de Postgres.
+# Por qué dejó de ser el mecanismo principal — medido el 7-sep-2026 sobre 13
+# días de historial de runs:
+#   - declaraba `*/10 * * * *` = 144 runs/día;
+#   - GitHub Actions lo corrió entre 2 y 9 veces por día;
+#   - gap medio entre runs: 167 min (mediana 129, máximo 746);
+#   - de 114 gaps medidos, los 114 superaron los 15 min de idle timeout.
+# O sea: no evitó ni un solo spin-down en toda su vida. GitHub desprioriza y
+# descarta los cron de alta frecuencia; no es un bug del workflow ni algo que se
+# arregle bajando el intervalo.
+#
+# Se lo conserva porque si el Worker de Cloudflare se cae, un ping esporádico es
+# mejor que ninguno. Se limita a la MISMA ventana horaria que el Worker para no
+# gastar horas de instancia de Render fuera de ella (el free tier son ~750 h/mes
+# para todo el workspace).
 
 on:
   schedule:
-    - cron: '*/10 * * * *'   # cada 10 minutos, por debajo del idle timeout de 15 min
+    # Horario alineado con infra/keepalive (13:00-05:59 UTC = 10:00-02:59 ART).
+    # Frecuencia baja a propósito: es respaldo, no el mecanismo principal.
+    - cron: '0 13-23 * * *'
+    - cron: '0 0-5 * * *'
   workflow_dispatch:          # allow manual runs
 
 jobs:
   ping:
     name: Ping /health
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 5   # 3 intentos x 40 s + backoff
 
     steps:
       - name: Ping Render API health endpoint
         run: |
-          curl -fsS --max-time 60 https://sheicobanime-api.onrender.com/health
+          # Reintenta: si la instancia está dormida, el primer intento recibe
+          # el 502/503 del edge de Render mientras arranca el contenedor (20-36 s).
+          # Ese intento ES el que dispara el arranque, así que darse por vencido
+          # ahí marcaba como "fallidos" justamente los despertares exitosos.
+          for attempt in 1 2 3; do
+            if curl -fsS --max-time 40 https://sheicobanime-api.onrender.com/health; then
+              exit 0
+            fi
+            echo "intento $attempt falló (probable cold start), reintentando..."
+            sleep 5
+          done
+          # Falla en ROJO a propósito. Los 3 intentos x 40 s ya absorben un cold
+          # start de 20-36 s, así que llegar acá significa que el API realmente
+          # no está respondiendo — y eso tiene que verse en la lista de runs.
+          # (El historial de runs fallidos de este workflow fue justamente lo que
+          # permitió diagnosticar el incidente de sep-2026; degradarlo a warning
+          # habría tapado la única señal que quedaba fuera de Cloudflare.)
+          echo "::error::el API no respondió tras 3 intentos"
+          exit 1

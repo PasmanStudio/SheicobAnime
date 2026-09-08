@@ -1,24 +1,48 @@
 import AdSlot from "@/components/ads/AdSlot";
 import SeasonCard from "@/components/ui/SeasonCard";
+import SeriesCard from "@/components/ui/SeriesCard";
 import {
   getCurrentSeason,
   getSeasonalAnime,
   getSeasonNav,
   SEASON_LABELS,
   SEASON_ORDER,
+  SeasonUnavailableError,
   titlesMatch,
   type AniListSeason,
 } from "@/lib/anilist";
-import { getSeries, searchSeries } from "@/lib/api";
+import { getSeries, getSeriesFast, searchSeriesFast } from "@/lib/api";
 import type { Series } from "@/lib/types";
 import type { Metadata } from "next";
 import Link from "next/link";
 
-// force-dynamic: en Cloudflare Workers no hay incremental cache (ver
-// open-next.config.ts), así que `revalidate` congelaba el HTML del build —
-// si AniList fallaba en CI, la página quedaba vacía para siempre.
-// El fetch a AniList se cachea aparte (next.revalidate en lib/anilist).
+// force-dynamic: la página lee `searchParams` (season/year), así que Next la
+// renderiza dinámica igual. Lo que importa para la resiliencia no es el modo de
+// la página sino que los DATOS estén cacheados: `getSeasonalAnime` cachea 6 h y
+// `getSeries` usa CONTENT_CACHE. Antes AniList iba con `cache: "no-store"` y
+// cada visita pegaba en vivo a un Render dormido → temporada vacía.
 export const dynamic = "force-dynamic";
+
+// Tope del fan-out de búsquedas por título (fase 3).
+//
+// Cloudflare Workers en plan free permite 50 SUBREQUESTS por request. La fase 3
+// hacía `unmatched.map(searchSeries)` sin tope: una temporada de AniList trae
+// 100-300 títulos, así que con más de ~45 sin matchear el Worker se pasaba del
+// límite y reventaba el render entero — otra causa, independiente de Render, de
+// que /temporada saliera vacía. Se priorizan los más populares, que son los que
+// el usuario espera ver marcados como disponibles.
+//
+// PRESUPUESTO DE SUBREQUESTS DE ESTA PÁGINA (límite: 50 en el plan free).
+// Peor caso, con los reintentos de lib/api.ts contados:
+//     getSeasonalAnime .....  3  (hasta 3 intentos)
+//     getSeries ongoing ....  3
+//     getSeries por score ..  3
+//     searchSeriesFast ..... 30  (1 intento cada una, por eso es "Fast")
+//                            ──
+//                            39  → quedan 11 de margen
+// Si agregás un fetch nuevo a esta página, restalo de esos 11 o bajá este tope.
+// Pasarse del límite no degrada: tira el render entero.
+const MAX_TITLE_SEARCHES = 30;
 
 interface Props {
   searchParams: Promise<{ season?: string; year?: string }>;
@@ -61,11 +85,79 @@ export default async function TemporadaPage({ searchParams }: Props) {
   //      series when browsing past seasons.
   //
   const fallback = { data: [] as Series[], total: 0, page: 1, pageSize: 500 };
-  const [anilistData, ongoingResult, topByScoreResult] = await Promise.all([
-    getSeasonalAnime(season, year),
-    getSeries({ pageSize: 500, status: "ongoing" }).catch(() => fallback),
-    getSeries({ pageSize: 500, sort: "score" }).catch(() => fallback),
-  ]);
+  // `seasonUnavailable` separa "no pudimos consultar" de "la temporada no tiene
+  // estrenos todavía". Sin esa distinción los dos casos mostraban el mismo
+  // cartel y una caída del API se leía como una temporada vacía.
+  let seasonUnavailable = false;
+
+  // AniList PRIMERO y solo — antes iba en un Promise.all junto a los dos
+  // catálogos de 500 series.
+  //
+  // Esos dos fetches existen únicamente para MATCHEAR entradas de AniList
+  // contra lo nuestro. Si AniList no devuelve nada, no hay nada que matchear y
+  // parsear ~1000 objetos Series es trabajo tirado — trabajo CARO: el plan free
+  // de Cloudflare Workers da 10 ms de CPU por invocación, y las analytics
+  // muestran 640 requests muertas con `exceededResources` en ago-2026 con
+  // cpuP50 = cpuP90 = cpuP99 = 10,0 ms exactos, o sea el techo clavado, con
+  // wall time de apenas 1,8-2,4 s. No era lentitud: era CPU.
+  //
+  // Serializar cuesta un salto de latencia cuando AniList SÍ funciona, y hoy
+  // nunca funciona. Vale mucho más ahorrarse el JSON.parse.
+  const anilistData = await getSeasonalAnime(season, year).catch((err) => {
+    if (err instanceof SeasonUnavailableError) {
+      seasonUnavailable = true;
+      return [];
+    }
+    throw err;
+  });
+
+  const needsMatching = anilistData.length > 0;
+  const [ongoingResult, topByScoreResult] = needsMatching
+    ? await Promise.all([
+        getSeries({ pageSize: 500, status: "ongoing" }).catch(() => fallback),
+        getSeries({ pageSize: 500, sort: "score" }).catch(() => fallback),
+      ])
+    : [fallback, fallback];
+
+  // ── Fallback: nuestro propio catálogo cuando AniList no está ────────────────
+  //
+  // AniList apagó su API pública (403 "temporarily disabled due to severe
+  // stability issues", verificado el 7-sep-2026 desde Render y desde una IP
+  // residencial). Sin esto la página quedaría mostrando un cartel de error de
+  // forma indefinida, porque toda su grilla salía de AniList.
+  //
+  // Pero los datos ya los tenemos: `Series.season` viene poblado en 94 de 95
+  // series en emisión — 69 de ellas marcadas "Verano 2026". Así que cuando el
+  // upstream se cae, la grilla se arma con lo NUESTRO. Es una página distinta y
+  // en algún sentido mejor: en vez del top-50 de popularidad de AniList (del que
+  // el usuario solo puede ver lo que tengamos indexado), muestra exactamente los
+  // títulos de la temporada que sí se pueden mirar acá. Se avisa el cambio para
+  // no fingir que es la misma información.
+  //
+  // `Series.season` es texto en español ("Verano 2026"), el mismo label que
+  // SEASON_LABELS, así que el match es directo.
+  //
+  // Se dispara tanto si el API avisó el fallo (503 → seasonUnavailable) como si
+  // devolvió una lista vacía. Hoy hacen falta las dos: el endpoint del API
+  // todavía enmascara el 403 de AniList como `200 []` (el fix solo llega al
+  // mergear, porque Render auto-deploya desde main), y aunque eso se corrija,
+  // una lista vacía con títulos nuestros para esa temporada significa lo mismo
+  // para el usuario: hay algo para mostrar y no lo estábamos mostrando.
+  const anilistUnusable = seasonUnavailable || anilistData.length === 0;
+
+  // getSeriesFast (un intento, 6 s): esta es la SEGUNDA fase de la página, ya
+  // gastamos presupuesto arriba. Sumar dos presupuestos completos de reintentos
+  // es lo que llevó el wall time del Worker a 40 s y lo hizo exceder sus
+  // límites (error 1102) el 7-sep-2026.
+  const ownCatalogue: Series[] = anilistUnusable
+    ? await getSeriesFast({ year, pageSize: 500 })
+        .then((r) =>
+          r.data.filter((serie) =>
+            (serie.season ?? "").toLowerCase().startsWith(SEASON_LABELS[season].toLowerCase()),
+          ),
+        )
+        .catch(() => [] as Series[])
+    : [];
 
   // Merge and deduplicate by slug (ongoing takes priority)
   const seenSlugs = new Set<string>();
@@ -88,7 +180,15 @@ export default async function TemporadaPage({ searchParams }: Props) {
   // entry still unmatched, we run a targeted search against our DB. This runs
   // server-to-server (low latency) and all searches fire in parallel.
   //
-  const unmatched = firstPass.filter((m) => m.match === null);
+  const allUnmatched = firstPass
+    .filter((m) => m.match === null)
+    .sort((a, b) => (b.media.popularity ?? 0) - (a.media.popularity ?? 0));
+  const unmatched = allUnmatched.slice(0, MAX_TITLE_SEARCHES);
+  // Cuando se trunca, el conteo de disponibles es una COTA INFERIOR: puede
+  // haber series indexadas entre las que no llegamos a buscar, y se muestran
+  // como "No indexado aún". Se marca con un "+" en vez de dar un número exacto
+  // que sabemos que puede estar bajo.
+  const searchTruncated = allUnmatched.length > unmatched.length;
   const fallbackMap = new Map<number, Series>(); // AniList media.id → matched Series
 
   if (unmatched.length > 0) {
@@ -96,7 +196,7 @@ export default async function TemporadaPage({ searchParams }: Props) {
       unmatched.map(async ({ media }) => {
         const query = media.title.english ?? media.title.romaji;
         if (!query) return null;
-        const results = await searchSeries({ q: query, pageSize: 5 }).catch(
+        const results = await searchSeriesFast({ q: query, pageSize: 5 }).catch(
           () => ({ data: [] as Series[] }),
         );
         const found = results.data.find((s) =>
@@ -132,7 +232,11 @@ export default async function TemporadaPage({ searchParams }: Props) {
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
         <div className="flex flex-col gap-1">
           <span className="sh-label">
-            {availableCount} de {anilistData.length} títulos disponibles
+            {anilistUnusable && ownCatalogue.length > 0
+              ? `${ownCatalogue.length} ${ownCatalogue.length === 1 ? "título" : "títulos"} en SheicobAnime`
+              : seasonUnavailable
+                ? "Temporada no disponible"
+                : `${availableCount}${searchTruncated ? "+" : ""} de ${anilistData.length} títulos disponibles`}
           </span>
           <span className="sh-section-header items-center">
             <span className="sh-cut" />
@@ -188,7 +292,26 @@ export default async function TemporadaPage({ searchParams }: Props) {
       </div>
 
       {/* Grid */}
-      {anilistData.length === 0 ? (
+      {anilistUnusable && ownCatalogue.length > 0 ? (
+        <>
+          <p className="text-xs text-ink-3 border border-line-1 bg-abyss-2 rounded-btn px-3 py-2">
+            La guía de estrenos externa no está disponible en este momento. Mientras tanto,
+            estos son los títulos de la temporada que ya están en SheicobAnime.
+          </p>
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
+            {ownCatalogue.map((serie) => (
+              <SeriesCard key={serie.slug} series={serie} />
+            ))}
+          </div>
+        </>
+      ) : seasonUnavailable ? (
+        <div className="text-center py-20 text-sm">
+          <p className="text-ink-2">No pudimos cargar la temporada en este momento.</p>
+          <p className="mt-1 text-ink-3">
+            Es un problema temporal nuestro, no de la temporada. Recargá en unos segundos.
+          </p>
+        </div>
+      ) : anilistData.length === 0 ? (
         <div className="text-center py-20 text-sm">
           <p className="text-ink-2">Todavía no hay información de esta temporada.</p>
           <p className="mt-1 text-ink-3">Los estrenos se cargan apenas se anuncian — volvé en unos días.</p>
