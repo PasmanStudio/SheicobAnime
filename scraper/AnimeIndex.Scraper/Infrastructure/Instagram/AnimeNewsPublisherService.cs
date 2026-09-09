@@ -715,7 +715,7 @@ public class AnimeNewsPublisherService(
         // idioma - con subtitulos es manuales quemados si existen, y si no, en
         // su idioma original (ultimo recurso, toggle abajo). El PV embebido en
         // el articulo (rechazado antes por idioma) tambien entra aca.
-        var anyQuery = query.Replace("espanol latino", "", StringComparison.OrdinalIgnoreCase).Trim();
+        var anyQuery = StripLanguageQualifier(query);
         var any = new List<TrailerCandidate>(
             await trailerService.SearchManyAsync(anyQuery, requireSpanish: false, subject: subject, ct: ct));
 
@@ -730,7 +730,7 @@ public class AnimeNewsPublisherService(
                 spanish.AddRange(await trailerService.SearchManyAsync(
                     heur.Value.Query, requireSpanish: true, subject: subject, ct: ct));
                 any.AddRange(await trailerService.SearchManyAsync(
-                    heur.Value.Query.Replace("espanol latino", "", StringComparison.OrdinalIgnoreCase).Trim(),
+                    StripLanguageQualifier(heur.Value.Query),
                     requireSpanish: false, subject: subject, ct: ct));
             }
         }
@@ -771,6 +771,39 @@ public class AnimeNewsPublisherService(
 
         return plan with { Candidates = Dedupe([.. spanish, .. any]) };
     }
+
+    /// <summary>
+    /// Saca el calificador de idioma de una query de YouTube, tolerando tildes.
+    ///
+    /// El bug que esto arregla (dx 9-sep-2026): la escalera de búsqueda tiene dos
+    /// escalones — primero "&lt;obra&gt; tráiler oficial español latino", y si no hay
+    /// versión latina, el mismo tráiler en cualquier idioma. El segundo escalón
+    /// se armaba con
+    ///     query.Replace("espanol latino", "", OrdinalIgnoreCase)
+    /// pero TANTO el prompt de la IA como HeuristicVideoQuery generan la query
+    /// con tildes ("español latino"), y OrdinalIgnoreCase NO pliega acentos: la
+    /// "ñ" no matchea la "n". El Replace era un no-op SIEMPRE, así que el
+    /// segundo escalón buscaba en YouTube exactamente la misma frase con
+    /// "español latino" adentro — solo que sin filtrar por idioma. Para un
+    /// estreno sin doblaje latino eso no devuelve nada, y el reel terminaba
+    /// publicándose como slideshow sin video.
+    ///
+    /// Se usa una regex tolerante en vez de Replace para que no vuelva a
+    /// romperse por un carácter: cubre español/espanol, con o sin "latino", y
+    /// "castellano".
+    /// </summary>
+    public static string StripLanguageQualifier(string query)
+    {
+        if (string.IsNullOrWhiteSpace(query)) return query ?? string.Empty;
+        var stripped = LanguageQualifierRegex.Replace(query, " ");
+        // Colapsar espacios que quedaron del recorte.
+        return System.Text.RegularExpressions.Regex.Replace(stripped, @"\s{2,}", " ").Trim();
+    }
+
+    private static readonly System.Text.RegularExpressions.Regex LanguageQualifierRegex =
+        new(@"\b(espa[nñ]ol(\s+latino)?|castellano|latino\s+espa[nñ]ol)\b",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase
+            | System.Text.RegularExpressions.RegexOptions.Compiled);
 
     /// <summary>Candidatos sin URLs repetidas, respetando el orden de preferencia.</summary>
     private static IReadOnlyList<TrailerCandidate> Dedupe(IEnumerable<TrailerCandidate> candidates)
