@@ -132,13 +132,23 @@ public class InstagramInsightsService(
         if (!resp.IsSuccessStatusCode)
         {
             // El caso que más importa distinguir: token sin permiso de insights.
+            //
+            // Meta lo reporta de varias formas según cómo esté autorizada la app.
+            // Comprobado en prod el 9-sep-2026: devuelve
+            //   (#10) Application does not have permission for this action
+            // que viaja como "code":10, NO como el subcode 33 que documenta. Sin
+            // cubrir el 10, el export escupía un warning por CADA pieza (cientos
+            // de líneas) y recién moría al final, escondiendo la causa real.
             if (body.Contains("error_subcode\":33", StringComparison.Ordinal)
+                || body.Contains("\"code\":10", StringComparison.Ordinal)
+                || body.Contains("does not have permission", StringComparison.OrdinalIgnoreCase)
                 || body.Contains("manage_insights", StringComparison.OrdinalIgnoreCase))
             {
                 throw new InvalidOperationException(
-                    "El token de Instagram no tiene permiso de insights. Hay que re-autorizar la app "
-                    + "agregando el scope instagram_manage_insights (Facebook Login) o "
-                    + "instagram_business_manage_insights (Instagram Login).");
+                    "El token de Instagram NO tiene permiso de insights. Listar el media funciona, "
+                    + "leer métricas no: son scopes distintos. Hay que re-autorizar la app agregando "
+                    + "instagram_manage_insights (Facebook Login) o instagram_business_manage_insights "
+                    + "(Instagram Login), y regenerar el secret INSTAGRAM_ACCESS_TOKEN.");
             }
             logger.LogWarning("Insights: media {Id} sin métricas ({Status}): {Body}",
                 mediaId, (int)resp.StatusCode, Truncate(body, 240));
