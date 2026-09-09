@@ -338,6 +338,79 @@ if (args.Contains("--images"))
 //
 // El workflow .github/workflows/insights-export.yml lo corre y sube el CSV
 // como artifact.
+// ── Verificar los scopes del token de Instagram ──────────────────────────────
+// Usage: dotnet run --project scraper/AnimeIndex.Scraper -- --token-scopes
+//
+// Chequeo de 5 segundos antes de correr el export completo. Existe porque el
+// export del 9-sep-2026 corrió 3 minutos para descubrir que al token le faltaba
+// `instagram_manage_insights`: Meta deja LISTAR el media con el token de
+// publicación y solo rechaza la lectura de métricas, así que el permiso que
+// falta no se nota hasta la segunda llamada.
+//
+// Ojo con lo no-obvio: agregar el permiso en el dashboard NO alcanza. Los
+// tokens ya emitidos NO lo heredan — hay que regenerar el token.
+if (args.Contains("--token-scopes"))
+{
+    var igTok = new AnimeIndex.Scraper.Infrastructure.Instagram.InstagramSettings();
+    new ConfigurationBuilder().AddEnvironmentVariables().Build().GetSection("Instagram").Bind(igTok);
+
+    if (string.IsNullOrWhiteSpace(igTok.AccessToken))
+    {
+        Console.Error.WriteLine("Falta Instagram__AccessToken");
+        Environment.ExitCode = 1;
+        return;
+    }
+
+    using var httpTok = new HttpClient();
+    var dbgUrl = "https://graph.facebook.com/debug_token"
+               + $"?input_token={Uri.EscapeDataString(igTok.AccessToken)}"
+               + $"&access_token={Uri.EscapeDataString(igTok.AccessToken)}";
+
+    var dbgBody = await httpTok.GetStringAsync(dbgUrl);
+    using var dbgDoc = System.Text.Json.JsonDocument.Parse(dbgBody);
+    if (!dbgDoc.RootElement.TryGetProperty("data", out var dbgData))
+    {
+        Console.Error.WriteLine($"Respuesta inesperada de debug_token: {dbgBody}");
+        Environment.ExitCode = 1;
+        return;
+    }
+
+    var scopes = dbgData.TryGetProperty("scopes", out var sc) && sc.ValueKind == System.Text.Json.JsonValueKind.Array
+        ? sc.EnumerateArray().Select(x => x.GetString() ?? "").ToList()
+        : [];
+
+    Console.WriteLine($"App ID   : {(dbgData.TryGetProperty("app_id", out var ai) ? ai.GetString() : "?")}");
+    Console.WriteLine($"Tipo     : {(dbgData.TryGetProperty("type", out var ty) ? ty.GetString() : "?")}");
+    Console.WriteLine($"Válido   : {(dbgData.TryGetProperty("is_valid", out var iv) && iv.GetBoolean())}");
+    if (dbgData.TryGetProperty("expires_at", out var ea) && ea.GetInt64() > 0)
+    {
+        var days = (ea.GetInt64() - DateTimeOffset.UtcNow.ToUnixTimeSeconds()) / 86400.0;
+        Console.WriteLine($"Expira   : en {days:F0} días");
+    }
+    else Console.WriteLine("Expira   : nunca (token de System User)");
+
+    Console.WriteLine($"Scopes   : {(scopes.Count > 0 ? string.Join(", ", scopes) : "(ninguno reportado)")}");
+    Console.WriteLine();
+
+    // El punto del comando.
+    var hasInsights = scopes.Any(x =>
+        x.Equals("instagram_manage_insights", StringComparison.OrdinalIgnoreCase)
+        || x.Equals("instagram_business_manage_insights", StringComparison.OrdinalIgnoreCase));
+
+    if (hasInsights)
+    {
+        Console.WriteLine("OK: el token PUEDE leer insights. Ya se puede correr --insights.");
+    }
+    else
+    {
+        Console.WriteLine("FALTA el permiso de insights (instagram_manage_insights).");
+        Console.WriteLine("Agregarlo en el dashboard NO alcanza: hay que REGENERAR el token,");
+        Console.WriteLine("porque los tokens ya emitidos no heredan permisos nuevos.");
+        Environment.ExitCode = 1;
+    }
+    return;
+}
+
 if (args.Contains("--insights"))
 {
     var idx = Array.IndexOf(args, "--insights");
