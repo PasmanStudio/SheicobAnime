@@ -43,6 +43,13 @@ jobs:
       - name: Build
         run: dotnet build scraper/AnimeIndex.Scraper/AnimeIndex.Scraper.csproj --no-restore -c Release
 
+      # Chequeo previo: si al token le falta el permiso, esto lo dice en 5s con
+      # el motivo, en vez de que el export corra 3 min y muera confuso.
+      - name: Verificar permisos del token
+        run: dotnet run --project scraper/AnimeIndex.Scraper --no-build -c Release -- --token-scopes
+        env:
+          Instagram__AccessToken: ${{ secrets.INSTAGRAM_ACCESS_TOKEN }}
+
       - name: Exportar
         run: |
           dotnet run --project scraper/AnimeIndex.Scraper --no-build -c Release -- \
