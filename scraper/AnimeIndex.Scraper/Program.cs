@@ -328,6 +328,65 @@ if (args.Contains("--images"))
 // Usage: Instagram__CloudinaryCloudName=... Instagram__CloudinaryApiKey=... \
 //        Instagram__CloudinaryApiSecret=... dotnet run --project scraper/AnimeIndex.Scraper -- --test-imagehost
 // Uploads a tiny PNG via the same UploadImageAsync the publishers use and prints the URL.
+// ── Exportar insights de Instagram (sin DB/Hangfire) ─────────────────────────
+// Usage: dotnet run --project scraper/AnimeIndex.Scraper -- --insights [dias] [salida.csv]
+//
+// Baja las metricas de cada pieza publicada y escribe un CSV. Existe porque
+// hasta ahora se publicaba a ciegas: 7 piezas por dia y ningun dato de vuelta
+// sobre que funciona. El CSV se puede abrir en una planilla o pasarselo a
+// alguien para que lo analice — el token nunca sale de los secrets.
+//
+// El workflow .github/workflows/insights-export.yml lo corre y sube el CSV
+// como artifact.
+if (args.Contains("--insights"))
+{
+    var idx = Array.IndexOf(args, "--insights");
+    var days = args.Length > idx + 1 && int.TryParse(args[idx + 1], out var d) ? d : 90;
+    var outPath = args.Length > idx + 2 ? args[idx + 2] : "instagram-insights.csv";
+
+    var igIns = new AnimeIndex.Scraper.Infrastructure.Instagram.InstagramSettings();
+    new ConfigurationBuilder().AddEnvironmentVariables().Build().GetSection("Instagram").Bind(igIns);
+
+    if (string.IsNullOrWhiteSpace(igIns.AccessToken) || string.IsNullOrWhiteSpace(igIns.IgUserId))
+    {
+        Console.Error.WriteLine("Faltan Instagram__AccessToken / Instagram__IgUserId");
+        Environment.ExitCode = 1;
+        return;
+    }
+
+    await using var spIns = new ServiceCollection()
+        .AddLogging(b => b.AddSimpleConsole(o => { o.SingleLine = true; o.TimestampFormat = "HH:mm:ss "; }))
+        .AddHttpClient()
+        .AddSingleton(igIns)
+        .AddSingleton<AnimeIndex.Scraper.Infrastructure.Instagram.InstagramInsightsService>()
+        .BuildServiceProvider();
+
+    var insights = spIns.GetRequiredService<AnimeIndex.Scraper.Infrastructure.Instagram.InstagramInsightsService>();
+    try
+    {
+        var since = DateTimeOffset.UtcNow.AddDays(-days);
+        var rows = await insights.ExportAsync(since);
+        if (rows.Count == 0)
+        {
+            Console.WriteLine($"No hay piezas publicadas en los ultimos {days} dias.");
+            return;
+        }
+
+        await File.WriteAllTextAsync(outPath,
+            AnimeIndex.Scraper.Infrastructure.Instagram.InstagramInsightsService.ToCsv(rows));
+
+        var reels = rows.Count(r => r.ProductType.Equals("REELS", StringComparison.OrdinalIgnoreCase));
+        Console.WriteLine($"OK -> {outPath}");
+        Console.WriteLine($"   {rows.Count} piezas ({reels} reels, {rows.Count - reels} feed) de los ultimos {days} dias");
+    }
+    catch (InvalidOperationException ex)
+    {
+        Console.Error.WriteLine($"ERROR: {ex.Message}");
+        Environment.ExitCode = 1;
+    }
+    return;
+}
+
 if (args.Contains("--test-imagehost"))
 {
     var igTest = new AnimeIndex.Scraper.Infrastructure.Instagram.InstagramSettings();

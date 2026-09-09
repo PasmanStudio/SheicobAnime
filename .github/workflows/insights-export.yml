@@ -1,0 +1,59 @@
+name: Instagram — Exportar insights
+
+# Baja las métricas de todo lo publicado y las sube como artifact (CSV).
+#
+# Por qué existe: publicamos ~7 piezas por día y no teníamos ningún dato de
+# vuelta sobre qué funciona. Esto cierra el lazo sin sacar el token de los
+# secrets: el CSV se descarga desde la pestaña Actions y se puede abrir en una
+# planilla o pasárselo a quien lo analice.
+#
+# REQUISITO: el token INSTAGRAM_ACCESS_TOKEN tiene que tener el scope
+# `instagram_manage_insights` (Facebook Login) o `instagram_business_manage_insights`
+# (Instagram Login). El token de publicación puede no tenerlo — publicar solo
+# necesita `instagram_content_publish`. Si falta, el job falla con un mensaje
+# claro en vez de subir un CSV vacío.
+
+on:
+  workflow_dispatch:
+    inputs:
+      days:
+        description: 'Cuántos días hacia atrás exportar'
+        type: string
+        default: '90'
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    name: Exportar CSV de insights
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: '9.x'
+
+      - name: Restore
+        run: dotnet restore scraper/AnimeIndex.Scraper/AnimeIndex.Scraper.csproj
+
+      - name: Build
+        run: dotnet build scraper/AnimeIndex.Scraper/AnimeIndex.Scraper.csproj --no-restore -c Release
+
+      - name: Exportar
+        run: |
+          dotnet run --project scraper/AnimeIndex.Scraper --no-build -c Release -- \
+            --insights "${{ inputs.days || '90' }}" instagram-insights.csv
+        env:
+          Instagram__AccessToken: ${{ secrets.INSTAGRAM_ACCESS_TOKEN }}
+          Instagram__IgUserId: ${{ secrets.INSTAGRAM_IG_USER_ID }}
+
+      - name: Subir CSV
+        uses: actions/upload-artifact@v4
+        with:
+          name: instagram-insights
+          path: instagram-insights.csv
+          retention-days: 30
