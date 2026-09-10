@@ -140,8 +140,13 @@ public class InstagramInsightsService(
     // por cada una de las ~800 piezas.
     private readonly Dictionary<string, HashSet<string>> _unsupported = new();
 
-    private async Task<Dictionary<string, long>> FetchMetricsAsync(
-        string mediaId, string productType, CancellationToken ct)
+    /// <summary>
+    /// Métricas crudas de UNA pieza. Público para que <c>--insights-sync</c>
+    /// pueda pedir solo los reels que ya conoce (por su media id guardado en la
+    /// DB) en vez de paginar las ~800 piezas de la cuenta entera.
+    /// </summary>
+    public async Task<Dictionary<string, long>> FetchMetricsAsync(
+        string mediaId, string productType, CancellationToken ct = default)
     {
         var key = productType.ToUpperInvariant();
         if (!_unsupported.TryGetValue(key, out var skip))
@@ -272,9 +277,11 @@ public class InstagramInsightsService(
         //    30 days excluding the current day"
         //   "The following metrics (profile_views) should be specified with
         //    parameter metric_type=total_value"
-        // Así que la serie diaria se limita a follower_count + reach, y la
+        // Así que la SERIE DIARIA se limita a follower_count + reach, y la
         // ventana se recorta a los últimos 30 días terminando AYER. Pedir más
         // atrás no devuelve nada: es un límite de Meta, no del export.
+        // profile_views y el reach partido por follow_type se agregan después,
+        // día por día, porque exigen metric_type=total_value (ver más abajo).
         var metrics = new[] { "follower_count", "reach" };
         var days = new SortedDictionary<string, Dictionary<string, string>>();
 
@@ -321,8 +328,105 @@ public class InstagramInsightsService(
             cursor = until.AddDays(1);
         }
 
+        // ── Las dos métricas que responden "¿dónde está el cuello?" ──────────
+        // El playbook mide ~825 de alcance por seguidor, pero ese número es el
+        // PRODUCTO de dos tasas: alcance → visita al perfil, y visita → follow.
+        // Sin separarlas no se sabe si el problema es que no llegamos a la gente
+        // o que llegamos y el perfil no convierte — que son dos trabajos
+        // completamente distintos.
+        //
+        // Las dos exigen metric_type=total_value, que NO devuelve serie diaria:
+        // con un rango de since/until da UN número para todo el período. Así que
+        // se piden día por día. Son ~60 llamadas para 30 días, contra las ~800
+        // del export de piezas — no mueve la aguja del tiempo de corrida.
+        foreach (var (day, row) in days)
+        {
+            if (!DateTimeOffset.TryParse(day, CultureInfo.InvariantCulture,
+                    DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var d))
+                continue;
+
+            // Cuánta gente llegó al perfil: el segundo multiplicador.
+            var views = await FetchTotalValueAsync("profile_views", d, null, ct);
+            if (views.TryGetValue("", out var pv))
+                row["profile_views"] = pv.ToString(CultureInfo.InvariantCulture);
+
+            // Alcance partido entre seguidores y NO seguidores. El de no
+            // seguidores es el predictor directo del crecimiento: alcance sobre
+            // gente que ya nos sigue no puede traer seguidores nuevos.
+            var byFollow = await FetchTotalValueAsync("reach", d, "follow_type", ct);
+            foreach (var (dim, n) in byFollow)
+                row["reach_" + dim.ToLowerInvariant()] = n.ToString(CultureInfo.InvariantCulture);
+        }
+
         logger.LogInformation("Insights: {Count} días de métricas de cuenta", days.Count);
         return [.. days.Values];
+    }
+
+    /// <summary>
+    /// Una métrica de cuenta de UN día con <c>metric_type=total_value</c>,
+    /// opcionalmente partida por <paramref name="breakdown"/>.
+    ///
+    /// Devuelve un diccionario dimensión → valor. Sin breakdown, la única clave
+    /// es "" (el total). Best-effort: cualquier fallo se loguea y devuelve vacío,
+    /// porque estas métricas son un extra sobre la serie diaria que ya funciona
+    /// y no deberían poder romper el export.
+    /// </summary>
+    private async Task<Dictionary<string, long>> FetchTotalValueAsync(
+        string metric, DateTimeOffset day, string? breakdown, CancellationToken ct)
+    {
+        var result = new Dictionary<string, long>();
+        var url = $"{BaseUrl}/{settings.IgUserId}/insights"
+                + $"?metric={metric}&period=day&metric_type=total_value"
+                + (breakdown is null ? "" : $"&breakdown={breakdown}")
+                + $"&since={day.ToUnixTimeSeconds()}&until={day.AddDays(1).ToUnixTimeSeconds()}"
+                + $"&access_token={settings.AccessToken}";
+
+        try
+        {
+            using var resp = await Http.GetAsync(url, ct);
+            var body = await resp.Content.ReadAsStringAsync(ct);
+            if (!resp.IsSuccessStatusCode)
+            {
+                logger.LogDebug("Insights cuenta: {Metric} ({Day:yyyy-MM-dd}) falló ({Status}): {Body}",
+                    metric, day, (int)resp.StatusCode, Truncate(body, 200));
+                return result;
+            }
+
+            using var doc = JsonDocument.Parse(body);
+            if (!doc.RootElement.TryGetProperty("data", out var data)) return result;
+
+            foreach (var m in data.EnumerateArray())
+            {
+                if (!m.TryGetProperty("total_value", out var tv)) continue;
+
+                // Sin breakdown: {"total_value":{"value":42}}
+                if (tv.TryGetProperty("value", out var flat) && flat.TryGetInt64(out var n))
+                    result[""] = n;
+
+                // Con breakdown: total_value.breakdowns[].results[] con
+                // dimension_values (p. ej. ["FOLLOWER"]) y value.
+                if (!tv.TryGetProperty("breakdowns", out var bds)) continue;
+                foreach (var bd in bds.EnumerateArray())
+                {
+                    if (!bd.TryGetProperty("results", out var results)) continue;
+                    foreach (var r in results.EnumerateArray())
+                    {
+                        if (!r.TryGetProperty("value", out var v) || !v.TryGetInt64(out var rn)) continue;
+                        var dim = r.TryGetProperty("dimension_values", out var dv)
+                                  && dv.ValueKind == JsonValueKind.Array && dv.GetArrayLength() > 0
+                            ? dv[0].GetString() ?? "total"
+                            : "total";
+                        result[dim] = rn;
+                    }
+                }
+            }
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            logger.LogDebug(ex, "Insights cuenta: {Metric} ({Day:yyyy-MM-dd}) no se pudo leer", metric, day);
+        }
+
+        return result;
     }
 
     public static string AccountCsv(IReadOnlyList<Dictionary<string, string>> rows)

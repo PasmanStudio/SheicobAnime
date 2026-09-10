@@ -1,6 +1,6 @@
 # Playbook de Instagram — SheicobAnime
 
-**Última actualización:** 10-sep-2026 (Sprints 1 y 2 implementados — ver §7 y §8)
+**Última actualización:** 10-sep-2026 (Sprints 1, 2 y 3 implementados — ver §7, §8 y §9)
 **Base de datos del análisis:** 785 piezas publicadas (301 reels + 484 feed), 16-may → 9-sep-2026, exportadas de la Graph API de Meta.
 
 Este documento existe para poder retomar el tema en otra conversación sin repetir la investigación. Tiene los números medidos, qué hacer con ellos, y qué todavía no sabemos.
@@ -8,6 +8,30 @@ Este documento existe para poder retomar el tema en otra conversación sin repet
 ---
 
 ## 0. Cómo regenerar los datos
+
+**Desde sep-2026 las métricas de los reels se guardan solas en la DB.** El
+workflow `insights-sync-cron.yml` corre los lunes y llena `anime_news_items` con
+views, reach, shares, watch time, skip rate y la duración renderizada, al lado
+del titular que las produjo. O sea que la mayoría de las preguntas ya no piden un
+export: son una query.
+
+```sql
+-- Retención real (watch time ÷ duración), que es lo que antes no se podía calcular
+SELECT title, ig_reel_views, ig_reel_avg_watch_seconds, ig_reel_duration_seconds,
+       round((ig_reel_avg_watch_seconds / ig_reel_duration_seconds * 100)::numeric, 1) AS retencion_pct
+FROM anime_news_items
+WHERE ig_reel_views IS NOT NULL AND ig_reel_duration_seconds > 0
+ORDER BY ig_reel_views DESC LIMIT 20;
+```
+
+Para forzar una sincronización a mano:
+
+```bash
+gh workflow run insights-sync-cron.yml --repo PasmanStudio/SheicobAnime --ref main -f days=90
+```
+
+El export a CSV sigue existiendo para el análisis de la cuenta ENTERA (incluye
+las piezas de feed y de episodios, que no viven en `anime_news_items`):
 
 ```bash
 # 1. Verificar que el token sirve (5 segundos, antes de gastar 8 minutos)
@@ -294,7 +318,7 @@ O sea: **ningún reel se está publicando también en Facebook.** Es una casilla
 | Pregunta | Cómo responderla |
 |---|---|
 | ¿Cuánto del efecto "video real" es el video y cuánto la noticia? | Requiere un experimento: forzar slideshow en noticias que SÍ tienen tráiler, al azar, durante 2 semanas. Caro, pero es la única forma de separarlo. |
-| ¿La duración del reel afecta la retención? | El export no trae duración. Se puede derivar de `ig_reels_video_view_total_time / views` contra `ig_reels_avg_watch_time`, o agregarla al pipeline al generar el video. |
+| ~~¿La duración del reel afecta la retención?~~ ✅ **Ya se puede medir** (§9.1): la duración se guarda al renderizar, así que retención = `ig_reel_avg_watch_seconds / ig_reel_duration_seconds`. No hacía falta derivarla de la API. Falta acumular piezas nuevas para responderla. |
 | ¿Por qué agosto tuvo 7× shares? | Los 5 picos históricos son todos del 30-jul al 30-ago. Vale mirar qué se publicó ahí que no se publicó antes ni después. |
 | ¿El horario de 14h es causal? | Un A/B real: alternar el mismo tipo de noticia entre franjas durante un mes. |
 | ¿Por qué `reels_skip_rate` solo aparece en 37 de 302? | Probablemente un umbral mínimo de reproducciones. No documentado. |
@@ -495,7 +519,96 @@ en el caption). Es una decisión de contenido, no técnica: el cambio es poner
 
 ---
 
-## 9. Resumen
+## 9. Sprint 3 — implementado (10-sep-2026)
+
+La cola y el loop de medición. Los sprints 1 y 2 mejoran cada pieza; este cambia
+**qué se publica** y **si podemos saber si algo funcionó**.
+
+### 9.1 El loop de medición estaba abierto
+
+Hasta acá medir costaba una corrida manual de 8 minutos y un CSV que alguien
+tenía que analizar. Peor: el CSV baja las ~800 piezas de la cuenta pero **no sabe
+qué noticia era cada una**, así que "¿qué tipo de titular funciona?" pedía
+cruzarlo contra los logs a mano. Resultado: se medía cada varios meses y en el
+medio se publicaban 7 piezas por día a ciegas.
+
+Ahora `--insights-sync` (workflow semanal) guarda las métricas del reel en
+`anime_news_items`, al lado del titular. Semanal y no diario a propósito: las
+métricas de un reel siguen subiendo durante días, así que sincronizar 60 días
+para atrás una vez por semana captura la maduración sin gastar llamadas de más.
+
+**Y guarda la duración renderizada**, que la §5 listaba como pregunta abierta
+proponiendo derivarla de la API. No hace falta: la sabemos exacta al generar el
+video, y ahora viaja con el MP4 (`RenderedReel`). Es el dato que faltaba para
+calcular **retención real** (watch time ÷ duración) en vez de watch time a secas
+— justo la confusión que hacía parecer dos hallazgos distintos a lo que en buena
+medida era el mismo (§2.C).
+
+También se normaliza `ig_reels_avg_watch_time`, que Meta devuelve en
+**milisegundos**: guardarlo crudo dejaba "6900" donde el playbook habla de 6,9 s.
+
+### 9.2 El selector no sabía dónde estaban los picos
+
+El prompt pedía "la noticia más relevante/viral" — que un editor de anime lee
+como relevancia **dentro del nicho**. Pero los picos medidos fueron otra cosa:
+Free Fire × anime (35.192), The Ninth Jedi de Star Wars (27.622), Chainsaw Man en
+teatro (18.125), los 70 años de Toei (11.315). Todos cruces con audiencias que ya
+son masivas **afuera** del anime.
+
+El prompt ahora ordena por **techo de audiencia** ("¿esto le interesa a alguien
+que NO sigue anime?"), y `HeuristicNewsScore` —que es lo que corre cada vez que
+Gemini devuelve 429, o sea seguido— suma una lista de crossovers que **no existía**:
+la heurística les daba 0 puntos a los dos mejores posts de la historia de la cuenta.
+
+Dos detalles que salieron de escribir los tests:
+
+- El crossover pesa **8 y no 5**, porque tiene que ganarle a un anuncio completo
+  de una obra de nicho (estreno + adaptación = 6). Con 5, *"Star Wars: The Ninth
+  Jedi presenta su serie anime"* perdía 5 a 6 contra *"una novela ligera poco
+  conocida confirma adaptación al anime"* — exactamente la inversión que el
+  cambio venía a arreglar.
+- **"Netflix" y "Disney" NO están en la lista.** En noticias de anime aparecen
+  casi siempre como distribuidor ("llega a Netflix"), que no es un cruce de
+  audiencias sino dónde se ve. Incluirlas le daría 8 puntos a cualquier noticia
+  rutinaria de licencias.
+
+**Few-shot con datos propios:** cuando ya hay ≥10 reels medidos, el prompt
+incluye los 5 titulares que más y los 5 que menos alcance hicieron *en esta
+cuenta*. Ancla la intuición genérica del modelo en lo que realmente funcionó.
+Sin datos todavía, devuelve string vacío y el prompt sigue igual — nunca puede
+tumbar la selección del día.
+
+### 9.3 Las dos métricas que dicen dónde está el cuello
+
+Los ~825 de alcance por seguidor son el **producto** de dos tasas: alcance →
+visita al perfil, y visita → follow. Sin separarlas no se sabe si el problema es
+que no llegamos a la gente o que llegamos y el perfil no convierte — que son dos
+trabajos completamente distintos.
+
+El export de cuenta ahora trae:
+
+- **`profile_views`** — el segundo multiplicador.
+- **`reach` partido por `follow_type`** — cuánto del alcance es de NO seguidores.
+  Es el predictor directo del crecimiento: alcance sobre gente que ya nos sigue
+  no puede traer seguidores nuevos.
+
+Las dos exigen `metric_type=total_value`, que **no devuelve serie diaria**: con
+un rango since/until da un número para todo el período. Así que se piden día por
+día — ~60 llamadas para 30 días, contra las ~800 del export de piezas.
+
+### 9.4 Lo que hay que mirar en la primera corrida
+
+`profile_views` y el `reach` por `follow_type` están escritos contra la forma
+documentada de la respuesta (`total_value.breakdowns[].results[]`), pero **no se
+pudieron verificar contra la API real** desde acá — hace falta el token. Los dos
+son best-effort: si Meta responde otra cosa, se loguea en Debug y las columnas
+quedan vacías, sin romper el export que ya funciona. Vale mirar el primer CSV
+para confirmar que las columnas `profile_views` y `reach_follower` /
+`reach_non_follower` traen números.
+
+---
+
+## 10. Resumen
 
 > El feed no sirve (484 posts = 1 seguidor). El video real duplica todo. El watch
 > time es la variable que manda (rho 0,76). El 16 % de los reels produce el 62 %
@@ -513,21 +626,23 @@ caption invertido hacia el share · los 7 crons a reel (y de paso la franja 13-1
 frame 0 · duración a ~30 s · salteo proporcional del arranque. Pendiente ahí: el
 cierre en loop, que es una decisión de contenido (§8.5).
 
-**Sprint 3 — la cola y el loop de medición.**
-6. **Prompt de selección con criterio de audiencia externa.** Hoy pide "la más
-   relevante/viral" — o sea relevancia *dentro del nicho*. Los picos fueron
-   crossovers con audiencias masivas de afuera (Free Fire, Star Wars, LEGO), y ni
-   el prompt ni `HeuristicNewsScore` tienen una sola palabra de gaming o IP
-   occidental.
-7. **Persistir insights y duración renderizada por pieza en la DB.** Hoy medir
-   cuesta una corrida manual y un CSV, así que se mide cada varios meses y en el
-   medio se decide a ciegas. Con `IgReelMediaId` ya guardado, un job semanal
-   convierte cada pregunta futura en una query — y habilita hacer few-shot del
-   selector con nuestros propios resultados. La duración **no hace falta derivarla
-   de la API** (§5): la conocemos exacta al renderizar.
-8. **`reach` con `breakdown=follow_type`** (qué % del alcance es de NO seguidores
-   — el predictor directo del crecimiento) y **`profile_views`**, para saber si el
-   cuello de los 825 es *alcance → perfil* o *perfil → follow*.
+**Sprint 3 — hecho (§9).** Selección por techo de audiencia + crossovers en la
+heurística · métricas y duración persistidas por pieza (`--insights-sync`
+semanal) · few-shot del selector con datos propios · `profile_views` y `reach`
+por `follow_type`.
+
+**Lo que sigue, en orden:**
+1. **Mirar los números.** En ~2 semanas, `reels_skip_rate` (mediana 55 % → ¿45 %?)
+   y retención real, que recién ahora se puede calcular. Los sprints 1 y 2 se
+   juzgan con eso, no con views.
+2. **Bio, campo Nombre y reels fijados** — manual, y probablemente el 2× más
+   barato que queda. Con `profile_views` ya se va a poder ver si el cuello está
+   ahí.
+3. **Cierre en loop del reel** (§8.5): decisión de contenido.
+4. **Crossposting a Facebook**: pospuesto por decisión del usuario.
+5. **El experimento que separa video de noticia** (§5): forzar slideshow al azar
+   en noticias que SÍ tienen tráiler. Caro, pero es lo único que responde cuánto
+   del efecto "video real" es el video.
 
 **Techo estructural, para tenerlo presente:** los reels publicados por la Graph
 API **no pueden usar audio de la biblioteca de Instagram**, así que nunca aparecen

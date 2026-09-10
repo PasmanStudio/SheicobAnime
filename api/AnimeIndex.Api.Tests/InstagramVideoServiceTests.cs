@@ -814,6 +814,177 @@ public class NewsRelevanceTests
         Assert.True(estreno > figura, $"estreno ({estreno}) debería superar a figura ({figura})");
         Assert.True(fallecido > figura, $"luto ({fallecido}) debería superar a figura ({figura})");
     }
+
+    [Fact]
+    public void HeuristicNewsScore_PutsCrossoversOnTop_TheRealPeaks()
+    {
+        // Los dos picos históricos de la cuenta son cruces con audiencias
+        // masivas de AFUERA del anime — Free Fire × anime (35.192 views) y The
+        // Ninth Jedi de Star Wars (27.622) — y hasta sep-2026 la heurística no
+        // tenía ni una de esas palabras, o sea que les daba 0 mientras eran lo
+        // mejor que publicamos.
+        var freeFire = AnimeNewsPublisherService.HeuristicNewsScore(
+            "Free Fire anuncia una colaboración con Attack on Titan");
+        var starWars = AnimeNewsPublisherService.HeuristicNewsScore(
+            "Star Wars: The Ninth Jedi presenta su serie anime");
+        var nicho = AnimeNewsPublisherService.HeuristicNewsScore(
+            "Una novela ligera poco conocida confirma adaptación al anime");
+
+        Assert.True(freeFire > nicho, $"crossover de gaming ({freeFire}) vs nicho ({nicho})");
+        Assert.True(starWars > nicho, $"crossover occidental ({starWars}) vs nicho ({nicho})");
+    }
+
+    [Fact]
+    public void HeuristicNewsScore_DoesNotTreatDistributorsAsCrossovers()
+    {
+        // "llega a Netflix" es dónde se ve, no un cruce de audiencias. Si contara
+        // como crossover, cualquier noticia rutinaria de licencias se comería los
+        // 8 puntos y desplazaría a los cruces de verdad.
+        var licencia = AnimeNewsPublisherService.HeuristicNewsScore(
+            "La serie llega a Netflix en octubre");
+        var crossover = AnimeNewsPublisherService.HeuristicNewsScore(
+            "La serie anuncia un crossover con Fortnite");
+
+        Assert.True(crossover > licencia, $"crossover ({crossover}) vs licencia ({licencia})");
+    }
+
+    [Fact]
+    public void HeuristicNewsScore_IsAccentInsensitive()
+    {
+        // El score normaliza el texto, así que "colaboración"/"colaboracion" y
+        // "película"/"pelicula" valen lo mismo. Escribir las keywords con tilde
+        // contra texto normalizado es el bug que ya mató la escalera de tráilers
+        // durante dos semanas (ver StripSpanishSuffix).
+        Assert.Equal(
+            AnimeNewsPublisherService.HeuristicNewsScore("La película estrena una colaboración"),
+            AnimeNewsPublisherService.HeuristicNewsScore("La pelicula estrena una colaboracion"));
+    }
+}
+
+/// <summary>
+/// El resumen que deja --insights-sync en los logs. Usa MEDIANA y no promedio a
+/// propósito: la distribución es de cola larga (el top 10 se lleva el 39 % de
+/// todas las views), así que el promedio no describe a ninguna pieza real.
+/// </summary>
+public class InsightsSummaryTests
+{
+    private static AnimeIndex.Api.Data.AppDbContext NewDb()
+    {
+        var opts = Microsoft.EntityFrameworkCore.InMemoryDbContextOptionsExtensions.UseInMemoryDatabase(
+                new Microsoft.EntityFrameworkCore.DbContextOptionsBuilder<AnimeIndex.Api.Data.AppDbContext>(),
+                $"insights-{Guid.NewGuid():N}")
+            .Options;
+        return new AnimeIndex.Api.Data.AppDbContext(opts);
+    }
+
+    private static AnimeIndex.Scraper.Infrastructure.Instagram.NewsInsightsSyncService Svc(
+        AnimeIndex.Api.Data.AppDbContext db) =>
+        new(db, null!,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<
+                AnimeIndex.Scraper.Infrastructure.Instagram.NewsInsightsSyncService>.Instance);
+
+    private static AnimeIndex.Api.Data.Entities.AnimeNewsItem Reel(
+        long views, double? watch = null, double? duration = null) =>
+        new()
+        {
+            Id = Guid.NewGuid(),
+            SourceKey = "test",
+            RssGuid = Guid.NewGuid().ToString(),
+            Title = $"Noticia de {views} views",
+            ArticleUrl = "https://example.com",
+            IgReelMediaId = "media-" + views,
+            IgPostedAt = DateTime.UtcNow.AddDays(-1),
+            IgReelViews = views,
+            IgReelAvgWatchSeconds = watch,
+            IgReelDurationSeconds = duration,
+        };
+
+    [Fact]
+    public async Task Summary_ReportsMedianNotMean_SoOneHitDoesNotHideTheFloor()
+    {
+        using var db = NewDb();
+        // Cuatro piezas normales y un pico — la forma real de la distribución.
+        db.AnimeNewsItems.AddRange(Reel(200), Reel(300), Reel(250), Reel(280), Reel(35000));
+        await db.SaveChangesAsync();
+
+        var summary = await Svc(db).SummaryAsync();
+
+        // Mediana 280 (el promedio sería 7.206, que no describe a ninguna)
+        Assert.Contains("views mediana 280", summary);
+        Assert.Contains("total 36030", summary);
+        Assert.Contains("5 reels", summary);
+    }
+
+    [Fact]
+    public async Task Summary_ComputesRealRetention_NotBareWatchTime()
+    {
+        using var db = NewDb();
+        // Mismo watch time, duraciones distintas: 6,9 s de 29,5 es 23 % y de
+        // 55,5 es 12 %. Es EXACTAMENTE la confusión que la columna de duración
+        // vino a resolver — watch time a secas los haría ver iguales.
+        db.AnimeNewsItems.AddRange(
+            Reel(500, watch: 6.9, duration: 29.5),
+            Reel(500, watch: 6.9, duration: 55.5));
+        await db.SaveChangesAsync();
+
+        var summary = await Svc(db).SummaryAsync();
+
+        // Mediana de 23,4 % y 12,4 % → 17,9 % → redondea a 18
+        Assert.Contains("retención mediana 18 %", summary);
+        Assert.Contains("n=2", summary);
+    }
+
+    [Fact]
+    public async Task Summary_SaysSoWhenThereIsNothingToReport()
+    {
+        using var db = NewDb();
+        Assert.Equal("sin reels medidos todavía", await Svc(db).SummaryAsync());
+
+        // Y con reels publicados pero sin duración guardada (los de antes del
+        // sprint 3), la retención no se puede calcular — pero las views sí.
+        db.AnimeNewsItems.Add(Reel(400, watch: 5.0, duration: null));
+        await db.SaveChangesAsync();
+
+        var summary = await Svc(db).SummaryAsync();
+        Assert.Contains("retención mediana sin datos", summary);
+        Assert.Contains("views mediana 400", summary);
+    }
+}
+
+/// <summary>
+/// La duración renderizada viaja con el MP4 porque NO se puede recuperar
+/// después: la API de insights no la expone y avg_watch_time es un promedio, no
+/// la duración. Sin ella solo se puede mirar watch time absoluto, que está
+/// acotado por la duración — que es justo lo que hacía parecer dos hallazgos
+/// distintos a lo que en buena medida era el mismo.
+/// </summary>
+public class RenderedDurationTests
+{
+    [Theory]
+    // n escenas de 4 s solapadas 0,6 s: n·4 − (n−1)·0,6
+    [InlineData(2, 7.4)]
+    [InlineData(3, 10.8)]
+    [InlineData(5, 17.6)]
+    public void SlideshowSeconds_MatchesTheFilterGraph(int slides, double expected)
+    {
+        Assert.Equal(expected, InstagramVideoService.SlideshowSeconds(slides));
+
+        // Y coincide con el -t que se le pasa a ffmpeg — si divergieran,
+        // guardaríamos en la DB una duración que el video no tiene.
+        var args = InstagramVideoService.BuildSlideshowArguments(
+            [.. Enumerable.Range(0, slides).Select(i => $"s{i}.jpg")], "out.mp4");
+        Assert.Contains($"-t {expected.ToString(System.Globalization.CultureInfo.InvariantCulture)} ", args);
+    }
+
+    [Fact]
+    public void TrailerReelDuration_MatchesTheFilterGraph()
+    {
+        // 26 s de tráiler + 1 slide de CTA de 3,5 = 29,5 (el objetivo del sprint 2)
+        var args = InstagramVideoService.BuildTrailerReelArguments(
+            "t.mp4", "hook.png", "ov.png", ["cta.jpg"], "out.mp4", 26);
+
+        Assert.Contains("-t 29.5", args);
+    }
 }
 
 public class TrailerSearchTests

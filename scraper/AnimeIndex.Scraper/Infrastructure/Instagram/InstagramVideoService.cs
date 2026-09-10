@@ -12,6 +12,19 @@ public class FfmpegNotAvailableException(string message, Exception? inner = null
     : InvalidOperationException(message, inner);
 
 /// <summary>
+/// Un reel renderizado y su duración EXACTA en segundos.
+///
+/// La duración viaja con el MP4 porque no se puede recuperar después: la API de
+/// insights no la expone, y derivarla de las métricas no da (avg_watch_time es
+/// un promedio, no la duración). Pero acá la sabemos con precisión — es la que
+/// le pasamos a ffmpeg. Sin este dato solo se puede mirar watch time absoluto,
+/// que está ACOTADO por la duración: por eso "los reels con tráiler retienen
+/// más" y "el watch time predice las views" parecían dos hallazgos distintos
+/// cuando en buena medida eran el mismo (ver §2.C del playbook).
+/// </summary>
+public sealed record RenderedReel(byte[] Mp4, double DurationSeconds);
+
+/// <summary>
 /// Generates a 9:16 "motion card" MP4 (1080×1920) from a still card image:
 /// zoom lento estilo Ken Burns, pista de audio AAC silenciosa. Nada de fade
 /// desde negro al arranque — el frame 0 va a brillo completo.
@@ -47,7 +60,7 @@ public class InstagramVideoService(
     /// sobre la tarjeta completa. Con <paramref name="musicMp3"/> mezcla el
     /// track (fade in/out + loudnorm); sin música, pista AAC silenciosa.
     /// </summary>
-    public async Task<byte[]> GenerateMotionCardAsync(
+    public async Task<RenderedReel> GenerateMotionCardAsync(
         byte[] cardImageBytes,
         byte[]? overlayPng = null,
         byte[]? musicMp3 = null,
@@ -85,7 +98,7 @@ public class InstagramVideoService(
             var bytes = await File.ReadAllBytesAsync(outputPath, ct);
             logger.LogInformation("Generated motion-card reel: {Seconds}s, {Mb:F1} MB",
                 settings.ReelDurationSeconds, bytes.Length / 1024.0 / 1024.0);
-            return bytes;
+            return new RenderedReel(bytes, settings.ReelDurationSeconds);
         }
         finally
         {
@@ -153,7 +166,7 @@ public class InstagramVideoService(
     /// continuación las slides informativas con el audio del tráiler siguiendo de
     /// fondo. El formato de las cuentas grandes de noticias de anime.
     /// </summary>
-    public async Task<byte[]> GenerateTrailerReelAsync(
+    public async Task<RenderedReel> GenerateTrailerReelAsync(
         string trailerPath,
         byte[] hookPng,
         byte[] overlayPng,
@@ -210,10 +223,12 @@ public class InstagramVideoService(
             await RunFfmpegAsync(args, ct);
 
             var bytes = await File.ReadAllBytesAsync(outputPath, ct);
+            var totalSeconds = trailerSeconds + slidePaths.Count * InfoSlideSeconds;
             logger.LogInformation(
-                "Generated trailer reel: {Trailer}s de tráiler (skip {Skip}s) + {Slides} slides, {Mb:F1} MB",
-                trailerSeconds, startSkip, slidePaths.Count, bytes.Length / 1024.0 / 1024.0);
-            return bytes;
+                "Generated trailer reel: {Trailer}s de tráiler (skip {Skip}s) + {Slides} slides " +
+                "= {Total}s, {Mb:F1} MB",
+                trailerSeconds, startSkip, slidePaths.Count, totalSeconds, bytes.Length / 1024.0 / 1024.0);
+            return new RenderedReel(bytes, totalSeconds);
         }
         finally
         {
@@ -339,7 +354,7 @@ public class InstagramVideoService(
     /// alternado (in/out) y crossfade entre escenas, más música/pista muda.
     /// Con 1 sola slide degrada al motion-card simple.
     /// </summary>
-    public async Task<byte[]> GenerateSlideshowAsync(
+    public async Task<RenderedReel> GenerateSlideshowAsync(
         IReadOnlyList<byte[]> slides,
         byte[]? musicMp3 = null,
         int musicStartSeconds = 0,
@@ -373,9 +388,10 @@ public class InstagramVideoService(
             await RunFfmpegAsync(args, ct);
 
             var bytes = await File.ReadAllBytesAsync(outputPath, ct);
-            logger.LogInformation("Generated slideshow reel: {Slides} slides, {Mb:F1} MB",
-                slides.Count, bytes.Length / 1024.0 / 1024.0);
-            return bytes;
+            var totalSeconds = SlideshowSeconds(slides.Count);
+            logger.LogInformation("Generated slideshow reel: {Slides} slides = {Total}s, {Mb:F1} MB",
+                slides.Count, totalSeconds, bytes.Length / 1024.0 / 1024.0);
+            return new RenderedReel(bytes, totalSeconds);
         }
         finally
         {
@@ -384,6 +400,18 @@ public class InstagramVideoService(
             catch (UnauthorizedAccessException) { /* best-effort */ }
         }
     }
+
+    /// <summary>
+    /// Duración total de un slideshow de <paramref name="slideCount"/> escenas:
+    /// cada una dura S y se solapa F con la siguiente. Público estático para
+    /// tests y para que el publisher la guarde sin re-derivarla.
+    ///
+    /// Solo aplica con 2 o más escenas: con una sola,
+    /// <see cref="GenerateSlideshowAsync"/> delega en el motion-card, que dura
+    /// <c>ReelDurationSeconds</c> y devuelve su propia duración.
+    /// </summary>
+    public static double SlideshowSeconds(int slideCount) =>
+        Math.Round(slideCount * SlideSeconds - Math.Max(0, slideCount - 1) * CrossfadeSeconds, 1);
 
     /// <summary>
     /// Público + static para poder testear sin ffmpeg. Inputs: 0..n-1 = slides

@@ -130,13 +130,35 @@ public class AnimeNewsPublisherService(
             {
                 var list = string.Join("\n", items.Select((n, i) =>
                     $"{i}: {n.Title}" + (string.IsNullOrWhiteSpace(n.Summary) ? "" : $" — {Truncate(n.Summary!, 120)}")));
+                var examples = await BuildPastPerformanceExamplesAsync(ct);
+                // El criterio de TECHO DE ALCANCE es lo que este prompt no tenía
+                // hasta sep-2026, y por eso seleccionaba mal: pedía "la más
+                // relevante/viral", que un editor de anime lee como relevancia
+                // DENTRO del nicho. Pero los picos medidos fueron otra cosa —
+                // Free Fire × anime (35.192 views), The Ninth Jedi de Star Wars
+                // (27.622), Chainsaw Man en teatro (18.125), los 70 años de Toei
+                // (11.315): todos cruces con audiencias que ya son masivas
+                // AFUERA del anime. Y como el top 10 se lleva el 39 % de todas
+                // las views, el negocio es producir candidatos a explotar, no
+                // subir la mediana.
                 var response = await gemini.GenerateAsync(
                     "Sos el editor jefe de un medio de anime en español para LATAM. De la lista, elegí LA noticia " +
-                    "más relevante/viral para el video destacado del día (estrenos grandes, anuncios bomba, " +
-                    "fallecimientos de figuras, polémicas fuertes pesan más que curiosidades menores). " +
+                    "con más potencial de EXPLOTAR (no la más correcta editorialmente). " +
+                    "El criterio que más pesa es el TECHO DE AUDIENCIA: ¿esto le interesa a alguien que NO sigue " +
+                    "anime? Priorizá en este orden: " +
+                    "1) CRUCES con audiencias masivas de afuera del anime — videojuegos (Free Fire, Fortnite, " +
+                    "Roblox, Genshin, League of Legends, Minecraft), franquicias occidentales (Star Wars, Marvel, " +
+                    "DC, LEGO, Netflix, Disney), música pop global, deportes o marcas grandes. " +
+                    "2) ANUNCIOS DE PESO de las franquicias más masivas (One Piece, Dragon Ball, Naruto, Jujutsu " +
+                    "Kaisen, Demon Slayer, Attack on Titan, Chainsaw Man, Solo Leveling, My Hero Academia, " +
+                    "Pokémon, Ghibli, Evangelion): estreno confirmado, nueva temporada, película, live-action. " +
+                    "3) Noticias de peso real: fallecimientos de figuras grandes, polémicas fuertes, hitos " +
+                    "históricos de estudios. " +
+                    "Un estreno de nicho, por bueno que sea, tiene techo bajo — no lo elijas por sobre lo anterior. " +
                     "A igual peso, preferí noticias con material audiovisual oficial (anuncio de tráiler, " +
                     "teaser, nueva temporada o película, opening/ending o video musical, corto o video " +
                     "especial): el video destacado puede incrustar ese material. " +
+                    examples +
                     "Respondé SOLO un JSON: {\"index\": <número de la lista>}",
                     list, useWebSearch: false, ct);
 
@@ -154,33 +176,114 @@ public class AnimeNewsPublisherService(
         return items.OrderByDescending(n => HeuristicNewsScore($"{n.Title} {n.Summary}")).First();
     }
 
-    /// <summary>Score de relevancia por keywords cuando no hay IA. Público para tests.</summary>
+    /// <summary>
+    /// Score de relevancia por keywords cuando no hay IA. Importa más de lo que
+    /// parece: es lo que corre cada vez que Gemini devuelve 429, que con el
+    /// grounding prendido es seguido.
+    /// Público para tests.
+    /// </summary>
     public static int HeuristicNewsScore(string text)
     {
-        var t = text.ToLowerInvariant();
+        var t = TrailerDownloadService.Normalize(text);
+
+        // CRUCES con audiencias masivas de afuera del anime: el peso más alto de
+        // la tabla, y hasta sep-2026 no existía ni una de estas palabras acá. Los
+        // dos picos históricos de la cuenta son de este tipo — Free Fire × anime
+        // (35.192 views) y The Ninth Jedi de Star Wars (27.622) —, o sea que la
+        // heurística les daba 0 mientras eran lo mejor que publicamos.
+        //
+        // Vale 8 y no 5 a propósito: un crossover TIENE que ganarle a un anuncio
+        // completo de una obra de nicho (estreno + adaptación = 6). Con 5,
+        // "Star Wars: The Ninth Jedi presenta su serie anime" —sin palabras de
+        // anuncio en el titular— perdía 5 a 6 contra "una novela ligera poco
+        // conocida confirma adaptación al anime". Exactamente la inversión que
+        // este cambio venía a arreglar.
+        var score = CrossoverWords.Count(t.Contains) * 8;
 
         // Anuncios grandes / lanzamientos
-        var score = new[] { "estreno", "estrena", "tráiler", "trailer", "temporada", "película",
-                             "pelicula", "confirmado", "confirma", "anuncia", "live-action", "adaptación", "adaptacion" }
+        score += new[] { "estreno", "estrena", "trailer", "temporada", "pelicula",
+                         "confirmado", "confirma", "anuncia", "live-action", "live action", "adaptacion" }
             .Count(t.Contains) * 3;
         // Noticias de peso (luto / polémicas fuertes)
-        score += new[] { "fallec", "muere", "murió", "homenaje", "demanda", "cancel" }
+        score += new[] { "fallec", "muere", "murio", "homenaje", "demanda", "cancel" }
             .Count(t.Contains) * 3;
         // Franquicias enormes / títulos top del momento: empujón extra
         score += new[] { "one piece", "naruto", "dragon ball", "jujutsu", "chainsaw", "attack on titan",
                           "shingeki", "demon slayer", "kimetsu", "ghibli", "evangelion",
                           "black clover", "spy x family", "spy family", "frieren", "solo leveling",
                           "dandadan", "blue lock", "my hero", "boku no hero", "bleach", "re:zero",
-                          "mushoku tensei", "witch hat", "sword art", "tokyo revengers", "oshi no ko" }
+                          "mushoku tensei", "witch hat", "sword art", "tokyo revengers", "oshi no ko",
+                          "pokemon", "sailor moon", "death note", "hunter x hunter", "fullmetal" }
             .Count(t.Contains) * 2;
         // Material audiovisual que el reel puede incrustar (opening/corto/MV)
         score += new[] { "opening", "ending", "video musical", "corto animado" }
             .Count(t.Contains) * 2;
         // Menores
-        score += new[] { "colaboración", "colaboracion", "evento", "figura", "manga" }
+        score += new[] { "colaboracion", "evento", "figura", "manga" }
             .Count(t.Contains);
 
         return score;
+    }
+
+    // Se comparan contra texto ya normalizado (minúsculas SIN diacríticos): las
+    // entradas van sin tildes a propósito, igual que en HeuristicVideoQuery.
+    //
+    // NO están "netflix" ni "disney", aunque sean marcas enormes: en las noticias
+    // de anime aparecen casi siempre como DISTRIBUIDOR ("llega a Netflix"), que
+    // no es un cruce de audiencias — es dónde se ve. Meterlas le daría 8 puntos
+    // a cualquier noticia rutinaria de licencias.
+    private static readonly string[] CrossoverWords =
+    [
+        // Videojuegos
+        "free fire", "fortnite", "roblox", "genshin", "league of legends", "minecraft",
+        "call of duty", "valorant", "honkai", "pubg", "among us", "overwatch", "brawl stars",
+        "clash royale", "mobile legends", "final fantasy", "street fighter", "tekken",
+        // Franquicias occidentales
+        "star wars", "marvel", "spider-man", "spiderman", "batman", "lego",
+        "harry potter", "el senor de los anillos", "transformers", "jurassic",
+        // Señales genéricas de cruce
+        "crossover", "colaboracion con", "se une a", "x anime", "anime x",
+    ];
+
+    /// <summary>
+    /// Few-shot con NUESTROS resultados medidos: los titulares que más y menos
+    /// alcance hicieron. El modelo tiene una intuición genérica de "viral"; esto
+    /// la ancla en lo que realmente funcionó en ESTA cuenta.
+    ///
+    /// Depende de que <c>--insights-sync</c> haya poblado <c>ig_reel_views</c>.
+    /// Sin datos todavía (o si la query falla) devuelve string vacío y el prompt
+    /// sigue funcionando igual — nunca puede tumbar la selección del día.
+    /// </summary>
+    private async Task<string> BuildPastPerformanceExamplesAsync(CancellationToken ct)
+    {
+        try
+        {
+            var measured = await db.AnimeNewsItems
+                .Where(n => n.IgReelViews != null && n.IgReelViews > 0)
+                .OrderByDescending(n => n.IgReelViews)
+                .Select(n => new { n.Title, Views = n.IgReelViews!.Value })
+                .Take(60)
+                .ToListAsync(ct);
+
+            // Con menos de 10 reels medidos los extremos son ruido, no señal.
+            if (measured.Count < 10) return string.Empty;
+
+            var best = measured.Take(5).ToList();
+            var worst = measured.AsEnumerable().Reverse().Take(5).ToList();
+
+            var sb = new StringBuilder();
+            sb.Append("\nPara calibrar, estos son resultados REALES de esta cuenta. Los que explotaron:\n");
+            foreach (var b in best) sb.Append($"- {Truncate(b.Title, 90)} ({b.Views} views)\n");
+            sb.Append("Los que no levantaron:\n");
+            foreach (var w in worst) sb.Append($"- {Truncate(w.Title, 90)} ({w.Views} views)\n");
+            sb.Append("Elegí en la dirección de los primeros.\n");
+            return sb.ToString();
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            logger.LogDebug(ex, "AnimeNews: no se pudieron leer resultados pasados para el few-shot");
+            return string.Empty;
+        }
     }
 
     private async Task PublishItemAsync(AnimeNewsItem item, CancellationToken ct)
@@ -342,7 +445,7 @@ public class AnimeNewsPublisherService(
             //      o el ENCONTRADO por búsqueda IA en YouTube)
             //   2. Slideshow de escenas (cover + puntos clave + CTA, con música)
             //   3. Motion-card de capas (tarjeta única, con música)
-            byte[]? videoBytes = null;
+            RenderedReel? render = null;
             byte[] coverJpeg;
 
             if (igSettings.TrailerReelEnabled)
@@ -464,7 +567,7 @@ public class AnimeNewsPublisherService(
                         var infoSlides = allSlides.Skip(1).ToList();
 
                         var (hook, overlay) = imageService.GenerateVideoReelLayers(content);
-                        videoBytes = await videoService.GenerateTrailerReelAsync(
+                        render = await videoService.GenerateTrailerReelAsync(
                             clipPath, hook, overlay, infoSlides, candidate!.DurationSeconds,
                             candidate.SubtitlesPath, ct);
                         logger.LogInformation("AnimeNews: reel con TRÁILER para \"{Title}\" ({Url}{Subs})",
@@ -487,7 +590,7 @@ public class AnimeNewsPublisherService(
                 }
             }
 
-            if (videoBytes is null)
+            if (render is null)
             {
                 // La música CC/propia es SOLO para el slideshow — el reel de
                 // tráiler usa el audio original del video. El crédito CC BY va
@@ -501,7 +604,7 @@ public class AnimeNewsPublisherService(
                     var slides = await imageService.GenerateReelSlidesAsync(
                         item, content, images, maxKeyPoints: 3, musicCredit: musicCredit, ct: ct);
                     coverJpeg  = slides[0];
-                    videoBytes = await videoService.GenerateSlideshowAsync(
+                    render     = await videoService.GenerateSlideshowAsync(
                         slides, music?.Mp3, music?.Track.StartSeconds ?? 0, ct);
                 }
                 catch (Exception ex) when (!ct.IsCancellationRequested && ex is not FfmpegNotAvailableException)
@@ -510,7 +613,7 @@ public class AnimeNewsPublisherService(
                     var (background, overlay) = await imageService.GenerateStoryLayersAsync(
                         item, content, images, musicCredit: musicCredit, ct: ct);
                     coverJpeg  = await imageService.GenerateStoryAsync(item, content, images, ct);
-                    videoBytes = await videoService.GenerateMotionCardAsync(
+                    render     = await videoService.GenerateMotionCardAsync(
                         background, overlay, music?.Mp3, music?.Track.StartSeconds ?? 0, ct);
                 }
             }
@@ -520,8 +623,15 @@ public class AnimeNewsPublisherService(
                 coverJpeg = await imageService.GenerateStoryAsync(item, content, images, ct);
             }
 
+            // La duración se guarda ACÁ y no se recupera después: la API de
+            // insights no la expone, y sin ella solo se puede mirar watch time
+            // absoluto, que está acotado por la duración. Es el dato que faltaba
+            // para calcular retención de verdad. `item` lo persiste el
+            // SaveChanges del finally de PublishItemAsync.
+            item.IgReelDurationSeconds = render.DurationSeconds;
+
             var baseName = $"news-{item.SourceKey}-{item.Id.ToString("N")[..8]}";
-            var videoUrl = await api.UploadVideoAsync(videoBytes, $"{baseName}-reel.mp4", ct);
+            var videoUrl = await api.UploadVideoAsync(render.Mp4, $"{baseName}-reel.mp4", ct);
 
             // Cover best-effort: si el upload falla, el reel sale igual (sin miniatura linda)
             string? coverUrl = null;

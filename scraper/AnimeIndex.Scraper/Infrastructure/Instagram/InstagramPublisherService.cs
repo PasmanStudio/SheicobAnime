@@ -267,11 +267,11 @@ public class InstagramPublisherService(
                 overlay = null;
             }
 
-            var videoBytes = await videoService.GenerateMotionCardAsync(
+            var render = await videoService.GenerateMotionCardAsync(
                 background, overlay, music?.Mp3, music?.Track.StartSeconds ?? 0, ct);
 
             var fileName = $"{episode.Series.Slug}-ep{episode.EpisodeNumber}-reel-{DateTime.UtcNow:yyyyMMddHHmmss}.mp4";
-            var videoUrl = await api.UploadVideoAsync(videoBytes, fileName, ct);
+            var videoUrl = await api.UploadVideoAsync(render.Mp4, fileName, ct);
 
             var items   = new List<(Series, Episode)> { (episode.Series, episode) };
             var caption = captionGen.GenerateCarouselCaption(items);
