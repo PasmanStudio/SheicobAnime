@@ -1,3 +1,5 @@
+using AnimeIndex.Api.Data;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
@@ -18,9 +20,28 @@ namespace AnimeIndex.Api.Migrations
     /// exacta al renderizar el video, y es lo que faltaba para poder calcular
     /// retención (watch time ÷ duración) en vez de watch time a secas.
     ///
-    /// Como el resto de las migraciones recientes del proyecto, es SQL escrito a
-    /// mano e idempotente.
+    /// SQL escrito a mano e idempotente, como el resto de las migraciones
+    /// recientes del proyecto — pero A DIFERENCIA de casi todas ellas, esta SÍ
+    /// lleva el par [DbContext] + [Migration], igual que AddEngagementTables.
+    ///
+    /// Por qué importa: EF solo reconoce como migración una clase que tenga ESE
+    /// PAR de atributos (normalmente los pone el .Designer.cs que genera
+    /// `dotnet ef migrations add`). La mayoría de las migraciones recientes de
+    /// este repo no los tiene, así que `dotnet ef migrations list` devuelve 7 de
+    /// 28, y ni MigrateAsync ni el paso "Run migrations" de deploy.yml las
+    /// aplican jamás: son documentación del SQL que alguien corrió a mano contra
+    /// Supabase.
+    ///
+    /// Eso alcanzaba mientras el MODELO no tocara las columnas nuevas. Acá no
+    /// alcanza: al sumar las propiedades a AnimeNewsItem, EF empieza a emitirlas
+    /// en el INSERT de inmediato, así que sin los atributos la primera corrida de
+    /// --news muere con
+    ///   42703: column "ig_insights_at" of relation "anime_news_items" does not exist
+    /// (verificado en vivo el 10-sep-2026, run 34490734605). Con ellos la
+    /// migración se aplica sola y el pipeline se arregla solo.
     /// </summary>
+    [DbContext(typeof(AppDbContext))]
+    [Migration("20260910000001_AddNewsReelInsights")]
     public partial class AddNewsReelInsights : Migration
     {
         /// <inheritdoc />
