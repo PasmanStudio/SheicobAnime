@@ -151,6 +151,8 @@ public class InstagramVideoServiceTests
         // Fondo + tráiler + overlay de texto con el slide-up de marca
         Assert.Contains("overlay=x='(W-w)/2':y=240", args);
         Assert.Contains("fade=t=in:st=0.5:d=0.8:alpha=1", args);
+        // …pero NADA de fade desde negro sobre el video (ver test dedicado)
+        Assert.DoesNotContain("fade=t=in:st=0:d=0.4", args);
         // Specs de Reels intactas
         Assert.Contains("-movflags +faststart", args);
         Assert.Contains("format=yuv420p", args);
@@ -204,6 +206,192 @@ public class InstagramVideoServiceTests
         Assert.Contains("[1:a]apad,atrim=0:37", args);
         // Fade-out del audio al final de las slides (37 − 1.8 = 35.2)
         Assert.Contains("afade=t=out:st=35.2", args);
+    }
+}
+
+/// <summary>
+/// El primer frame decide el skip. La mediana de <c>reels_skip_rate</c> medida el
+/// 10-sep-2026 es 55 % — más de la mitad de la gente pasa de largo — y el cuartil
+/// que menos skipea hace 7,6× las views del que más. Arrancar en negro regalaba
+/// ese instante: el reel de tráiler tenía <c>fade=t=in:st=0:d=0.4</c> sobre el
+/// video y el motion-card <c>fade=t=in:st=0:d=0.6</c> sobre el fondo.
+/// </summary>
+public class FirstFrameTests
+{
+    [Fact]
+    public void TrailerReel_StartsAtFullBrightness_NoFadeFromBlack()
+    {
+        var args = InstagramVideoService.BuildTrailerReelArguments(
+            "t.mp4", "bg.jpg", "ov.png", ["kp.jpg"], "out.mp4", 30);
+
+        // Ningún fade de VIDEO desde negro…
+        Assert.DoesNotContain("fade=t=in:st=0:d=0.4", args);
+        Assert.DoesNotContain("fade=t=in:st=0:d=0.6", args);
+        // …y el trim del segmento del tráiler sigue en su lugar
+        Assert.Contains("trim=duration=30.0,setpts=PTS-STARTPTS[seg0]", args);
+        // El fade del TEXTO (canal alpha, arranca a los 0.5s) no se toca: es la
+        // animación de marca, no un arranque en negro.
+        Assert.Contains("fade=t=in:st=0.5:d=0.8:alpha=1", args);
+    }
+
+    [Fact]
+    public void MotionCard_StartsAtFullBrightness_NoFadeFromBlack()
+    {
+        var plain   = InstagramVideoService.BuildFfmpegArguments("in.png", "out.mp4", 12);
+        var layered = InstagramVideoService.BuildFfmpegArguments(
+            "bg.jpg", "out.mp4", 12, overlayPath: "overlay.png");
+
+        foreach (var args in new[] { plain, layered })
+        {
+            Assert.DoesNotContain("fade=t=in:st=0:d=0.6", args);
+            // El Ken Burns sigue intacto — lo que se sacó es solo el fade
+            Assert.Contains("zoompan=z=", args);
+            Assert.Contains("format=yuv420p", args);
+        }
+
+        // Con overlay, la animación del texto sobrevive
+        Assert.Contains("fade=t=in:st=0.5:d=0.8:alpha=1", layered);
+        // Y el fade de AUDIO tampoco se toca (nada que ver con el primer frame)
+        Assert.Contains("afade=t=in:st=0:d=0.8",
+            InstagramVideoService.BuildFfmpegArguments("in.png", "o.mp4", 12, musicPath: "m.mp3"));
+    }
+}
+
+/// <summary>
+/// El caption abre pidiendo el share, no repitiendo el titular. IG corta a ~125
+/// caracteres: ese renglón es lo único que se lee sin tocar "más", y hasta
+/// sep-2026 se gastaba en el mismo texto que ya está quemado en el cover.
+/// </summary>
+public class ShareHookTests
+{
+    [Fact]
+    public void PickShareHook_IsStableAcrossCallsAndVariesByHeadline()
+    {
+        const string a = "Jujutsu Kaisen confirma su cuarta temporada";
+        const string b = "Free Fire suma un crossover con Attack on Titan";
+
+        // Estable: la misma noticia da siempre el mismo gancho (no depende de
+        // string.GetHashCode, que .NET aleatoriza por proceso)
+        Assert.Equal(AnimeNewsPublisherService.PickShareHook(a),
+                     AnimeNewsPublisherService.PickShareHook(a));
+
+        // Y a lo largo del feed rota: 20 titulares distintos no pueden dar todos
+        // el mismo renglón de apertura
+        var variants = Enumerable.Range(0, 20)
+            .Select(i => AnimeNewsPublisherService.PickShareHook($"{a} parte {i}"))
+            .Distinct()
+            .Count();
+        Assert.True(variants > 1, "el gancho debería variar entre noticias");
+
+        Assert.NotEqual(string.Empty, AnimeNewsPublisherService.PickShareHook(b));
+    }
+
+    [Fact]
+    public void PickShareHook_AsksForTheShare_AndFitsThePreview()
+    {
+        // Los 125 caracteres del preview de IG tienen que alcanzar para el
+        // gancho entero — si se corta, el pedido no se lee.
+        foreach (var seed in new[] { "A", "Una noticia cualquiera", "" })
+        {
+            var hook = AnimeNewsPublisherService.PickShareHook(seed);
+            Assert.True(hook.Length <= 125, $"gancho demasiado largo: {hook.Length}");
+            Assert.DoesNotContain("📰", hook);   // el titular ya está en el video
+        }
+    }
+}
+
+/// <summary>
+/// Zona segura de Instagram en las piezas 9:16. En Reels IG dibuja su propia UI
+/// ENCIMA del video — caption, usuario, ticker de audio y la botonera derecha se
+/// comen los ~420 px de abajo, el header y la cámara los ~250 de arriba — y en la
+/// grilla del perfil el cover se recorta a 4:5. Hasta sep-2026 el titular se
+/// anclaba al 7 % del borde inferior (y≈1786 de 1920), o sea que el bloque
+/// titular+lede vivía casi entero debajo de la botonera y en la grilla no
+/// aparecía. El test renderiza de verdad y mira los píxeles.
+/// </summary>
+public class InstagramSafeAreaTests
+{
+    // El cover sin foto rinde el panel abismo + scrim: todo lo que quede claro
+    // en esa pieza es texto. Umbral de luminancia bien por encima del fondo
+    // (abismo 0x0B1422 → ~19; el scrim, más oscuro todavía).
+    private const int TextLuminance = 110;
+
+    private static AnimeNewsImageService NewService() =>
+        new(new NoHttpFactory(), Microsoft.Extensions.Logging.Abstractions.NullLogger<AnimeNewsImageService>.Instance);
+
+    private static AnimeIndex.Api.Data.Entities.AnimeNewsItem Item() =>
+        new() { Title = "Jujutsu Kaisen confirma su cuarta temporada", SourceKey = "test" };
+
+    private static AnimeIndex.Scraper.Infrastructure.AiRewrite.NewsContent Content() =>
+        new("Jujutsu Kaisen confirma su cuarta temporada para 2027",
+            "El estudio MAPPA lo anunció junto al primer arte promocional de la nueva etapa",
+            ["Sukuna vuelve como antagonista central", "El estreno quedó fijado para el invierno de 2027"],
+            "cuerpo", ["jujutsukaisen"], FromAi: true);
+
+    /// <summary>Cuenta píxeles claros (= texto) por fila.</summary>
+    private static int[] TextPixelsPerRow(byte[] jpeg)
+    {
+        using var bmp = SkiaSharp.SKBitmap.Decode(jpeg);
+        var rows = new int[bmp.Height];
+        for (var y = 0; y < bmp.Height; y++)
+            for (var x = 0; x < bmp.Width; x++)
+            {
+                var p = bmp.GetPixel(x, y);
+                // Luma BT.601 — barato y suficiente para separar texto de fondo
+                if ((299 * p.Red + 587 * p.Green + 114 * p.Blue) / 1000 >= TextLuminance) rows[y]++;
+            }
+        return rows;
+    }
+
+    [Fact]
+    public async Task Story916Cover_KeepsAllTextOutOfInstagramsChrome()
+    {
+        var rows = TextPixelsPerRow(await NewService().GenerateStoryAsync(Item(), Content(), []));
+
+        // 1920 − 420 = 1500: nada de texto de ahí para abajo…
+        var belowSafe = rows.Skip(1500).Sum();
+        Assert.True(belowSafe == 0,
+            $"{belowSafe} píxeles de texto caen bajo la UI de IG (y ≥ 1500)");
+
+        // …ni arriba del header/cámara (los primeros 250 px)
+        var aboveSafe = rows.Take(250).Sum();
+        Assert.True(aboveSafe == 0, $"{aboveSafe} píxeles de texto caen bajo el header de IG (y < 250)");
+
+        // Y el titular SÍ se rindió: si no, el test pasaría con un lienzo vacío
+        Assert.True(rows.Sum() > 5000, "no se rindió texto — el test no probaría nada");
+    }
+
+    [Fact]
+    public async Task Story916Cover_SurvivesTheProfileGrid_4by5Crop()
+    {
+        var rows = TextPixelsPerRow(await NewService().GenerateStoryAsync(Item(), Content(), []));
+
+        // La grilla del perfil recorta el cover a 4:5 centrado: 1080×1350 →
+        // se pierden 285 px arriba y abajo. El titular tiene que sobrevivir.
+        var inGrid = rows.Skip(285).Take(1350).Sum();
+        Assert.Equal(rows.Sum(), inGrid);
+    }
+
+    [Fact]
+    public async Task SquarePieces_KeepTheirTightMargin()
+    {
+        // Las piezas cuadradas (carrusel de feed) no tienen chrome encima: el
+        // margen chico de siempre se conserva, no se les aplica el de reels.
+        var slides = await NewService().GenerateCarouselSlidesAsync(Item(), Content(), [], maxKeyPoints: 2);
+        var rows   = TextPixelsPerRow(slides[0]);
+
+        // Con el margen de reels (22 %) el texto terminaría antes de y=842; con
+        // el de feed (7 %) llega cerca de y=1004.
+        var lastTextRow = Array.FindLastIndex(rows, n => n > 0);
+        Assert.True(lastTextRow > 900, $"el cuadrado perdió su margen chico (última fila con texto: {lastTextRow})");
+        Assert.True(lastTextRow < 1080, "el texto se sale del canvas");
+    }
+
+    /// <summary>Sin fotos que bajar, el renderer nunca pide un HttpClient.</summary>
+    private sealed class NoHttpFactory : IHttpClientFactory
+    {
+        public HttpClient CreateClient(string name) =>
+            throw new InvalidOperationException("el test no debería descargar imágenes");
     }
 }
 

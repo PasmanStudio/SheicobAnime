@@ -1,6 +1,6 @@
 # Playbook de Instagram — SheicobAnime
 
-**Última actualización:** 10-sep-2026
+**Última actualización:** 10-sep-2026 (Sprint 1 implementado — ver §7)
 **Base de datos del análisis:** 785 piezas publicadas (301 reels + 484 feed), 16-may → 9-sep-2026, exportadas de la Graph API de Meta.
 
 Este documento existe para poder retomar el tema en otra conversación sin repetir la investigación. Tiene los números medidos, qué hacer con ellos, y qué todavía no sabemos.
@@ -130,7 +130,7 @@ El watch time fue plano los tres meses. Lo que se movió fueron los **shares (7�
 
 ## 2. Qué implementar, por orden de impacto
 
-### 🔴 A. Dejar de gastar el 62 % del output en feed
+### ~~🔴 A. Dejar de gastar el 62 % del output en feed~~ ✅ hecho (§7.4)
 
 Los dos crons de carrusel diarios (16:00 y 18:00 UTC en `news-cron.yml`) producen el 2 % del alcance. **Convertirlos en reels o eliminarlos.** Es la única acción de esta lista que no requiere ninguna hipótesis: los números son categóricos.
 
@@ -154,9 +154,39 @@ Con rho=0,76, el watch time es el lever. La distribución muestra **125 de 301 r
 Ideas para testear (no medidas todavía):
 - Sacar cualquier intro/branding del arranque; que el primer frame sea ya el contenido.
 - Empezar por el clip de video, no por la placa de titular.
-- Acortar la duración total: un reel de 8 s con 6 s de watch time retiene 75 %; uno de 30 s con 6 s retiene 20 %, y el algoritmo lo trata distinto.
 
 **`reels_skip_rate` ya está agregado al export** — la próxima corrida va a decir exactamente cuántos pasan de largo, que es la contracara directa de esto.
+
+> ⚠️ **Corrección (10-sep-2026): B y C son en buena parte el MISMO hallazgo, y
+> "acortar a 8 s" era un error.**
+>
+> `ig_reels_avg_watch_time` está **acotado por la duración del video**, y las dos
+> duraciones que produce el pipeline son fijas y conocidas:
+>
+> | Formato | Duración renderizada | Watch (med) | Retención |
+> |---|---|---|---|
+> | Slideshow (5 slides) | `5×4,0 − 4×0,6` = **17,6 s** | 3,3 s | 19 % |
+> | Tráiler + 3 info slides | `45 + 3×3,5` = **55,5 s** | 6,9 s | 12 % |
+>
+> Un slideshow de 17,6 s no puede dar 11 s de watch time ni viéndolo entero. O sea
+> que el cuartil Q4 (8,9 s) es, casi por construcción, "los reels con tráiler", y
+> el rho=0,76 mide en gran medida *tráiler vs slideshow* otra vez. **No son dos
+> palancas independientes.**
+>
+> Y acortar a 8 s pondría un techo duro sobre la métrica que correlaciona con
+> views: los 9 reels que explotaron tienen watch times de 15,3 · 13,3 · 17,8 ·
+> 20,8 · 13,4 · 13,6 · 11,3 · 14,4 · 7,3 s. **Ocho de nueve pasan los 11 s** — un
+> reel de 8 s no puede producir ninguno de esos resultados.
+>
+> Lo que sí sobra son los **10,5 s de slides estáticas al final**: con 12 % de
+> retención el espectador mediano abandona en el segundo 7 de 55, así que esas
+> slides no las ve casi nadie y en cambio destruyen la finalización y matan el
+> *loop* (que IG cuenta como reproducción nueva). El objetivo correcto es **~30 s**
+> (`TrailerClipSeconds` 45 → 25-28 y 1 sola info slide), no 8.
+>
+> **La palanca limpia e independiente de la duración es `reels_skip_rate`** — se
+> mide en los primeros segundos. Mediana 55 %, y 7,6× entre el mejor y el peor
+> cuartil. Todo el trabajo de retención debería juzgarse contra esa métrica.
 
 ### 🟠 D. Mover reels al horario de 14h ART
 
@@ -292,7 +322,94 @@ Cosas que costaron corridas y no deberían repetirse:
 
 ---
 
-## 7. Resumen
+## 7. Sprint 1 — implementado (10-sep-2026)
+
+Los cuatro cambios de acá no dependen de ninguna hipótesis: son bugs, o
+desperdicio medido. Rama `feat/ig-sprint1-retencion`.
+
+### 7.1 El titular estaba donde Instagram lo tapa 🐛
+
+El hallazgo más caro, y no salió de las métricas sino de leer el renderer.
+Instagram dibuja **su propia UI encima del video**: arriba el header con el ícono
+de cámara (~250 px de 1920), abajo el caption, el usuario, el ticker de audio y
+la botonera derecha (**~420 px**). Y en la grilla del perfil el cover se recorta a
+4:5, que se come otros ~285 px arriba y abajo.
+
+`DrawCoverText` anclaba el titular al **7 % del borde inferior — y≈1786 de 1920**.
+El bloque titular+lede vivía aproximadamente entre y≈1400 y 1790: **casi entero
+debajo de la botonera**, y en la grilla del perfil directamente no aparecía. Lo
+mismo en las slides de key point (10 % → y≈1728), el crédito CC de la música
+(y≈1894, o sea invisible — y es una atribución obligatoria) y el logo del cover
+(y=150, justo bajo el ícono de cámara de IG).
+
+Ahora hay una zona segura explícita para las piezas verticales:
+
+| | Valor | Por qué ese y no el mínimo |
+|---|---|---|
+| `PortraitSafeTop` | 0,15 (≈288 px) | Manda el **recorte 4:5** (285), que es más exigente que el header del reel (250) |
+| `PortraitSafeBottom` | 0,23 (≈442 px) | Los 420 de la UI **+ los descendentes** (g, j, p, y bajan por debajo de la línea de base) |
+
+Las piezas cuadradas (carrusel de feed) no tienen chrome encima y conservan su
+margen chico. Cubierto por tests que **renderizan de verdad y cuentan píxeles**
+(`InstagramSafeAreaTests`): cero píxeles de texto bajo y=1500, cero sobre y=250,
+y el 100 % del texto sobrevive al recorte 4:5.
+
+### 7.2 El primer frame ya no arranca en negro
+
+El reel de tráiler tenía `fade=t=in:st=0:d=0.4` sobre el video y el motion-card
+`fade=t=in:st=0:d=0.6` sobre el fondo. O sea que en el instante exacto en que se
+decide el skip — mediana 55 % — el usuario veía **negro**. Los dos fuera. De paso
+arregla la miniatura: IG toma el primer frame cuando el `cover_url` no sube.
+
+El fade del **texto** (`st=0.5:d=0.8:alpha=1`) se mantiene: es la animación de
+marca, no un arranque en negro. Adelantarlo es trabajo del Sprint 2.
+
+### 7.3 El caption abre pidiendo el share, no repitiendo el titular
+
+IG corta el caption a ~125 caracteres: ese renglón es lo único que se lee sin
+tocar "más". Ahí iba `📰 {headline}` — **exactamente el texto que ya está quemado
+en el cover**, o sea que el espacio más valioso del post se gastaba en repetir lo
+que el usuario acababa de leer. Y `🔔 Seguinos para más noticias` estaba al final,
+debajo de 3-5 párrafos de cuerpo, donde no lo ve nadie.
+
+Ahora abre con un pedido de compartir (5 variantes, elegidas de forma estable por
+titular con `PickShareHook` — nada de `GetHashCode`, que .NET aleatoriza por
+proceso). El titular no se pierde: sigue en el cover y en las slides.
+
+Razón: **los 48 reels con ≥10 shares (16 % del output) concentran el 62 % de todas
+las views**, y los que tienen al menos un repost hacen 6,9× la mediana del resto.
+La distribución la hace la gente compartiendo — y no le estábamos pidiendo nada.
+
+### 7.4 Los 7 crons del día pasan a reel
+
+Los dos que salían como carrusel (13 y 15 ART) ahora son reel. Es la acción de la
+§2.A y no requiere hipótesis: 484 publicaciones de feed produjeron **1 (un)
+seguidor** en cuatro meses. De regalo caen en la franja **13-15 ART**, que es la
+mejor medida (mediana 795 a las 14 contra 280-410 del resto), o sea que también
+cubre la §2.D sin mover nada más.
+
+El formato `post` sigue disponible a mano por `workflow_dispatch`, y el carrusel
+sigue funcionando como **respaldo** cuando el reel falla (`if (reelMediaId is null)`).
+
+### 7.5 Lo que NO se hizo
+
+- **Crossposting a Facebook** — decisión del usuario, queda para más adelante.
+- **Bio, campo Nombre y reels fijados** — es trabajo manual en la app, no hay
+  código que tocar. Sigue siendo probablemente el 2× más barato disponible: 825
+  de alcance por seguidor es el producto de *alcance → visita al perfil* × *visita
+  → follow*, y hoy no sabemos cuál de los dos es el cuello (falta `profile_views`
+  en el export de cuenta).
+- **`InstagramImageService` (renderer de EPISODIOS)** tiene el mismo defecto de
+  zona segura: la línea de CTA cae en y≈1747 y la marca de agua en y≈1880. No se
+  tocó porque es otra pipeline (stories y carrusel de feed, nunca reels —
+  `ReelsEnabled` está en false), el chrome de las stories es bastante más chico
+  que el de los reels (~250 px contra 420) y **no hay ni una sola medición de
+  stories en todo este documento**. Arreglarlo bien pide re-maquetar el bloque
+  entero, no correr dos líneas.
+
+---
+
+## 8. Resumen
 
 > El feed no sirve (484 posts = 1 seguidor). El video real duplica todo. El watch
 > time es la variable que manda (rho 0,76). El 16 % de los reels produce el 62 %
@@ -301,10 +418,47 @@ Cosas que costaron corridas y no deberían repetirse:
 > **La palanca es la retención en los primeros segundos. La estrategia es producir
 > más candidatos a explotar, no subir la mediana.**
 
-### Las 5 acciones, ordenadas
+### El plan por sprints
 
-1. **Matar los 2 crons de carrusel** o convertirlos en reels. 62 % del output → 2 % del alcance y 1 seguidor en 4 meses.
-2. **Atacar el skip rate** (mediana 55 %). Primer frame = contenido, sin intro ni placa de titular. Reels más cortos.
-3. **Subir la tasa de reels con video** del 60 %: elegir noticias que tengan video en vez de forzar video donde no hay.
-4. **Activar el crossposting a Facebook.** Está apagado; es alcance gratis.
-5. **Mover el slot de 17h a la franja 13-15h**, que rinde 2× la mediana.
+**Sprint 1 — hecho (§7).** Zona segura del texto · primer frame sin negro ·
+caption invertido hacia el share · los 7 crons a reel (y de paso la franja 13-15).
+
+**Sprint 2 — formato del video.** Todo se juzga contra `reels_skip_rate`, no
+contra views (demasiado ruidoso con una cola así):
+1. **Full-bleed con fondo desenfocado.** Hoy el tráiler es una banda de 1080×900
+   sobre 1920 — **el 47 % de la pantalla** — flotando en un panel abismo vacío.
+   Un `split` + `scale`/`crop`/`gblur` del propio clip detrás lo convierte de "una
+   tarjeta con un video adentro" en "un video".
+2. **Campo `hook` en el rewrite**: 3-6 palabras enormes desde el frame 0, sin
+   fade. El titular tiene ~80 caracteres y se rompe en 3-5 líneas chicas; eso no
+   es un gancho.
+3. **Duración a ~30 s**: `TrailerClipSeconds` 45 → 25-28 y 1 sola info slide.
+4. **Skip inteligente del arranque**: `TrailerStartSkip` es la constante 1,5 s,
+   pero los tráilers abren con logos de distribuidora 3-6 s. `min(6, max(1.5,
+   dur×0.12))`, o `blackdetect`.
+5. **Cierre en loop**: hoy termina con `afade` de 1,8 s sobre una tarjeta estática.
+
+**Sprint 3 — la cola y el loop de medición.**
+6. **Prompt de selección con criterio de audiencia externa.** Hoy pide "la más
+   relevante/viral" — o sea relevancia *dentro del nicho*. Los picos fueron
+   crossovers con audiencias masivas de afuera (Free Fire, Star Wars, LEGO), y ni
+   el prompt ni `HeuristicNewsScore` tienen una sola palabra de gaming o IP
+   occidental.
+7. **Persistir insights y duración renderizada por pieza en la DB.** Hoy medir
+   cuesta una corrida manual y un CSV, así que se mide cada varios meses y en el
+   medio se decide a ciegas. Con `IgReelMediaId` ya guardado, un job semanal
+   convierte cada pregunta futura en una query — y habilita hacer few-shot del
+   selector con nuestros propios resultados. La duración **no hace falta derivarla
+   de la API** (§5): la conocemos exacta al renderizar.
+8. **`reach` con `breakdown=follow_type`** (qué % del alcance es de NO seguidores
+   — el predictor directo del crecimiento) y **`profile_views`**, para saber si el
+   cuello de los 825 es *alcance → perfil* o *perfil → follow*.
+
+**Techo estructural, para tenerlo presente:** los reels publicados por la Graph
+API **no pueden usar audio de la biblioteca de Instagram**, así que nunca aparecen
+en la página de un audio en tendencia. El audio original del tráiler es la
+decisión correcta dado eso. Un salto grande por esa vía pide un paso semi-manual
+para 1-2 reels "apuesta" por semana, no un cambio en el pipeline.
+
+**El número de arriba de todo** sigue siendo alcance de cuenta por día: 4.381 hoy,
+~8.800 para duplicar el crecimiento a ~11 seguidores/día.

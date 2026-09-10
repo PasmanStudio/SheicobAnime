@@ -52,7 +52,7 @@ public class InstagramSettings
 
     // Reel de NOTICIAS (slideshow/tráiler + música por IA de la noticia más
     // relevante del pool). La cadencia la fija el cron vía AnimeNews__RunFormat
-    // (5 corridas "reel" por día); sin ese env var, máx. uno cada 24 h.
+    // (7 corridas "reel" por día); sin ese env var, máx. uno cada 24 h.
     // Apagar del todo con Instagram__NewsReelEnabled=false.
     public bool NewsReelEnabled { get; set; } = true;
 

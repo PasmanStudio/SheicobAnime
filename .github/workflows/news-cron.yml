@@ -1,26 +1,30 @@
 name: News — Anime RSS → Instagram
 
-# 7 corridas curadas por día: 5 REELS + 2 noticias comunes (carrusel). Los reels
-# traccionan mucho más alcance (medido jul-2026), así que son el formato
-# principal; cada corrida publica 1 sola pieza y el formato lo fija el horario
-# del cron (ver paso "Resolver formato"). Cada corrida elige la noticia MÁS
-# relevante del pool acumulado. ~15-20 llamadas Gemini/día (dentro del free
-# tier). Horarios pensados para el pico de Argentina (UTC-3).
+# 7 corridas curadas por día, TODAS reel. Cada corrida publica 1 sola pieza y
+# elige la noticia MÁS relevante del pool acumulado. ~15-20 llamadas Gemini/día
+# (dentro del free tier). Horarios pensados para el pico de Argentina (UTC-3).
+#
+# Por qué no quedan corridas de carrusel (sep-2026): el export de insights de
+# 785 piezas (16-may → 9-sep) midió que el feed produce el 2,1 % del alcance con
+# el 62 % del output — mediana de 13 views contra 341 de un reel, o sea 74× —
+# y que 484 publicaciones de feed generaron UN (1) seguidor y 16 visitas al
+# perfil en cuatro meses. Los dos crons que salían como "post" (13 y 15 ART)
+# pasan a reel, y de paso caen en la franja 13-15 ART, que es la mejor medida
+# (mediana 795 views a las 14 contra 280-410 del resto). El formato "post" sigue
+# disponible a mano por workflow_dispatch.
 # Fast job: ~3–5 minutes total (RSS fetch + article scrape + IG API calls).
 # No Hangfire — uses the standalone --news mode that exits after one post.
 
 on:
   schedule:
-    # Horarios Argentina (UTC-3) → UTC. GHA cron solo corre en UTC.
-    # REELS (5/día):
-    - cron: '0 13 * * *'   # 10:00 ART → reel
-    - cron: '0 15 * * *'   # 12:00 ART → reel
-    - cron: '0 17 * * *'   # 14:00 ART → reel
-    - cron: '0 21 * * *'   # 18:00 ART → reel
-    - cron: '0 23 * * *'   # 20:00 ART → reel
-    # Noticias comunes (carrusel, 2/día) — mapeadas a "post" en "Resolver formato":
-    - cron: '0 16 * * *'   # 13:00 ART → post
-    - cron: '0 18 * * *'   # 15:00 ART → post
+    # Horarios Argentina (UTC-3) → UTC. GHA cron solo corre en UTC. 7 reels/día.
+    - cron: '0 13 * * *'   # 10:00 ART
+    - cron: '0 15 * * *'   # 12:00 ART
+    - cron: '0 16 * * *'   # 13:00 ART  ← era carrusel; franja 13-15, la mejor medida
+    - cron: '0 17 * * *'   # 14:00 ART  ← el mejor slot (mediana 795)
+    - cron: '0 18 * * *'   # 15:00 ART  ← era carrusel
+    - cron: '0 21 * * *'   # 18:00 ART
+    - cron: '0 23 * * *'   # 20:00 ART
   workflow_dispatch:   # allow manual trigger from Actions tab
     inputs:
       format:
@@ -43,14 +47,13 @@ jobs:
     timeout-minutes: 12
 
     steps:
-      # Cada horario del cron publica un formato fijo: los de las 16 y 18 UTC
-      # (13 y 15 ART) salen como noticia común; el resto de los crons, como
-      # reel. Las corridas manuales usan el input (default "auto" = máx. 1 reel
-      # por 24 h, el comportamiento previo del publisher).
+      # Todos los horarios del cron publican reel (ver el porqué arriba). Las
+      # corridas manuales usan el input: "post" sigue disponible para publicar
+      # un carrusel a mano, y "auto" mantiene el dedup original de máx. 1 reel
+      # por 24 h.
       - name: Resolver formato de la corrida
         run: |
           case "${{ github.event.schedule }}" in
-            "0 16 * * *"|"0 18 * * *") FORMAT=post ;;
             "") FORMAT="${{ inputs.format || 'auto' }}" ;;
             *) FORMAT=reel ;;
           esac

@@ -13,7 +13,8 @@ public class FfmpegNotAvailableException(string message, Exception? inner = null
 
 /// <summary>
 /// Generates a 9:16 "motion card" MP4 (1080×1920) from a still card image:
-/// zoom lento estilo Ken Burns + fade-in, pista de audio AAC silenciosa.
+/// zoom lento estilo Ken Burns, pista de audio AAC silenciosa. Nada de fade
+/// desde negro al arranque — el frame 0 va a brillo completo.
 /// Cumple los requisitos de Reels de la Graph API: H.264 yuv420p, closed GOP,
 /// moov atom al frente (+faststart), 3s–15min, ≤300MB.
 ///
@@ -227,8 +228,13 @@ public class InstagramVideoService(
             "[0:v][tr]overlay=x='(W-w)/2':y=240[base]",
             // Overlay de texto de marca: mismo slide-up + fade del motion-card
             "[2:v]format=rgba,fade=t=in:st=0.5:d=0.8:alpha=1[ov]",
+            // SIN fade desde negro: el frame 0 es el tráiler a brillo completo.
+            // El `fade=t=in:st=0:d=0.4` que había acá arrancaba el reel en negro
+            // justo en el instante en que se decide el skip — y la mediana de
+            // reels_skip_rate es 55% (medido 10-sep-2026). De paso arregla la
+            // miniatura: IG toma el primer frame cuando el cover_url no sube.
             "[base][ov]overlay=x=0:y='pow(1-min(1,max(0,(t-0.5)/0.9)),3)*80'," +
-            $"fade=t=in:st=0:d=0.4,trim=duration={trailArg},setpts=PTS-STARTPTS[seg0]",
+            $"trim=duration={trailArg},setpts=PTS-STARTPTS[seg0]",
         };
 
         // Cada slide informativa: Ken Burns suave y duración fija
@@ -421,12 +427,13 @@ public class InstagramVideoService(
         var zoomStep = (MaxZoom - 1.0) / frames;
 
         // zoompan tiembla con inputs chicos: se pre-escala 2× (lanczos) y el
-        // filtro recorta la ventana 1080×1920. fade-in de 0.6s al arranque.
+        // filtro recorta la ventana 1080×1920. SIN fade desde negro: el frame 0
+        // tiene que ser la tarjeta a brillo completo (ver [seg0] del reel de
+        // tráiler — mismo motivo, el skip se decide en el primer instante).
         var backgroundFilter =
             $"[0:v]scale={OutWidth * 2}:{OutHeight * 2}:flags=lanczos," +
             $"zoompan=z='min(1+on*{zoomStep.ToString("0.00000000", inv)},{MaxZoom.ToString("0.00", inv)})'" +
-            $":d={frames}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s={OutWidth}x{OutHeight}:fps={Fps}," +
-            "fade=t=in:st=0:d=0.6";
+            $":d={frames}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s={OutWidth}x{OutHeight}:fps={Fps}";
 
         string videoFilter, overlayInput;
         if (overlayPath is not null)

@@ -13,8 +13,9 @@ namespace AnimeIndex.Scraper.Infrastructure.Instagram;
 ///   • Reel de noticias (slideshow/tráiler: cover + puntos clave + CTA, con
 ///     música por IA y share_to_feed) — la noticia MÁS RELEVANTE del pool lo
 ///     gana. El formato de cada corrida lo decide AnimeNews__RunFormat (lo
-///     setea el cron: 5 corridas de reel + 2 de carrusel por día); sin ese env
-///     var rige el dedup original de máx. un reel por 24 h. La noticia del
+///     setea el cron: desde sep-2026 las 7 corridas del día son reel — el feed
+///     medía 2 % del alcance y 1 seguidor en 4 meses); sin ese env var rige el
+///     dedup original de máx. un reel por 24 h. La noticia del
 ///     reel NO publica además el carrusel: sería la misma noticia dos veces en
 ///     el feed. Si el reel falla, el carrusel actúa de respaldo.
 ///   • A single feed post / carousel (1080×1080) para el resto.
@@ -978,15 +979,50 @@ public class AnimeNewsPublisherService(
         ["anime", "animelatino", "animenoticias", "manga", "otaku", "sheicobanime"];
 
     /// <summary>
-    /// Builds the Instagram caption from the already-rewritten content: a headline line, the
-    /// original editorial body (the rewrite — never the source text; ahora más largo/profundo
-    /// que las slides), a CTA, smart hashtags and the handle. El cuerpo se presupuesta para que
-    /// los hashtags y el @ nunca queden fuera del límite de IG (2200). La música no lleva línea
-    /// en el caption: el crédito CC va como texto chico dentro del video.
+    /// Gancho de compartir que abre el caption. Instagram corta el caption a
+    /// ~125 caracteres: ese primer renglón es lo ÚNICO que se lee sin tocar
+    /// "más". Hasta sep-2026 ahí iba "📰 {headline}" — exactamente el texto que
+    /// ya está quemado en el video/cover, o sea que el espacio más valioso del
+    /// post se gastaba en repetir lo que el usuario acababa de leer.
+    ///
+    /// Ahora abre pidiendo el share, que es el mecanismo de distribución medido:
+    /// los 48 reels con ≥10 shares (16 % del output) concentran el 62 % de todas
+    /// las views, y los que tienen al menos un repost hacen 6,9× la mediana del
+    /// resto. El titular no se pierde: sigue en el cover y en las slides.
+    /// </summary>
+    private static readonly string[] ShareHooks =
+    [
+        "Mandale esto a quien lo estaba esperando 👇",
+        "Etiquetá a quien tiene que ver esto 👇",
+        "Compartilo con quien sigue esta serie 👇",
+        "¿A quién le mandarías esta noticia? 👇",
+        "Guardalo y mandáselo a tu grupo otaku 👇",
+    ];
+
+    /// <summary>
+    /// Elige el gancho de forma estable a partir del titular — variedad a lo
+    /// largo del feed sin depender de <c>string.GetHashCode</c>, que .NET
+    /// aleatoriza por proceso (dos corridas darían ganchos distintos para la
+    /// misma noticia y el test no sería reproducible). Público para tests.
+    /// </summary>
+    public static string PickShareHook(string seed)
+    {
+        var sum = 0;
+        foreach (var c in seed) sum = (sum + c) % 4096;
+        return ShareHooks[sum % ShareHooks.Length];
+    }
+
+    /// <summary>
+    /// Builds the Instagram caption from the already-rewritten content: el gancho
+    /// de compartir, the original editorial body (the rewrite — never the source
+    /// text; ahora más largo/profundo que las slides), a CTA, smart hashtags and
+    /// the handle. El cuerpo se presupuesta para que los hashtags y el @ nunca
+    /// queden fuera del límite de IG (2200). La música no lleva línea en el
+    /// caption: el crédito CC va como texto chico dentro del video.
     /// </summary>
     private string BuildCaption(NewsContent content)
     {
-        var header = $"📰 {content.Headline.Trim()}\n\n";
+        var header = $"{PickShareHook(content.Headline)}\n\n";
 
         // El "pie" fijo (CTA + hashtags + handle) se arma primero para saber cuánto
         // espacio real queda para el cuerpo — así un caption largo nunca corta los

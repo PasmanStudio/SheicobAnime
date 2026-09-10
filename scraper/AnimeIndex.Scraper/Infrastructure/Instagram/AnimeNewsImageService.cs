@@ -38,6 +38,49 @@ public class AnimeNewsImageService(
 
     private enum CropFocus { Center, Top, Bottom, Left, Right }
 
+    // ── Zona segura de Instagram (piezas verticales) ────────────────────────────
+    // En Reels IG dibuja SU PROPIA UI encima del video: arriba el header con el
+    // ícono de cámara (~250 px de 1920) y abajo el caption, el usuario, el ticker
+    // de audio y la botonera de la derecha (~420 px). Y en la grilla del perfil el
+    // cover se recorta a 4:5, que se come otros ~285 px arriba y abajo.
+    //
+    // Hasta sep-2026 el titular se anclaba al 7 % del borde inferior — y≈1786 de
+    // 1920 — así que el bloque titular+lede vivía casi entero DEBAJO de la
+    // botonera, y en la grilla directamente no aparecía. Estas constantes lo
+    // corren a la banda central, que sobrevive tanto a la UI del reel como al
+    // recorte 4:5. Las piezas cuadradas (carrusel de feed) no tienen chrome
+    // encima y conservan su margen chico.
+    //
+    // Los dos valores son un poco más conservadores que el mínimo de cada
+    // restricción, y por motivos distintos:
+    //   • Arriba manda el recorte 4:5 (285 px), que es MÁS exigente que el
+    //     header del reel (250 px) — el logo del cover tiene que sobrevivir a
+    //     los dos, así que se toma el mayor.
+    //   • Abajo el valor es la última LÍNEA DE BASE utilizable, no el borde del
+    //     texto: los glifos con descendente (g, j, p, y) bajan por debajo de la
+    //     base, así que se reservan ~20 px extra sobre los 420 de la UI.
+    private const float PortraitSafeTop    = 0.15f;   // ≈288/1920 (recorte 4:5 > header)
+    private const float PortraitSafeBottom = 0.23f;   // ≈442/1920 (420 de UI + descendentes)
+
+    /// <summary>Última línea de base utilizable: la zona segura en vertical,
+    /// <paramref name="squareMargin"/> en cuadrado (donde no hay UI encima).</summary>
+    private static float SafeBottom(int width, int height, float squareMargin) =>
+        height - height * (height > width ? PortraitSafeBottom : squareMargin);
+
+    /// <summary>Techo utilizable: la zona segura en vertical, 0 en cuadrado.</summary>
+    private static float SafeTop(int width, int height) =>
+        height > width ? height * PortraitSafeTop : 0f;
+
+    /// <summary>Tope de un bloque de <paramref name="blockH"/> px centrado en la
+    /// banda segura (no en el canvas entero: en 9:16 el centro real queda bajo
+    /// el caption de IG).</summary>
+    private static float CenteredBaseline(int width, int height, float blockH, float squareMargin)
+    {
+        float top    = SafeTop(width, height);
+        float bottom = SafeBottom(width, height, squareMargin);
+        return top + (bottom - top - blockH) / 2f;
+    }
+
     private static readonly Lazy<SKBitmap?> Logo =
         new(() => LoadBitmap("AnimeIndex.Scraper.Resources.sheicob-logo.png"));
     private static readonly Lazy<SKTypeface?> Anton =
@@ -210,7 +253,7 @@ public class AnimeNewsImageService(
     {
         float scale  = width / 1080f;
         float x      = width * 0.07f;
-        float bottom = height - height * 0.07f;
+        float bottom = SafeBottom(width, height, 0.07f);
 
         // Logo lives at the TOP on the cover so it never sits over the bottom-anchored text.
         DrawLogoTop(canvas, width, height, scale);
@@ -267,8 +310,9 @@ public class AnimeNewsImageService(
             DrawCenterGlow(canvas, width, height);
         }
 
-        // Kicker (top-left) only — no page numbers.
-        float topY = height * 0.13f;
+        // Kicker (top-left) only — no page numbers. En 9:16 baja a la zona
+        // segura para no quedar bajo el header del reel.
+        float topY = MathF.Max(height * 0.13f, SafeTop(width, height));
         DrawKicker(canvas, x, topY, scale, "SHEICOBANIME");
 
         var (lines, hlSize) = WrapFit(headline.ToUpperInvariant(),
@@ -277,17 +321,19 @@ public class AnimeNewsImageService(
 
         if (hasPhoto)
         {
-            // Bottom-anchored over the scrim (editorial, like the cover).
-            float bottom = height - height * 0.10f;
+            // Bottom-anchored over the scrim (editorial, like the cover) — pero
+            // sobre la zona segura, no sobre el borde del canvas.
+            float bottom = SafeBottom(width, height, 0.10f);
             float firstBaseline = bottom - (lines.Count - 1) * hlLineH;
             DrawLines(canvas, lines, x, firstBaseline, hlSize, TextWhite, hlLineH, display: true, bold: true);
             DrawCut(canvas, x, firstBaseline - hlSize - 30 * scale, 96 * scale, 12 * scale, Accent);
         }
         else
         {
-            // Centered on the abismo panel.
+            // Centrado en la BANDA SEGURA del panel abismo (no en el canvas
+            // entero): en 9:16 el centro real cae debajo del caption de IG.
             float blockH = lines.Count * hlLineH;
-            float firstBaseline = (height - blockH) / 2f + hlSize * 0.82f;
+            float firstBaseline = CenteredBaseline(width, height, blockH, 0.10f) + hlSize * 0.82f;
             DrawLines(canvas, lines, x, firstBaseline, hlSize, TextWhite, hlLineH, display: true, bold: true);
             float barY = firstBaseline + (lines.Count - 1) * hlLineH + 30 * scale;
             DrawCut(canvas, x, barY, 96 * scale, 12 * scale, Accent);
@@ -312,28 +358,32 @@ public class AnimeNewsImageService(
         float scale = width / 1080f;
         float x     = width * 0.08f;
 
-        DrawKicker(canvas, x, height * 0.13f, scale, "SHEICOBANIME");
+        DrawKicker(canvas, x, MathF.Max(height * 0.13f, SafeTop(width, height)), scale, "SHEICOBANIME");
 
         var (lines, size) = WrapFit("SEGUÍ LA NOTA COMPLETA", 96 * scale, 60 * scale, width * 0.84f,
             maxLines: 3, bold: true, display: true);
         float lineH = size * 1.06f;
         float blockH = lines.Count * lineH;
-        float firstBaseline = (height - blockH) / 2f + size * 0.6f;
+        float firstBaseline = CenteredBaseline(width, height, blockH, 0.07f) + size * 0.6f;
         DrawLines(canvas, lines, x, firstBaseline, size, TextWhite, lineH, display: true, bold: true);
 
         float barY = firstBaseline + (lines.Count - 1) * lineH + 30 * scale;
         DrawCut(canvas, x, barY, 110 * scale, 13 * scale, Accent);
         DrawMono(canvas, "LINK EN LA BIO  →", x, barY + 70 * scale, 30 * scale, Accent, bold: true);
 
-        DrawBrandingMark(canvas, width, height - height * 0.07f, scale);
+        // El logo se sube a la zona segura, y deja lugar arriba del crédito CC
+        // cuando hay uno (que ahora también vive dentro de la zona segura).
+        float mark = SafeBottom(width, height, 0.07f) - (musicCredit is null ? 0 : 46 * scale);
+        DrawBrandingMark(canvas, width, mark, scale);
         if (musicCredit is not null) DrawMusicCredit(canvas, musicCredit, width, height);
         return Encode(surface);
     }
 
     /// <summary>
-    /// Crédito de la música como texto chico y discreto al borde inferior —
-    /// la atribución CC BY es obligatoria, pero vive EN el video (estilo
-    /// créditos de cierre), nunca más como línea del caption.
+    /// Crédito de la música como texto chico y discreto al pie de la zona segura
+    /// — la atribución CC BY es obligatoria, así que tiene que quedar VISIBLE:
+    /// pegado al borde del canvas (donde estaba) lo tapaba el caption de IG en
+    /// los reels. Vive EN el video (estilo créditos de cierre), nunca en el caption.
     /// </summary>
     private static void DrawMusicCredit(SKCanvas canvas, string credit, int width, int height)
     {
@@ -348,7 +398,8 @@ public class AnimeNewsImageService(
             if (w > maxWidth) size *= maxWidth / w;   // que nunca se salga del canvas
         }
 
-        DrawMono(canvas, credit, x, height - 26 * scale, size, TextGray.WithAlpha(0xB4), bold: false);
+        DrawMono(canvas, credit, x, SafeBottom(width, height, 0.024f), size,
+            TextGray.WithAlpha(0xB4), bold: false);
     }
 
     // ── Shared chrome ────────────────────────────────────────────────────────────
@@ -447,12 +498,14 @@ public class AnimeNewsImageService(
         canvas.DrawRect(0, 0, width, height, paint);
     }
 
-    /// <summary>Logo in the top-right corner. On 9:16 it sits lower to clear Instagram's
-    /// story chrome (avatar/close button). Used on the cover, where text is bottom-anchored.</summary>
+    /// <summary>Logo in the top-right corner. En 9:16 baja hasta la zona segura:
+    /// el chrome de IG vive justo ahí arriba a la derecha — el ícono de cámara en
+    /// Reels, el avatar y el "..." en stories — y a 150 px el logo quedaba
+    /// tapado. Se usa en el cover, donde el texto se ancla abajo.</summary>
     private static void DrawLogoTop(SKCanvas canvas, int width, int height, float scale)
     {
         bool isStory = height > width;
-        float topY   = (isStory ? 150f : 52f) * scale;
+        float topY   = isStory ? SafeTop(width, height) : 52f * scale;
         var logo = Logo.Value;
         if (logo is not null)
         {
