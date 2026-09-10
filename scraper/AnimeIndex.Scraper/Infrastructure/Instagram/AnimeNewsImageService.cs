@@ -219,7 +219,12 @@ public class AnimeNewsImageService(
         foreach (var w in words.Take(maxWords))
         {
             var word = w.TrimEnd(ClauseEnders);
-            if (word.Length == 0) break;
+            // Un separador suelto ("— Confirmado: ...") deja el token vacío. Si
+            // eso CORTA el loop, `taken` queda vacío y el fallback devuelve el
+            // titular entero — que WrapFit después trunca en seco, sin puntos
+            // suspensivos, justo lo que el doc de la clase promete que no pasa.
+            // Se saltea y se sigue con la palabra siguiente.
+            if (word.Length == 0) continue;
             if (taken.Count > 0 && taken.Sum(t => t.Length + 1) + word.Length > maxChars) break;
             taken.Add(word);
             // Una coma o dos puntos cierran la cláusula, y ahí está el gancho:

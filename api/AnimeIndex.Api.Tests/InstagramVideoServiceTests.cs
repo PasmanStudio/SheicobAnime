@@ -365,6 +365,22 @@ public class HookTextTests
         Assert.True(text.Length <= 30, $"gancho de {text.Length} caracteres: {text}");
     }
 
+    [Theory]
+    // Un separador suelto al inicio dejaba el token vacío y CORTABA el loop, así
+    // que el fallback devolvía el titular entero (~80 caracteres) y WrapFit lo
+    // truncaba en seco a 2 líneas, sin puntos suspensivos.
+    [InlineData("— Confirmado: Jujutsu Kaisen vuelve en 2027", "Confirmado")]
+    // El "de" colgando se cae por la regla de conectores, como corresponde
+    [InlineData("- Nuevo tráiler de Solo Leveling", "Nuevo tráiler")]
+    public void SkipsLeadingSeparators_InsteadOfFallingBackToTheWholeHeadline(
+        string headline, string expected)
+    {
+        var text = AnimeNewsImageService.HookTextFor(With(headline, null));
+
+        Assert.Equal(expected, text);
+        Assert.True(text.Length <= 30, $"gancho de {text.Length} caracteres: {text}");
+    }
+
     [Fact]
     public void NeverReturnsEmpty_EvenWithAOneWordHeadline()
     {
@@ -414,17 +430,18 @@ public class ShareHookTests
         Assert.NotEqual(string.Empty, AnimeNewsPublisherService.PickShareHook(b));
     }
 
-    [Fact]
-    public void PickShareHook_AsksForTheShare_AndFitsThePreview()
+    [Theory]
+    [InlineData("A")]
+    [InlineData("Una noticia cualquiera")]
+    [InlineData("")]
+    public void PickShareHook_AsksForTheShare_AndFitsThePreview(string seed)
     {
         // Los 125 caracteres del preview de IG tienen que alcanzar para el
         // gancho entero — si se corta, el pedido no se lee.
-        foreach (var seed in new[] { "A", "Una noticia cualquiera", "" })
-        {
-            var hook = AnimeNewsPublisherService.PickShareHook(seed);
-            Assert.True(hook.Length <= 125, $"gancho demasiado largo: {hook.Length}");
-            Assert.DoesNotContain("📰", hook);   // el titular ya está en el video
-        }
+        var hook = AnimeNewsPublisherService.PickShareHook(seed);
+
+        Assert.True(hook.Length <= 125, $"gancho demasiado largo: {hook.Length}");
+        Assert.DoesNotContain("📰", hook);   // el titular ya está en el video
     }
 }
 

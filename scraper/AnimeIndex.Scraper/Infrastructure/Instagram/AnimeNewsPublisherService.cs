@@ -258,18 +258,21 @@ public class AnimeNewsPublisherService(
     {
         try
         {
-            var measured = await db.AnimeNewsItems
+            var measured = db.AnimeNewsItems
                 .Where(n => n.IgReelViews != null && n.IgReelViews > 0)
-                .OrderByDescending(n => n.IgReelViews)
-                .Select(n => new { n.Title, Views = n.IgReelViews!.Value })
-                .Take(60)
-                .ToListAsync(ct);
+                .Select(n => new { n.Title, Views = n.IgReelViews!.Value });
 
             // Con menos de 10 reels medidos los extremos son ruido, no señal.
-            if (measured.Count < 10) return string.Empty;
+            if (await measured.CountAsync(ct) < 10) return string.Empty;
 
-            var best = measured.Take(5).ToList();
-            var worst = measured.AsEnumerable().Reverse().Take(5).ToList();
+            // Dos queries y no una: recortar a los 60 mejores y después dar
+            // vuelta la lista NO da los peores, da el fondo del top-60. Con ~7
+            // reels/día eso se rompe a los ~9 días y el prompt le empieza a
+            // mostrar al modelo cinco posts decentes rotulados como fracasos.
+            var best = await measured
+                .OrderByDescending(x => x.Views).Take(5).ToListAsync(ct);
+            var worst = await measured
+                .OrderBy(x => x.Views).Take(5).ToListAsync(ct);
 
             var sb = new StringBuilder();
             sb.Append("\nPara calibrar, estos son resultados REALES de esta cuenta. Los que explotaron:\n");
@@ -623,13 +626,6 @@ public class AnimeNewsPublisherService(
                 coverJpeg = await imageService.GenerateStoryAsync(item, content, images, ct);
             }
 
-            // La duración se guarda ACÁ y no se recupera después: la API de
-            // insights no la expone, y sin ella solo se puede mirar watch time
-            // absoluto, que está acotado por la duración. Es el dato que faltaba
-            // para calcular retención de verdad. `item` lo persiste el
-            // SaveChanges del finally de PublishItemAsync.
-            item.IgReelDurationSeconds = render.DurationSeconds;
-
             var baseName = $"news-{item.SourceKey}-{item.Id.ToString("N")[..8]}";
             var videoUrl = await api.UploadVideoAsync(render.Mp4, $"{baseName}-reel.mp4", ct);
 
@@ -649,6 +645,19 @@ public class AnimeNewsPublisherService(
             var mediaId = await api.CreateWaitPublishAsync(
                 token => api.CreateReelContainerAsync(videoUrl, caption, shareToFeed: true, coverUrl, token),
                 VideoProcessingTimeout, ct);
+
+            // La duración se guarda DESPUÉS de que el reel realmente se publicó.
+            // Setearla antes del upload dejaba filas con la duración de un reel
+            // que nunca salió: si el upload o el container fallan (caso real del
+            // 6-sep-2026, "Container ... terminal status: ERROR"), la excepción
+            // devuelve null y sale el carrusel de respaldo, pero el SaveChanges
+            // del finally persistía igual el dato. Cualquier análisis que filtre
+            // por `ig_reel_duration_seconds IS NOT NULL` levantaba ese ruido.
+            //
+            // No se recupera después: la API de insights no expone la duración, y
+            // sin ella solo se puede mirar watch time absoluto, que está acotado
+            // por la duración. Es el dato que faltaba para calcular retención.
+            item.IgReelDurationSeconds = render.DurationSeconds;
 
             logger.LogInformation("AnimeNews: published REEL for [{Source}] {Title} → {MediaId}",
                 item.SourceKey, Truncate(item.Title, 60), mediaId);

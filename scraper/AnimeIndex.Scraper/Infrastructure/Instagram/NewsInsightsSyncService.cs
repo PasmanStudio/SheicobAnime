@@ -85,6 +85,18 @@ public class NewsInsightsSyncService(
                 item.IgInsightsAt = DateTime.UtcNow;
                 updated++;
             }
+            catch (InvalidOperationException)
+            {
+                // ESTA excepción no es "falló una pieza": FetchMetricsAsync la
+                // lanza solo cuando NINGUNA métrica funciona ni pedida de a una,
+                // que es su forma deliberada de decir "es el token, no la
+                // métrica". Tragársela dejaba la corrida en verde con
+                // "0 actualizados, 59 sin métricas todavía", que se lee igual que
+                // "todavía no hay datos". El workflow corre --token-scopes antes,
+                // pero una invocación manual del CLI no tiene esa red.
+                await db.SaveChangesAsync(CancellationToken.None);
+                throw;
+            }
             catch (Exception ex) when (!ct.IsCancellationRequested)
             {
                 // Un media borrado a mano desde la app devuelve 400 y no debería
