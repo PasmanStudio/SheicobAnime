@@ -38,17 +38,36 @@ public class InstagramInsightsService(
         "id,media_type,media_product_type,caption,permalink,timestamp,like_count,comments_count";
 
     // Métricas por tipo. Pedir una métrica no soportada para el tipo hace fallar
-    // TODA la llamada, así que las listas van separadas.
+    // TODA la llamada — por eso las listas van separadas Y por eso existe el
+    // fallback métrica-por-métrica de FetchMetricsAsync.
+    //
+    // Se piden MÁS de las que la doc de Meta lista como soportadas a propósito:
+    // la doc y la realidad ya divergieron una vez (documenta error_subcode 33
+    // para falta de permisos y en prod devolvió code 10). Con el fallback, pedir
+    // de más no cuesta nada: la métrica que el tipo no soporte simplemente queda
+    // vacía en esa fila y se loguea una vez cuál fue.
     private static readonly string[] ReelMetrics =
     [
         "views", "reach", "likes", "comments", "shares", "saved",
         "total_interactions", "ig_reels_avg_watch_time", "ig_reels_video_view_total_time",
+        // reels_skip_rate es la contracara del watch time: mide cuántos pasan de
+        // largo. Con rho=0,76 entre retención y views (medido el 10-sep-2026),
+        // es la métrica más accionable que faltaba.
+        "reels_skip_rate",
+        // Reposts y crossposting a Facebook: los shares resultaron ser el
+        // amplificador (48 reels con ≥10 shares = 62% de todas las views).
+        "reposts", "crossposted_views", "facebook_views",
+        // La doc de Meta NO las lista para REELS, solo para feed. Se piden igual
+        // para comprobarlo contra la API real: sin esto no se puede responder si
+        // los reels convierten a seguidores, que es lo único que compone.
+        "follows", "profile_visits",
     ];
 
     private static readonly string[] FeedMetrics =
     [
         "views", "reach", "likes", "comments", "shares", "saved",
         "total_interactions", "profile_visits", "follows",
+        "profile_activity", "reposts",
     ];
 
     public record MediaRow(
@@ -116,12 +135,57 @@ public class InstagramInsightsService(
         return rows;
     }
 
+    // Métricas que la API rechazó para un product_type dado. Se aprende una sola
+    // vez por corrida y después se saltean, así no se paga un round-trip fallido
+    // por cada una de las ~800 piezas.
+    private readonly Dictionary<string, HashSet<string>> _unsupported = new();
+
     private async Task<Dictionary<string, long>> FetchMetricsAsync(
         string mediaId, string productType, CancellationToken ct)
     {
-        var metrics = productType.Equals("REELS", StringComparison.OrdinalIgnoreCase)
-            ? ReelMetrics : FeedMetrics;
+        var key = productType.ToUpperInvariant();
+        if (!_unsupported.TryGetValue(key, out var skip))
+            _unsupported[key] = skip = [];
 
+        var metrics = (key == "REELS" ? ReelMetrics : FeedMetrics)
+            .Where(m => !skip.Contains(m))
+            .ToArray();
+        if (metrics.Length == 0) return new Dictionary<string, long>();
+
+        var result = await RequestMetricsAsync(mediaId, metrics, ct);
+        if (result is not null) return result;
+
+        // La llamada combinada falló. Meta no dice CUÁL métrica molestó — tira
+        // toda la respuesta — así que se prueba una por una: se queda con las
+        // que andan y se anotan las que no para no volver a pedirlas.
+        //
+        // Esto es lo que permite pedir métricas "de más" sin riesgo: la doc de
+        // Meta no lista follows/profile_visits para REELS, pero la única forma
+        // seria de saberlo es preguntarle a la API, no a la doc.
+        var recovered = new Dictionary<string, long>();
+        foreach (var m in metrics)
+        {
+            var one = await RequestMetricsAsync(mediaId, [m], ct);
+            if (one is null)
+            {
+                if (skip.Add(m))
+                    logger.LogInformation(
+                        "Insights: la métrica {Metric} no está soportada para {Type} — se saltea el resto de la corrida",
+                        m, key);
+                continue;
+            }
+            foreach (var kv in one) recovered[kv.Key] = kv.Value;
+        }
+        return recovered;
+    }
+
+    /// <summary>
+    /// Pide un conjunto de métricas. Devuelve null si la API rechazó la llamada
+    /// (para que el llamador decida si degradar a una por una).
+    /// </summary>
+    private async Task<Dictionary<string, long>?> RequestMetricsAsync(
+        string mediaId, string[] metrics, CancellationToken ct)
+    {
         var url = $"{BaseUrl}/{mediaId}/insights"
                 + $"?metric={string.Join(",", metrics)}&access_token={settings.AccessToken}";
 
@@ -150,9 +214,10 @@ public class InstagramInsightsService(
                     + "instagram_manage_insights (Facebook Login) o instagram_business_manage_insights "
                     + "(Instagram Login), y regenerar el secret INSTAGRAM_ACCESS_TOKEN.");
             }
-            logger.LogWarning("Insights: media {Id} sin métricas ({Status}): {Body}",
-                mediaId, (int)resp.StatusCode, Truncate(body, 240));
-            return result;
+            // No es un problema de permisos: probablemente una métrica no
+            // soportada para este tipo. Se devuelve null para que el llamador
+            // degrade a pedirlas de a una.
+            return null;
         }
 
         using var doc = JsonDocument.Parse(body);
