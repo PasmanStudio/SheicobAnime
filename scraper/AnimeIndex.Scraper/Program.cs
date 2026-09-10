@@ -366,13 +366,44 @@ if (args.Contains("--token-scopes"))
                + $"?input_token={Uri.EscapeDataString(igTok.AccessToken)}"
                + $"&access_token={Uri.EscapeDataString(igTok.AccessToken)}";
 
-    var dbgBody = await httpTok.GetStringAsync(dbgUrl);
+    // GetStringAsync a secas tira HttpRequestException en cualquier no-2xx, así
+    // que un token vencido salía como un stack trace de .NET y exit code 134 en
+    // vez de "el token expiró" — que es JUSTO lo que este comando existe para
+    // decir. Pasó en el run 34427821963.
+    using var dbgResp = await httpTok.GetAsync(dbgUrl);
+    var dbgBody = await dbgResp.Content.ReadAsStringAsync();
+
+    if (!dbgResp.IsSuccessStatusCode)
+    {
+        var expired = dbgBody.Contains("expired", StringComparison.OrdinalIgnoreCase)
+                   || dbgBody.Contains("Session has expired", StringComparison.OrdinalIgnoreCase)
+                   || dbgBody.Contains("\"code\":190", StringComparison.Ordinal);
+        Console.Error.WriteLine(expired
+            ? "El token de Instagram EXPIRÓ o fue invalidado. Generá uno nuevo y actualizá "
+              + "INSTAGRAM_ACCESS_TOKEN. Tip: los tokens del Graph API Explorer duran ~1-2 h; "
+              + "para los crons hay que cambiarlo por uno largo con fb_exchange_token (60 días)."
+            : $"debug_token devolvió {(int)dbgResp.StatusCode}: {dbgBody}");
+        Environment.ExitCode = 1;
+        return;
+    }
+
     using var dbgDoc = System.Text.Json.JsonDocument.Parse(dbgBody);
     if (!dbgDoc.RootElement.TryGetProperty("data", out var dbgData))
     {
         Console.Error.WriteLine($"Respuesta inesperada de debug_token: {dbgBody}");
         Environment.ExitCode = 1;
         return;
+    }
+
+    // Un token corto no sirve para un cron: avisar ANTES de que expire callado.
+    if (dbgData.TryGetProperty("expires_at", out var expSoon) && expSoon.GetInt64() > 0)
+    {
+        var hoursLeft = (expSoon.GetInt64() - DateTimeOffset.UtcNow.ToUnixTimeSeconds()) / 3600.0;
+        if (hoursLeft < 24)
+            Console.WriteLine(
+                $"AVISO: a este token le quedan {hoursLeft:F1} h. Es de corta duración "
+                + "(típico del Graph API Explorer). Convertilo a uno de 60 días con "
+                + "grant_type=fb_exchange_token antes de dejarlo en un secret.");
     }
 
     var scopes = dbgData.TryGetProperty("scopes", out var sc) && sc.ValueKind == System.Text.Json.JsonValueKind.Array
