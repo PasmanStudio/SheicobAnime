@@ -521,23 +521,40 @@ ver y el render sí:
    base. En el reel de tráiler `musicCredit` es siempre null, pero el defecto
    estaba latente y la atribución es obligatoria.
 
-### 8.5 Verificado en producción (10-sep-2026, run 34492040634)
+### 8.5 Verificado en producción (10-sep-2026)
 
-Corrida real del pipeline desde la rama, antes de mergear. Publicó un reel de la
-noticia *"Una nueva película animada de Naruto se anunciará en la New York Comic
-Con 2026"* (media `17988134939859783`) y su story:
+Tres corridas reales del pipeline desde la rama, antes de mergear.
 
-| | Medido en vivo |
-|---|---|
-| Duración total | **29,5 s** (26 de tráiler + 1 slide de CTA) |
-| Salteo del arranque | **3,7 s** — proporcional, no el 1,5 fijo de antes |
-| Peso | 20,3 MB |
-| Paso del pipeline | **2,7 min** (job completo 4,1) contra un cap de 12 |
+| Run | Noticia | Formato | Duración | Salteo |
+|---|---|---|---|---|
+| 34492040634 | Película de Naruto en la NYCC 2026 | tráiler | **29,5 s** | **3,7 s** |
+| 34493207860 | ~~ANÁLISIS – Marvel's Wolverine~~ ⚠️ | slideshow | **17,6 s** (5 slides) | — |
+| 34494591345 | Witch on the Holy Night, estreno 2027 | tráiler | **29,5 s** | **6 s** (techo) |
 
-El tráiler salió en idioma original (no había versión latina ni subs manuales),
-que es el último recurso previsto. Y el tiempo de corrida despeja la duda que
-había quedado abierta sobre el grafo nuevo: desenfocar en 270×480 y ampliar lo
-mantiene barato aunque el tráiler se decodifique dos veces.
+Lo que confirmaron:
+
+- **La duración da exacta en las dos ramas del render.** 29,5 s en el de tráiler
+  (26 + 1 slide) y 17,6 s en el slideshow, que coincide al decimal con
+  `SlideshowSeconds(5)`. El cableado de `RenderedReel` está bien en ambas.
+- **El salteo es proporcional de verdad**: 3,7 s en un tráiler medio y 6 s (el
+  techo) en uno de ≥50 s, no el 1,5 fijo de antes.
+- **El tiempo de corrida despeja la duda del grafo nuevo**: 2,7 min el paso del
+  pipeline (job completo 4,1) contra un cap de 12. Desenfocar en 270×480 y
+  ampliar lo mantiene barato aunque el tráiler se decodifique dos veces.
+- **La escalera de candidatos funciona**: en el run 3 el primer tráiler no bajó y
+  pasó al siguiente en vez de rendirse al slideshow.
+
+⚠️ **El run 2 destapó un falso positivo del propio §9.2.** Publicó *"ANÁLISIS –
+Marvel's Wolverine"*, una reseña de VIDEOJUEGO del feed de Crunchyroll: la marca
+"marvel" sola se llevaba los 8 puntos de crossover. Se había anticipado el
+problema para "netflix" y "disney" (aparecen como distribuidor) pero no para las
+franquicias occidentales. Corregido con el gate `MentionsAnimeWorld` + una
+penalización para reseñas; el run 3 ya eligió bien.
+
+Ojo con la fuerza de esa evidencia: el run 3 tenía otro pool (la nota de Marvel
+ya estaba consumida), así que **no es un A/B controlado del fix**. Lo que
+verifica el fix es el test de regresión con el titular real; el run 3 solo
+confirma que nada más se rompió.
 
 ### 8.6 Lo que quedó pendiente
 
@@ -601,6 +618,15 @@ Dos detalles que salieron de escribir los tests:
   casi siempre como distribuidor ("llega a Netflix"), que no es un cruce de
   audiencias sino dónde se ve. Incluirlas le daría 8 puntos a cualquier noticia
   rutinaria de licencias.
+- **La marca sola no alcanza: tiene que haber contexto de anime.** Esto NO estaba
+  en la primera versión y costó un post publicado (§8.5): *"ANÁLISIS – Marvel's
+  Wolverine"*, una reseña de videojuego, se llevó los 8 puntos por nombrar a
+  Marvel. El gate `MentionsAnimeWorld` exige que el titular además diga
+  anime/manga, nombre una franquicia conocida, o traiga un verbo de cruce — los
+  tres, porque *"Free Fire anuncia una colaboración con Attack on Titan"* no dice
+  "anime" en ningún lado y obviamente sí es el cruce que buscamos. Va con una
+  penalización de −6 para reseñas y análisis, que en el feed de Crunchyroll son
+  casi siempre de videojuegos.
 
 **Few-shot con datos propios:** cuando ya hay ≥10 reels medidos, el prompt
 incluye los 5 titulares que más y los 5 que menos alcance hicieron *en esta
