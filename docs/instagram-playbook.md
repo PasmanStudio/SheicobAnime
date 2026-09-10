@@ -343,6 +343,18 @@ Cosas que costaron corridas y no deberían repetirse:
   funciona ni siquiera pedida de a una.
 - **`follower_count` solo admite los últimos 30 días excluyendo hoy**, y
   `profile_views` exige `metric_type=total_value` (otra forma de respuesta).
+- **La mayoría de las "migraciones" de este repo no son migraciones.** EF solo
+  reconoce una clase como migración si tiene el PAR
+  `[DbContext(typeof(AppDbContext))]` + `[Migration("<id>")]` — normalmente los
+  pone el `.Designer.cs` que genera `dotnet ef migrations add`. Las escritas a
+  mano no los tienen, así que `dotnet ef migrations list` devuelve **7 de 28**, y
+  ni `MigrateAsync` ni el paso "Run migrations" de `deploy.yml` las aplican
+  jamás: son documentación del SQL que alguien corrió a mano contra Supabase.
+  Eso alcanza mientras el MODELO no toque las columnas nuevas — pero apenas
+  agregás una propiedad a la entidad, EF la emite en el INSERT y la primera
+  corrida muere con `42703: column "..." does not exist`. Pasó el 10-sep-2026
+  (run 34490734605). Al agregar una columna que el modelo va a usar, poné los dos
+  atributos y confirmá con `dotnet ef migrations list` que aparece.
 
 ---
 
@@ -509,7 +521,25 @@ ver y el render sí:
    base. En el reel de tráiler `musicCredit` es siempre null, pero el defecto
    estaba latente y la atribución es obligatoria.
 
-### 8.5 Lo que quedó pendiente
+### 8.5 Verificado en producción (10-sep-2026, run 34492040634)
+
+Corrida real del pipeline desde la rama, antes de mergear. Publicó un reel de la
+noticia *"Una nueva película animada de Naruto se anunciará en la New York Comic
+Con 2026"* (media `17988134939859783`) y su story:
+
+| | Medido en vivo |
+|---|---|
+| Duración total | **29,5 s** (26 de tráiler + 1 slide de CTA) |
+| Salteo del arranque | **3,7 s** — proporcional, no el 1,5 fijo de antes |
+| Peso | 20,3 MB |
+| Paso del pipeline | **2,7 min** (job completo 4,1) contra un cap de 12 |
+
+El tráiler salió en idioma original (no había versión latina ni subs manuales),
+que es el último recurso previsto. Y el tiempo de corrida despeja la duda que
+había quedado abierta sobre el grafo nuevo: desenfocar en 270×480 y ampliar lo
+mantiene barato aunque el tráiler se decodifique dos veces.
+
+### 8.6 Lo que quedó pendiente
 
 **El cierre no loopea.** El reel termina en la tarjeta estática de CTA, así que
 el corte al reinicio se nota. Un loop limpio pide **sacar esa última slide** y
@@ -624,7 +654,7 @@ caption invertido hacia el share · los 7 crons a reel (y de paso la franja 13-1
 
 **Sprint 2 — hecho (§8).** Full-bleed con fondo desenfocado · gancho desde el
 frame 0 · duración a ~30 s · salteo proporcional del arranque. Pendiente ahí: el
-cierre en loop, que es una decisión de contenido (§8.5).
+cierre en loop, que es una decisión de contenido (§8.6).
 
 **Sprint 3 — hecho (§9).** Selección por techo de audiencia + crossovers en la
 heurística · métricas y duración persistidas por pieza (`--insights-sync`
@@ -638,7 +668,7 @@ por `follow_type`.
 2. **Bio, campo Nombre y reels fijados** — manual, y probablemente el 2× más
    barato que queda. Con `profile_views` ya se va a poder ver si el cuello está
    ahí.
-3. **Cierre en loop del reel** (§8.5): decisión de contenido.
+3. **Cierre en loop del reel** (§8.6): decisión de contenido.
 4. **Crossposting a Facebook**: pospuesto por decisión del usuario.
 5. **El experimento que separa video de noticia** (§5): forzar slideshow al azar
    en noticias que SÍ tienen tráiler. Caro, pero es lo único que responde cuánto
