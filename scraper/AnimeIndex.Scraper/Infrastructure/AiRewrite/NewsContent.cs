@@ -21,7 +21,12 @@ public sealed record NewsContent(
     // Hashtags WITHOUT the leading '#'. Merged with the base set by the caption builder.
     IReadOnlyList<string> Hashtags,
     // True when this came from the AI rewrite (vs. the heuristic fallback). For logging.
-    bool FromAi)
+    bool FromAi,
+    // 3–6 palabras para el PRIMER FRAME del reel, en tipografía gigante. No es un
+    // titular corto: el titular tiene ~80 caracteres y se rompe en 3-5 líneas
+    // chicas, que es lo contrario de lo que frena un scroll. Opcional — sin él,
+    // el renderer deriva las primeras palabras del titular (ver HookTextFor).
+    string? Hook = null)
 {
     public static NewsContent Empty(string headline) =>
         new(headline, null, [], string.Empty, [], FromAi: false);

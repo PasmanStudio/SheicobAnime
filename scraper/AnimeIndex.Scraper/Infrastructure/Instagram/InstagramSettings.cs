@@ -141,11 +141,21 @@ public class InstagramSettings
     // red murieron así entre el 18 y el 21-ago-2026.
     public string YtDlpProxy { get; set; } = string.Empty;
 
-    // Máximo de segundos de TRÁILER en el reel (la gente quiere VER el tráiler
-    // — cortarlo a los 18s era matar el formato). Si el tráiler dura menos, se
-    // usa lo que haya; el total del reel (tráiler + slides informativas + CTA)
-    // se capa solo a ~60s.
-    public int TrailerClipSeconds { get; set; } = 45;
+    // Máximo de segundos de TRÁILER en el reel. Si el tráiler dura menos, se usa
+    // lo que haya.
+    //
+    // Bajó de 45 a 26 (sep-2026, export de 785 piezas). Con 45 el reel terminaba
+    // durando ~55 s (45 + 3 slides de 3,5) y la retención mediana era del 12 %:
+    // el espectador mediano abandonaba en el segundo 7, así que los últimos 40 s
+    // no los veía casi nadie, la tasa de finalización quedaba por el piso y el
+    // reel nunca llegaba a loopear (IG cuenta cada loop como reproducción).
+    //
+    // OJO — no bajar mucho más: `ig_reels_avg_watch_time` está ACOTADO por la
+    // duración, y los 9 reels que explotaron tienen entre 7,3 y 20,8 s de watch
+    // time (ocho de nueve pasan los 11). Un reel de 8-15 s no puede producir
+    // ninguno de esos resultados. El objetivo es ~30 s de total, no "lo más
+    // corto posible".
+    public int TrailerClipSeconds { get; set; } = 26;
 
     // ── Suno (música generada FRESCA por reel, vía sunoapi.org — tercero) ──
     // Con la key configurada, cada reel de noticias genera un track instrumental

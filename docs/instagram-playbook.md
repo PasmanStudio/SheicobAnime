@@ -1,6 +1,6 @@
 # Playbook de Instagram — SheicobAnime
 
-**Última actualización:** 10-sep-2026 (Sprint 1 implementado — ver §7)
+**Última actualización:** 10-sep-2026 (Sprints 1 y 2 implementados — ver §7 y §8)
 **Base de datos del análisis:** 785 piezas publicadas (301 reels + 484 feed), 16-may → 9-sep-2026, exportadas de la Graph API de Meta.
 
 Este documento existe para poder retomar el tema en otra conversación sin repetir la investigación. Tiene los números medidos, qué hacer con ellos, y qué todavía no sabemos.
@@ -409,7 +409,93 @@ sigue funcionando como **respaldo** cuando el reel falla (`if (reelMediaId is nu
 
 ---
 
-## 8. Resumen
+## 8. Sprint 2 — implementado (10-sep-2026)
+
+El formato del video. Todo esto se juzga contra `reels_skip_rate`, no contra
+views. Antes de tocar nada, así era un reel de tráiler:
+
+| | Antes | Ahora |
+|---|---|---|
+| Duración total | 55,5 s (45 tráiler + 3 slides) | **29,5 s** (26 + 1 slide) |
+| Retención implícita | 6,9 s / 55,5 s = **12 %** | 6,9 s / 29,5 s = **23 %** |
+| Video en pantalla | banda de 900 px sobre panel abismo = **47 %** | **100 %** (banda nítida + relleno desenfocado) |
+| Texto en el frame 0 | ninguno (aparecía a los ~1,4 s) | el **gancho**, completo |
+| Salteo del arranque | 1,5 s fijos | 12 % de la duración (1,5–6 s) |
+
+### 8.1 Full-bleed: el tráiler es su propio fondo
+
+`[0:v]` se decodifica una vez y se usa dos: una copia desenfocada llena los
+1080×1920 y la banda nítida va centrada encima. El panel abismo con glow que
+había de fondo desapareció — con la banda ocupando el 47 % de la pantalla sobre
+un fondo muerto, la pieza se leía como "una tarjeta con un video adentro".
+
+El blur se calcula en **270×480 y se amplía**, no a resolución completa: `gblur`
+con sigma grande sobre 1080×1920 a 30 fps es carísimo en el runner y el resultado
+visible es indistinguible. La banda se capa a 1250 px de alto para que un clip
+vertical (los respaldos de X vienen así) pase casi entero.
+
+### 8.2 El gancho, desde el frame 0
+
+`NewsContent` tiene ahora un campo `Hook`: 3-6 palabras que la IA escribe aparte
+del titular. El titular no sirve de gancho — ~80 caracteres se rompen en 3-5
+líneas chicas, justo lo contrario de lo que frena un scroll.
+
+Va en **una capa propia**, separada del bloque editorial, porque tienen tiempos
+distintos: el gancho se compone tal cual desde el frame 0, y el titular sigue
+entrando con el slide-up de marca. Sin hook de la IA (heurística, cuota agotada,
+modelo que ignoró el campo) se derivan las primeras palabras del titular
+**cortando en la cláusula**: "Murió Kentaro Miura, el creador de Berserk" → "Murió
+Kentaro Miura", no las primeras N palabras a ciegas.
+
+Las dos capas traen su propio scrim: el fondo dejó de ser el panel abismo
+controlado y pasó a ser un frame cualquiera del tráiler.
+
+### 8.3 Duración a ~30 s y salteo proporcional
+
+`TrailerClipSeconds` 45 → **26**, y las slides finales pasaron de 3 a **1** (solo
+el CTA): los puntos clave vivían en los últimos 10,5 s de un reel con 12 % de
+retención, o sea que no los veía nadie mientras hundían la finalización y el
+loop. No se pierde contenido — el titular va quemado sobre el video y el cuerpo
+entero está en el caption.
+
+`TrailerStartSkip` era la constante 1,5 s; ahora es el 12 % de la duración con
+piso 1,5 y techo 6. Los PV oficiales abren con logos de distribuidora que duran
+3-6 s: en un tráiler de 90 s, saltearse solo 1,5 s era regalarle el arranque del
+reel a un logo. El fade-out del audio bajó de 1,8 s a 0,9.
+
+### 8.4 Verificado contra ffmpeg de verdad, no solo contra los argumentos
+
+Los tests de este repo arman la línea de comandos y le hacen asertos — sirven,
+pero **no prueban que el grafo corra**. Un `filter_complex` mal armado no rompe
+la corrida: `PublishReelAsync` lo atrapa, loguea un warning y cae al slideshow.
+O sea que un error acá se manifestaría como "todos los reels salen sin video"
+sin ninguna señal clara.
+
+Así que el grafo se corrió de punta a punta con ffmpeg local, con un tráiler
+sintético 16:9 y otro vertical. Dos defectos que los asertos de string no podían
+ver y el render sí:
+
+1. **El gancho quedaba tangente al filo de la banda** (segunda línea terminaba en
+   y≈583, banda desde y≈579). Se corrigió bajando el centro de la banda al 50 %,
+   achicando el cuerpo del gancho de 132 a 112 y acortando `MaxHookChars` a 26.
+   El scrim superior también se reforzó: donde cae el gancho tenía un alpha de
+   ~0x45, insuficiente para texto blanco sobre una escena clara.
+2. **El crédito CC se encimaba con el titular.** En vertical `SafeBottom` devuelve
+   lo mismo para cualquier margen, así que los dos caían en la MISMA línea de
+   base. En el reel de tráiler `musicCredit` es siempre null, pero el defecto
+   estaba latente y la atribución es obligatoria.
+
+### 8.5 Lo que quedó pendiente
+
+**El cierre no loopea.** El reel termina en la tarjeta estática de CTA, así que
+el corte al reinicio se nota. Un loop limpio pide **sacar esa última slide** y
+terminar sobre el video — pero eso elimina el "link en la bio" del video (sigue
+en el caption). Es una decisión de contenido, no técnica: el cambio es poner
+`maxKeyPoints: 0` → lista vacía de `infoSlides` en `PublishReelAsync`.
+
+---
+
+## 9. Resumen
 
 > El feed no sirve (484 posts = 1 seguidor). El video real duplica todo. El watch
 > time es la variable que manda (rho 0,76). El 16 % de los reels produce el 62 %
@@ -423,20 +509,9 @@ sigue funcionando como **respaldo** cuando el reel falla (`if (reelMediaId is nu
 **Sprint 1 — hecho (§7).** Zona segura del texto · primer frame sin negro ·
 caption invertido hacia el share · los 7 crons a reel (y de paso la franja 13-15).
 
-**Sprint 2 — formato del video.** Todo se juzga contra `reels_skip_rate`, no
-contra views (demasiado ruidoso con una cola así):
-1. **Full-bleed con fondo desenfocado.** Hoy el tráiler es una banda de 1080×900
-   sobre 1920 — **el 47 % de la pantalla** — flotando en un panel abismo vacío.
-   Un `split` + `scale`/`crop`/`gblur` del propio clip detrás lo convierte de "una
-   tarjeta con un video adentro" en "un video".
-2. **Campo `hook` en el rewrite**: 3-6 palabras enormes desde el frame 0, sin
-   fade. El titular tiene ~80 caracteres y se rompe en 3-5 líneas chicas; eso no
-   es un gancho.
-3. **Duración a ~30 s**: `TrailerClipSeconds` 45 → 25-28 y 1 sola info slide.
-4. **Skip inteligente del arranque**: `TrailerStartSkip` es la constante 1,5 s,
-   pero los tráilers abren con logos de distribuidora 3-6 s. `min(6, max(1.5,
-   dur×0.12))`, o `blackdetect`.
-5. **Cierre en loop**: hoy termina con `afade` de 1,8 s sobre una tarjeta estática.
+**Sprint 2 — hecho (§8).** Full-bleed con fondo desenfocado · gancho desde el
+frame 0 · duración a ~30 s · salteo proporcional del arranque. Pendiente ahí: el
+cierre en loop, que es una decisión de contenido (§8.5).
 
 **Sprint 3 — la cola y el loop de medición.**
 6. **Prompt de selección con criterio de audiencia externa.** Hoy pide "la más

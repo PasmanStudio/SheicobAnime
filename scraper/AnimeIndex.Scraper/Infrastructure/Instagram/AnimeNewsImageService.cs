@@ -134,31 +134,169 @@ public class AnimeNewsImageService(
     }
 
     /// <summary>
-    /// Capas para el Reel "tráiler + titular": fondo abismo SIN foto (el video
-    /// es el protagonista — glow + scrim para que el texto respire) y el mismo
-    /// overlay de texto de marca. El tráiler va como banda central encima del
-    /// fondo, el texto encima de todo.
+    /// Capas del Reel "tráiler + titular". Devuelve DOS overlays RGBA, no un
+    /// fondo y un overlay, porque tienen tiempos distintos:
+    ///
+    ///   • <b>Hook</b> — scrim superior + logo + el gancho de 3-6 palabras. Va
+    ///     desde el FRAME 0 y sin fade: es lo único que puede frenar el scroll
+    ///     antes de que se decida el skip (mediana 55 %).
+    ///   • <b>Overlay</b> — scrim inferior + titular (+ crédito CC si hay). Entra
+    ///     con el slide-up + fade de marca, como siempre.
+    ///
+    /// El fondo ya no se rinde acá: lo hace el propio tráiler desenfocado y
+    /// ampliado dentro de ffmpeg. El panel abismo con glow que había antes
+    /// dejaba a la banda de video ocupando el 47 % de la pantalla sobre un
+    /// fondo muerto — se leía como "una tarjeta con un video adentro".
     /// </summary>
-    public (byte[] Background, byte[] OverlayPng) GenerateVideoReelLayers(
+    public (byte[] HookPng, byte[] OverlayPng) GenerateVideoReelLayers(
         NewsContent content, string? musicCredit = null)
     {
         const int width = 1080, height = 1920;
+        float scale = width / 1080f;
 
-        using var bgSurface = SKSurface.Create(new SKImageInfo(width, height));
-        var bg = bgSurface.Canvas;
-        bg.Clear(SKColors.Black);
-        DrawBackground(bg, width, height);
-        DrawCenterGlow(bg, width, height);
-        DrawBottomScrim(bg, width, height);
+        using var hookSurface = SKSurface.Create(
+            new SKImageInfo(width, height, SKColorType.Rgba8888, SKAlphaType.Premul));
+        var hk = hookSurface.Canvas;
+        hk.Clear(SKColors.Transparent);
+        DrawTopScrim(hk, width, height);
+        DrawLogoTop(hk, width, height, scale);
+        DrawHook(hk, HookTextFor(content), width, height);
 
         using var ovSurface = SKSurface.Create(
             new SKImageInfo(width, height, SKColorType.Rgba8888, SKAlphaType.Premul));
         var ov = ovSurface.Canvas;
         ov.Clear(SKColors.Transparent);
-        DrawCoverText(ov, content, width, height, swipeHint: false);
+        DrawBottomScrim(ov, width, height);
+        // En vertical SafeBottom devuelve lo mismo para cualquier margen, así que
+        // el crédito y la última línea del titular caían en la MISMA línea de
+        // base, encimados. En el reel de tráiler musicCredit es siempre null
+        // (suena el audio del video), pero el defecto estaba latente.
+        DrawVideoReelHeadline(ov, content, width, height,
+            bottomInset: musicCredit is null ? 0f : 46 * scale);
         if (musicCredit is not null) DrawMusicCredit(ov, musicCredit, width, height);
 
-        return (Encode(bgSurface), EncodePng(ovSurface));
+        return (EncodePng(hookSurface), EncodePng(ovSurface));
+    }
+
+    /// <summary>
+    /// El texto del gancho: lo escribe la IA (<see cref="NewsContent.Hook"/>) y,
+    /// si no vino o vino demasiado largo — heurística sin API key, cuota agotada,
+    /// modelo que ignoró el campo — se derivan las primeras palabras del titular,
+    /// que en las noticias de anime casi siempre nombran la obra.
+    ///
+    /// El titular entero NO sirve de gancho: ~80 caracteres se rompen en 3-5
+    /// líneas chicas, justo lo contrario de lo que hace falta en el frame 0.
+    /// Público estático para tests.
+    /// </summary>
+    public static string HookTextFor(NewsContent content)
+    {
+        var hook = content.Hook?.Trim();
+        if (!string.IsNullOrWhiteSpace(hook) && hook!.Length <= MaxHookChars) return hook;
+        return FirstWords(content.Headline ?? string.Empty, maxWords: 4, maxChars: MaxHookChars);
+    }
+
+    // Más largo que esto ya no entra en 2 líneas de tipografía gigante sin
+    // chocar con la banda del tráiler — deja de ser un gancho y pasa a ser un
+    // titular chico.
+    private const int MaxHookChars = 26;
+
+    private static readonly char[] ClauseEnders = [',', ';', ':', '.', '—', '–', '-'];
+
+    // Un conector suelto al final no es un gancho: "Jujutsu Kaisen confirma su"
+    // corta peor que "Jujutsu Kaisen confirma".
+    private static readonly HashSet<string> HookTailStopWords =
+        new(StringComparer.OrdinalIgnoreCase)
+        {
+            "su", "sus", "el", "la", "lo", "los", "las", "un", "una", "unos", "unas",
+            "de", "del", "y", "e", "o", "u", "con", "en", "que", "a", "al", "por", "para", "sin",
+        };
+
+    private static string FirstWords(string text, int maxWords, int maxChars)
+    {
+        var words = text.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        var taken = new List<string>();
+
+        foreach (var w in words.Take(maxWords))
+        {
+            var word = w.TrimEnd(ClauseEnders);
+            if (word.Length == 0) break;
+            if (taken.Count > 0 && taken.Sum(t => t.Length + 1) + word.Length > maxChars) break;
+            taken.Add(word);
+            // Una coma o dos puntos cierran la cláusula, y ahí está el gancho:
+            // "Murió Kentaro Miura, el creador de Berserk" → las tres primeras.
+            if (word.Length < w.Length) break;
+        }
+
+        // Y si el corte dejó un conector colgando, se cae también
+        while (taken.Count > 1 && HookTailStopWords.Contains(taken[^1]))
+            taken.RemoveAt(taken.Count - 1);
+
+        return taken.Count > 0 ? string.Join(' ', taken) : text.Trim();
+    }
+
+    /// <summary>El gancho: 3-6 palabras gigantes bajo el logo, arriba de todo.</summary>
+    private static void DrawHook(SKCanvas canvas, string hook, int width, int height)
+    {
+        if (string.IsNullOrWhiteSpace(hook)) return;
+
+        float scale = width / 1080f;
+        float x     = width * 0.07f;
+
+        // 112 y no 132: con el cuerpo más grande, dos líneas de gancho llegaban
+        // hasta y≈583 y quedaban pegadas al filo superior de la banda del
+        // tráiler (y≈656). El techo del gancho es el aire, no el tamaño.
+        var (lines, size) = WrapFit(hook.ToUpperInvariant(),
+            112 * scale, 58 * scale, width * 0.86f, maxLines: 2, bold: true, display: true);
+        float lineH = size * 1.04f;
+
+        float firstBaseline = SafeTop(width, height) + 118 * scale;
+        DrawLines(canvas, lines, x, firstBaseline, size, TextWhite, lineH, display: true, bold: true);
+        DrawCut(canvas, x, firstBaseline + (lines.Count - 1) * lineH + 26 * scale,
+            96 * scale, 12 * scale, Accent);
+    }
+
+    /// <summary>
+    /// El titular en el reel de tráiler: máximo 3 líneas (el cover permite 5).
+    /// Acá acompaña al gancho y al video, no es el protagonista, y tiene que
+    /// caber debajo de la banda sin comerse media pantalla.
+    /// </summary>
+    private static void DrawVideoReelHeadline(
+        SKCanvas canvas, NewsContent content, int width, int height, float bottomInset = 0f)
+    {
+        var title = content.Headline?.Trim();
+        if (string.IsNullOrWhiteSpace(title)) return;
+
+        float scale = width / 1080f;
+        float x     = width * 0.07f;
+
+        var (lines, size) = WrapFit(title!.ToUpperInvariant(),
+            72 * scale, 40 * scale, width * 0.86f, maxLines: 3, bold: true, display: true);
+        float lineH = size * 1.06f;
+        float last  = SafeBottom(width, height, 0.07f) - bottomInset;
+
+        DrawLines(canvas, lines, x, last - (lines.Count - 1) * lineH, size, TextWhite,
+            lineH, display: true, bold: true);
+    }
+
+    /// <summary>
+    /// Scrim superior. Hace falta porque el fondo dejó de ser el panel abismo
+    /// controlado y pasó a ser un frame cualquiera del tráiler: sin esto, el
+    /// gancho y el logo desaparecen sobre una escena clara.
+    /// </summary>
+    private static void DrawTopScrim(SKCanvas canvas, int width, int height)
+    {
+        // La banda llega hasta el 46 % y el punto medio se corre al 0.55 para
+        // que el gancho (y≈400-560) caiga en la parte todavía densa: con el
+        // reparto anterior ahí quedaba un alpha de ~0x45, que sobre una escena
+        // clara del tráiler no alcanzaba para texto blanco.
+        float band = height * 0.46f;
+        using var paint  = new SKPaint();
+        using var shader = SKShader.CreateLinearGradient(
+            new SKPoint(0, 0), new SKPoint(0, band),
+            [Scrim.WithAlpha(0xF0), Scrim.WithAlpha(0xA6), SKColors.Transparent],
+            [0f, 0.55f, 1f], SKShaderTileMode.Clamp);
+        paint.Shader = shader;
+        canvas.DrawRect(0, 0, width, band, paint);
     }
 
     /// <summary>

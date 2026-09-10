@@ -154,10 +154,15 @@ public static class TestImageGenerator
                         Path.Join(outDir, $"news-{slug}-reel-slide{i + 1}.jpg"), reelSlides[i]);
                 Console.WriteLine($"  [reel slides ×{reelSlides.Count}, crédito CC en la última]  ({sw.ElapsedMilliseconds} ms)");
 
-                var (trailerBg, trailerOv) = newsService.GenerateVideoReelLayers(content, sampleCredit);
-                await File.WriteAllBytesAsync(Path.Join(outDir, $"news-{slug}-trailer-bg.jpg"), trailerBg);
+                // Las dos capas del reel de tráiler. Son PNG con alpha y se
+                // componen SOBRE el video, así que abiertas sueltas se ven casi
+                // vacías — para revisarlas de verdad hay que mirarlas encima de
+                // un frame, o renderizar el reel entero con ffmpeg.
+                var (trailerHook, trailerOv) = newsService.GenerateVideoReelLayers(content, sampleCredit);
+                await File.WriteAllBytesAsync(Path.Join(outDir, $"news-{slug}-trailer-hook.png"), trailerHook);
                 await File.WriteAllBytesAsync(Path.Join(outDir, $"news-{slug}-trailer-overlay.png"), trailerOv);
-                Console.WriteLine("  [trailer-reel layers: bg + overlay con crédito]");
+                Console.WriteLine(
+                    $"  [trailer-reel layers: hook \"{AnimeNewsImageService.HookTextFor(content)}\" + overlay]");
             }
         }
 

@@ -133,23 +133,23 @@ public class InstagramVideoServiceTests
     public void BuildTrailerReelArguments_UsesOriginalTrailerAudio()
     {
         var args = InstagramVideoService.BuildTrailerReelArguments(
-            "trailer.mp4", "bg.jpg", "overlay.png", [], "out.mp4", 40);
+            "trailer.mp4", "hook.png", "overlay.png", [], "out.mp4", 40);
 
         // El tráiler entra salteando el arranque (logos/negro) CON su audio
         // original — nada de música nuestra ni pista silenciosa
         Assert.Contains("-ss 1.5 -i \"trailer.mp4\"", args);
-        Assert.Contains("[1:a]apad,atrim=0:40", args);
+        Assert.Contains("[0:a]apad,atrim=0:40", args);
         Assert.Contains("-map [v] -map [a]", args);
         Assert.DoesNotContain("anullsrc", args);
         Assert.DoesNotContain("music", args);
-        // Fade-out del audio al cierre (40 − 1.8 = 38.2) y nivel social estándar
-        Assert.Contains("afade=t=out:st=38.2", args);
+        // Fade-out corto del audio al cierre (40 − 0.9 = 39.1) y nivel estándar
+        Assert.Contains("afade=t=out:st=39.1", args);
         Assert.Contains("loudnorm=I=-16", args);
         // Banda de video capada y congelada si el clip es corto
-        Assert.Contains("crop=1080:'min(ih,900)'", args);
+        Assert.Contains("crop=1080:'min(ih,1250)'", args);
         Assert.Contains("tpad=stop_mode=clone", args);
-        // Fondo + tráiler + overlay de texto con el slide-up de marca
-        Assert.Contains("overlay=x='(W-w)/2':y=240", args);
+        // Banda centrada sobre el fondo desenfocado + slide-up de marca
+        Assert.Contains("overlay=x='(W-w)/2':y='H*0.50-h/2'", args);
         Assert.Contains("fade=t=in:st=0.5:d=0.8:alpha=1", args);
         // …pero NADA de fade desde negro sobre el video (ver test dedicado)
         Assert.DoesNotContain("fade=t=in:st=0:d=0.4", args);
@@ -163,7 +163,7 @@ public class InstagramVideoServiceTests
     public void BuildTrailerReelArguments_BurnsSpanishSubtitlesWhenProvided()
     {
         var args = InstagramVideoService.BuildTrailerReelArguments(
-            "t.mp4", "bg.jpg", "ov.png", [], "out.mp4", 30,
+            "t.mp4", "hook.png", "ov.png", [], "out.mp4", 30,
             subtitlesPath: @"C:\temp\subs.vtt");
 
         // El filtro subtitles va sobre la banda del tráiler, con la ruta
@@ -173,7 +173,7 @@ public class InstagramVideoServiceTests
 
         // Sin subs no hay filtro
         var noSubs = InstagramVideoService.BuildTrailerReelArguments(
-            "t.mp4", "bg.jpg", "ov.png", [], "out.mp4", 30);
+            "t.mp4", "hook.png", "ov.png", [], "out.mp4", 30);
         Assert.DoesNotContain("subtitles=", noSubs);
     }
 
@@ -191,7 +191,7 @@ public class InstagramVideoServiceTests
     public void BuildTrailerReelArguments_AppendsInfoSlidesAfterTrailer()
     {
         var args = InstagramVideoService.BuildTrailerReelArguments(
-            "t.mp4", "bg.jpg", "ov.png", ["kp1.jpg", "cta.jpg"], "out.mp4", 30);
+            "t.mp4", "hook.png", "ov.png", ["kp1.jpg", "cta.jpg"], "out.mp4", 30);
 
         // Las 2 slides entran como inputs 3 y 4 y se concatenan tras el tráiler
         Assert.Contains("-i \"kp1.jpg\"", args);
@@ -203,9 +203,9 @@ public class InstagramVideoServiceTests
         Assert.Contains("trim=duration=30", args);
         // Total = 30 + 2×3.5 = 37s; el audio del tráiler cubre TODO el reel
         Assert.Contains("-t 37", args);
-        Assert.Contains("[1:a]apad,atrim=0:37", args);
-        // Fade-out del audio al final de las slides (37 − 1.8 = 35.2)
-        Assert.Contains("afade=t=out:st=35.2", args);
+        Assert.Contains("[0:a]apad,atrim=0:37", args);
+        // Fade-out del audio al final de las slides (37 − 0.9 = 36.1)
+        Assert.Contains("afade=t=out:st=36.1", args);
     }
 }
 
@@ -222,7 +222,7 @@ public class FirstFrameTests
     public void TrailerReel_StartsAtFullBrightness_NoFadeFromBlack()
     {
         var args = InstagramVideoService.BuildTrailerReelArguments(
-            "t.mp4", "bg.jpg", "ov.png", ["kp.jpg"], "out.mp4", 30);
+            "t.mp4", "hook.png", "ov.png", ["kp.jpg"], "out.mp4", 30);
 
         // Ningún fade de VIDEO desde negro…
         Assert.DoesNotContain("fade=t=in:st=0:d=0.4", args);
@@ -255,6 +255,134 @@ public class FirstFrameTests
         Assert.Contains("afade=t=in:st=0:d=0.8",
             InstagramVideoService.BuildFfmpegArguments("in.png", "o.mp4", 12, musicPath: "m.mp3"));
     }
+}
+
+/// <summary>
+/// Composición full-bleed del reel de tráiler: el propio clip, desenfocado y
+/// ampliado, hace de fondo, y la banda nítida va centrada encima. Antes el fondo
+/// era un panel abismo fijo y la banda ocupaba 900 de 1920 px — el 47 % de la
+/// pantalla flotando sobre un fondo muerto.
+/// </summary>
+public class FullBleedTrailerTests
+{
+    private static string Args(double seconds = 30) =>
+        InstagramVideoService.BuildTrailerReelArguments(
+            "t.mp4", "hook.png", "ov.png", ["cta.jpg"], "out.mp4", seconds);
+
+    [Fact]
+    public void TheTrailerIsDecodedOnceAndUsedTwice()
+    {
+        var args = Args();
+
+        // Una sola decodificación, dos ramas
+        Assert.Contains("[0:v]fps=30,split=2[src][blurbase]", args);
+        // El fondo YA NO es una imagen aparte: no hay input de bg
+        Assert.DoesNotContain("bg.jpg", args);
+        Assert.Single(System.Text.RegularExpressions.Regex.Matches(args, @"-i ""t\.mp4"""));
+    }
+
+    [Fact]
+    public void BackgroundIsBlurredSmallThenUpscaled()
+    {
+        var args = Args();
+
+        // El blur se calcula en 270×480 (≈16× más barato que a 1080×1920) y
+        // recién después se amplía a pantalla completa
+        Assert.Contains("[blurbase]scale=270:480:force_original_aspect_ratio=increase", args);
+        Assert.Contains("crop=270:480,gblur=sigma=10", args);
+        Assert.Contains("scale=1080:1920:flags=bicubic", args);
+        // El gblur nunca corre a resolución completa
+        Assert.DoesNotContain("scale=1080:1920:flags=bicubic,gblur", args);
+    }
+
+    [Fact]
+    public void HookLayerHasNoFade_EditorialLayerDoes()
+    {
+        var args = Args();
+
+        // El gancho se compone tal cual, desde el frame 0
+        Assert.Contains("[1:v]format=rgba[hk]", args);
+        Assert.Contains("[base][hk]overlay=x=0:y=0[hooked]", args);
+        // El bloque editorial sí entra animado, encima del gancho
+        Assert.Contains("[2:v]format=rgba,fade=t=in:st=0.5:d=0.8:alpha=1[ov]", args);
+        Assert.Contains("[hooked][ov]overlay=", args);
+    }
+
+    [Theory]
+    // Proporcional al largo: los PV oficiales abren con logos de distribuidora
+    // que duran 3-6 s, así que en un tráiler largo saltearse 1,5 s era regalarle
+    // el arranque del reel a un logo.
+    [InlineData(120, 6.0)]   // techo
+    [InlineData(90, 6.0)]    // 10.8 → techo
+    [InlineData(30, 3.6)]
+    [InlineData(17, 2.0)]    // teaser corto
+    [InlineData(8, 1.5)]     // piso
+    [InlineData(0, 1.5)]     // duración desconocida → piso
+    public void StartSkipScalesWithDuration(double duration, double expected)
+        => Assert.Equal(expected, InstagramVideoService.TrailerStartSkipFor(duration));
+
+    [Fact]
+    public void StartSkipReachesTheFilterGraph()
+    {
+        var args = InstagramVideoService.BuildTrailerReelArguments(
+            "t.mp4", "hook.png", "ov.png", [], "out.mp4", 26, startSkip: 4.8);
+
+        Assert.Contains("-ss 4.8 -i \"t.mp4\"", args);
+    }
+}
+
+/// <summary>
+/// El gancho del primer frame: 3-6 palabras enormes. Lo escribe la IA, y sin él
+/// se derivan las primeras palabras del titular — el titular ENTERO no sirve,
+/// porque ~80 caracteres se rompen en 3-5 líneas chicas.
+/// </summary>
+public class HookTextTests
+{
+    private static AnimeIndex.Scraper.Infrastructure.AiRewrite.NewsContent With(
+        string headline, string? hook) =>
+        new(headline, null, [], "cuerpo", [], FromAi: true, Hook: hook);
+
+    [Fact]
+    public void UsesTheAiHookWhenItFits()
+        => Assert.Equal("Jujutsu Kaisen vuelve",
+            AnimeNewsImageService.HookTextFor(
+                With("Jujutsu Kaisen confirma su cuarta temporada para 2027", "Jujutsu Kaisen vuelve")));
+
+    [Theory]
+    // Sin hook (heurística, cuota agotada, o el modelo ignoró el campo)
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    // Y con un hook que se fue de largo: deja de ser gancho, se descarta
+    [InlineData("Jujutsu Kaisen confirma oficialmente su cuarta temporada")]
+    public void FallsBackToTheFirstWordsOfTheHeadline(string? hook)
+    {
+        var text = AnimeNewsImageService.HookTextFor(
+            With("Jujutsu Kaisen confirma su cuarta temporada para 2027", hook));
+
+        // Las primeras palabras nombran la obra, que es lo que importa
+        Assert.StartsWith("Jujutsu Kaisen", text);
+        Assert.True(text.Length <= 30, $"gancho de {text.Length} caracteres: {text}");
+    }
+
+    [Fact]
+    public void NeverReturnsEmpty_EvenWithAOneWordHeadline()
+    {
+        Assert.Equal("Berserk", AnimeNewsImageService.HookTextFor(With("Berserk", null)));
+        // Una sola palabra larguísima no entra en el presupuesto pero igual sale
+        Assert.NotEqual("", AnimeNewsImageService.HookTextFor(
+            With("Supercalifragilisticoexpialidosisaurio", null)));
+    }
+
+    [Theory]
+    // La coma cierra la cláusula y ahí está el gancho — no se corta por conteo
+    [InlineData("Murió Kentaro Miura, el creador de Berserk", "Murió Kentaro Miura")]
+    [InlineData("Chainsaw Man: la película ya tiene fecha", "Chainsaw Man")]
+    // Y un conector colgando por el corte se cae ("… confirma su" → "… confirma")
+    [InlineData("Jujutsu Kaisen confirma su cuarta temporada para 2027", "Jujutsu Kaisen confirma")]
+    [InlineData("Solo Leveling estrena el tráiler de la temporada 3", "Solo Leveling estrena")]
+    public void DerivedHookCutsAtTheClause(string headline, string expected)
+        => Assert.Equal(expected, AnimeNewsImageService.HookTextFor(With(headline, null)));
 }
 
 /// <summary>
@@ -337,6 +465,9 @@ public class InstagramSafeAreaTests
             for (var x = 0; x < bmp.Width; x++)
             {
                 var p = bmp.GetPixel(x, y);
+                // El alpha importa en las capas RGBA del reel (el JPEG del cover
+                // siempre trae 255, así que el chequeo no lo afecta).
+                if (p.Alpha < 128) continue;
                 // Luma BT.601 — barato y suficiente para separar texto de fondo
                 if ((299 * p.Red + 587 * p.Green + 114 * p.Blue) / 1000 >= TextLuminance) rows[y]++;
             }
@@ -385,6 +516,61 @@ public class InstagramSafeAreaTests
         var lastTextRow = Array.FindLastIndex(rows, n => n > 0);
         Assert.True(lastTextRow > 900, $"el cuadrado perdió su margen chico (última fila con texto: {lastTextRow})");
         Assert.True(lastTextRow < 1080, "el texto se sale del canvas");
+    }
+
+    [Fact]
+    public void VideoReelLayers_SplitTheScreenBetweenHookAndHeadline()
+    {
+        // El gancho arriba (visible desde el frame 0) y el bloque editorial
+        // abajo: entre los dos tiene que quedar libre la banda del tráiler,
+        // que va centrada en el 46 % de la altura.
+        var (hookPng, overlayPng) = NewService().GenerateVideoReelLayers(
+            Content() with { Hook = "Jujutsu Kaisen vuelve" });
+
+        var hook    = TextPixelsPerRow(hookPng);
+        var overlay = TextPixelsPerRow(overlayPng);
+
+        // Gancho: arriba, dentro de la zona segura, y nada por debajo del medio
+        Assert.True(hook.Take(288).Sum() == 0, "el gancho invade el header de IG");
+        Assert.True(hook.Sum() > 3000, "no se rindió el gancho");
+        Assert.True(hook.Skip(900).Sum() == 0, "el gancho baja hasta la banda del tráiler");
+
+        // Titular: abajo, y NADA bajo la UI de IG
+        Assert.True(overlay.Skip(1500).Sum() == 0, "el titular cae bajo la botonera de IG");
+        Assert.True(overlay.Sum() > 3000, "no se rindió el titular");
+        Assert.True(overlay.Take(1000).Sum() == 0, "el titular sube hasta la banda del tráiler");
+    }
+
+    [Fact]
+    public void VideoReelLayers_MusicCreditNeverLandsOnTheHeadline()
+    {
+        // En vertical SafeBottom devuelve lo mismo para cualquier margen, así
+        // que el crédito CC y la última línea del titular caían en la MISMA
+        // línea de base. En el reel de tráiler musicCredit es siempre null,
+        // pero el defecto estaba y la atribución es obligatoria.
+        var (_, overlay) = NewService().GenerateVideoReelLayers(
+            Content(), musicCredit: "Música: Hyperfun — Kevin MacLeod · CC BY 4.0");
+
+        var rows = TextPixelsPerRow(overlay);
+        // Tiene que haber una franja SIN texto entre el titular y el crédito
+        var gap = rows.Skip(1400).Take(100).Count(n => n == 0);
+        Assert.True(gap > 10, "el crédito CC quedó encimado con el titular");
+        Assert.True(rows.Skip(1500).Sum() == 0, "el crédito cae bajo la botonera de IG");
+    }
+
+    [Fact]
+    public void VideoReelLayers_HookLayerIsReadableOverAnyFrame()
+    {
+        // El fondo dejó de ser el panel abismo controlado: ahora es un frame
+        // cualquiera del tráiler. Sin scrim, el gancho desaparece sobre una
+        // escena clara — así que la capa tiene que traer el suyo.
+        var (hookPng, _) = NewService().GenerateVideoReelLayers(Content());
+
+        using var bmp = SkiaSharp.SKBitmap.Decode(hookPng);
+        // Arriba de todo, el scrim es casi opaco…
+        Assert.True(bmp.GetPixel(20, 10).Alpha > 200, "falta el scrim superior");
+        // …y hacia el medio ya se disolvió (el video tiene que verse)
+        Assert.True(bmp.GetPixel(20, 900).Alpha < 20, "el scrim superior tapa la banda del tráiler");
     }
 
     /// <summary>Sin fotos que bajar, el renderer nunca pide un HttpClient.</summary>

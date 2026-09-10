@@ -92,6 +92,7 @@ public class NewsRewriteService(
         sb.AppendLine("Devolvé un JSON con exactamente estas claves:");
         sb.AppendLine("""
             {
+              "hook": "3 a 6 PALABRAS para el primer frame del video, en tipografía gigante. Máx 30 caracteres. Nombrá la obra o el hecho concreto — nada de ganchos vacíos tipo 'no vas a creer esto'. Sin punto final. Escribilo normal: el renderer lo pasa a mayúsculas. Ej: 'Jujutsu Kaisen vuelve', 'Free Fire x anime', 'Murió el creador de Berserk'.",
               "headline": "titular original, atractivo, máx ~80 caracteres. Frase completa, SIN puntos suspensivos.",
               "lede": "una sola frase que amplíe el titular, máx ~110 caracteres. Completa, SIN puntos suspensivos.",
               "key_points": ["3 a 5 ideas cortas, autoconclusivas y bien distintas entre sí, máx ~95 caracteres cada una. Cada una es una frase COMPLETA, sin '...' ni recortes. Van en las slides."],
@@ -141,7 +142,8 @@ public class NewsRewriteService(
             .Take(10)
             .ToList();
 
-        return new NewsContent(headline!, Clean(dto.Lede), keyPoints, caption!, hashtags, FromAi: true);
+        return new NewsContent(headline!, Clean(dto.Lede), keyPoints, caption!, hashtags,
+            FromAi: true, Hook: Clean(dto.Hook));
     }
 
     // ── Heuristic fallback (clean, but not a true rewrite) ───────────────────────
@@ -224,6 +226,7 @@ public class NewsRewriteService(
     private static string Truncate(string s, int max) => s.Length <= max ? s : s[..max] + "…";
 
     private sealed record RewriteDto(
+        [property: JsonPropertyName("hook")]       string? Hook,
         [property: JsonPropertyName("headline")]   string? Headline,
         [property: JsonPropertyName("lede")]       string? Lede,
         [property: JsonPropertyName("key_points")] List<string>? KeyPoints,

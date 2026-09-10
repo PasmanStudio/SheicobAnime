@@ -450,16 +450,22 @@ public class AnimeNewsPublisherService(
                 {
                     try
                     {
-                        // Slides informativas para DESPUÉS del tráiler: puntos
-                        // clave + CTA (sin cover — el tráiler es la apertura).
-                        // Sin crédito de música: suena el audio del tráiler.
+                        // Slides informativas para DESPUÉS del tráiler: desde
+                        // sep-2026, SOLO el CTA de cierre (maxKeyPoints: 0 →
+                        // cover + CTA, y el cover se descarta porque el tráiler
+                        // es la apertura). Los puntos clave que iban acá vivían
+                        // en los últimos 10,5 s de un reel con 12 % de retención
+                        // mediana: no los veía nadie, y estirar el video hundía
+                        // la finalización. El contenido no se pierde — el titular
+                        // va quemado sobre el video y el cuerpo entero, en el
+                        // caption. Sin crédito de música: suena el audio del tráiler.
                         var allSlides = await imageService.GenerateReelSlidesAsync(
-                            item, content, images, maxKeyPoints: 2, musicCredit: null, ct: ct);
+                            item, content, images, maxKeyPoints: 0, musicCredit: null, ct: ct);
                         var infoSlides = allSlides.Skip(1).ToList();
 
-                        var (bg, overlay) = imageService.GenerateVideoReelLayers(content);
+                        var (hook, overlay) = imageService.GenerateVideoReelLayers(content);
                         videoBytes = await videoService.GenerateTrailerReelAsync(
-                            clipPath, bg, overlay, infoSlides, candidate!.DurationSeconds,
+                            clipPath, hook, overlay, infoSlides, candidate!.DurationSeconds,
                             candidate.SubtitlesPath, ct);
                         logger.LogInformation("AnimeNews: reel con TRÁILER para \"{Title}\" ({Url}{Subs})",
                             Truncate(item.Title, 60), candidate.Url,
