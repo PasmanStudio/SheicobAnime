@@ -852,6 +852,34 @@ public class NewsRelevanceTests
     }
 
     [Fact]
+    public void HeuristicNewsScore_RejectsBrandMentionsOutsideTheAnimeWorld_RealCase()
+    {
+        // Caso REAL: "ANÁLISIS – Marvel's Wolverine" (feed de Crunchyroll) se
+        // llevó los 8 puntos de crossover por nombrar a Marvel y SALIÓ PUBLICADO
+        // el 10-sep-2026 (run 34493207860). Es una reseña de videojuego, sin
+        // nada de anime. La marca sola no es un cruce.
+        var resenaDeJuego = AnimeNewsPublisherService.HeuristicNewsScore("ANÁLISIS – Marvel's Wolverine");
+        var cruceReal = AnimeNewsPublisherService.HeuristicNewsScore(
+            "Marvel anuncia una colaboración con el anime de My Hero Academia");
+
+        Assert.True(cruceReal > resenaDeJuego,
+            $"el cruce real ({cruceReal}) tiene que ganarle a la reseña de juego ({resenaDeJuego})");
+        Assert.True(resenaDeJuego <= 0, $"la reseña de juego no debería puntuar ({resenaDeJuego})");
+    }
+
+    [Theory]
+    // Con contexto de anime, el cruce cuenta…
+    [InlineData("Star Wars: The Ninth Jedi presenta su serie anime", true)]
+    [InlineData("Free Fire anuncia una colaboración con Attack on Titan", true)]
+    [InlineData("El manga de Fortnite llega en octubre", true)]
+    // …sin él, no
+    [InlineData("ANÁLISIS – Marvel's Wolverine", false)]
+    [InlineData("Se filtró el tráiler de la nueva de Batman", false)]
+    public void MentionsAnimeWorld_GatesTheCrossoverBonus(string title, bool expected)
+        => Assert.Equal(expected, AnimeNewsPublisherService.MentionsAnimeWorld(
+            TrailerDownloadService.Normalize(title)));
+
+    [Fact]
     public void HeuristicNewsScore_DoesNotTreatDistributorsAsCrossovers()
     {
         // "llega a Netflix" es dónde se ve, no un cruce de audiencias. Si contara

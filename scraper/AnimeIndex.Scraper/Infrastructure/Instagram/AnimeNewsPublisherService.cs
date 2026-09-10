@@ -144,11 +144,16 @@ public class AnimeNewsPublisherService(
                 var response = await gemini.GenerateAsync(
                     "Sos el editor jefe de un medio de anime en español para LATAM. De la lista, elegí LA noticia " +
                     "con más potencial de EXPLOTAR (no la más correcta editorialmente). " +
-                    "El criterio que más pesa es el TECHO DE AUDIENCIA: ¿esto le interesa a alguien que NO sigue " +
-                    "anime? Priorizá en este orden: " +
-                    "1) CRUCES con audiencias masivas de afuera del anime — videojuegos (Free Fire, Fortnite, " +
-                    "Roblox, Genshin, League of Legends, Minecraft), franquicias occidentales (Star Wars, Marvel, " +
-                    "DC, LEGO, Netflix, Disney), música pop global, deportes o marcas grandes. " +
+                    "REGLA DURA, antes que cualquier otra cosa: la noticia TIENE que ser de ANIME o MANGA. " +
+                    "Un análisis o reseña de videojuego, una nota de cine occidental o cualquier cosa que solo " +
+                    "MENCIONE una marca grande NO sirve, por más masiva que sea la marca — descartala aunque sea " +
+                    "lo único del pool con una franquicia conocida. " +
+                    "Después de ese filtro, el criterio que más pesa es el TECHO DE AUDIENCIA: ¿esto le interesa " +
+                    "a alguien que NO sigue anime? Priorizá en este orden: " +
+                    "1) CRUCES: una obra de ANIME/MANGA que se une a una audiencia masiva de afuera — " +
+                    "videojuegos (Free Fire, Fortnite, Roblox, Genshin, League of Legends, Minecraft), " +
+                    "franquicias occidentales (Star Wars, Marvel, DC, LEGO), música pop global, deportes o " +
+                    "marcas grandes. El cruce es que la obra de anime SE UNA a eso, no que la marca exista. " +
                     "2) ANUNCIOS DE PESO de las franquicias más masivas (One Piece, Dragon Ball, Naruto, Jujutsu " +
                     "Kaisen, Demon Slayer, Attack on Titan, Chainsaw Man, Solo Leveling, My Hero Academia, " +
                     "Pokémon, Ghibli, Evangelion): estreno confirmado, nueva temporada, película, live-action. " +
@@ -198,7 +203,19 @@ public class AnimeNewsPublisherService(
         // anuncio en el titular— perdía 5 a 6 contra "una novela ligera poco
         // conocida confirma adaptación al anime". Exactamente la inversión que
         // este cambio venía a arreglar.
-        var score = CrossoverWords.Count(t.Contains) * 8;
+        //
+        // PERO solo si la noticia además está EN el mundo del anime. La marca
+        // sola no alcanza: el feed de Crunchyroll trae reseñas de videojuegos, y
+        // "ANÁLISIS – Marvel's Wolverine" se llevó los 8 puntos y salió publicado
+        // el 10-sep-2026 (run 34493207860) — una nota de un juego, sin nada de
+        // anime. El cruce que nos interesa es "una obra de anime SE UNE a esa
+        // franquicia", no "esa franquicia existe".
+        var score = MentionsAnimeWorld(t) ? CrossoverWords.Count(t.Contains) * 8 : 0;
+
+        // Reseñas y análisis: techo de audiencia bajísimo y, en el feed de
+        // Crunchyroll, casi siempre de videojuegos. Penalización explícita para
+        // que no ganen por acumulación de otras palabras.
+        if (ReviewWords.Any(t.Contains)) score -= 6;
 
         // Anuncios grandes / lanzamientos
         score += new[] { "estreno", "estrena", "trailer", "temporada", "pelicula",
@@ -208,13 +225,7 @@ public class AnimeNewsPublisherService(
         score += new[] { "fallec", "muere", "murio", "homenaje", "demanda", "cancel" }
             .Count(t.Contains) * 3;
         // Franquicias enormes / títulos top del momento: empujón extra
-        score += new[] { "one piece", "naruto", "dragon ball", "jujutsu", "chainsaw", "attack on titan",
-                          "shingeki", "demon slayer", "kimetsu", "ghibli", "evangelion",
-                          "black clover", "spy x family", "spy family", "frieren", "solo leveling",
-                          "dandadan", "blue lock", "my hero", "boku no hero", "bleach", "re:zero",
-                          "mushoku tensei", "witch hat", "sword art", "tokyo revengers", "oshi no ko",
-                          "pokemon", "sailor moon", "death note", "hunter x hunter", "fullmetal" }
-            .Count(t.Contains) * 2;
+        score += BigFranchises.Count(t.Contains) * 2;
         // Material audiovisual que el reel puede incrustar (opening/corto/MV)
         score += new[] { "opening", "ending", "video musical", "corto animado" }
             .Count(t.Contains) * 2;
@@ -244,6 +255,45 @@ public class AnimeNewsPublisherService(
         // Señales genéricas de cruce
         "crossover", "colaboracion con", "se une a", "x anime", "anime x",
     ];
+
+    /// <summary>
+    /// ¿El titular está EN el mundo del anime? Es el gate que le falta a la
+    /// marca sola: sin esto, cualquier nota que nombre a Marvel o a Fortnite se
+    /// lleva el bonus de crossover, incluida una reseña de videojuego (caso real
+    /// "ANÁLISIS – Marvel's Wolverine", publicado el 10-sep-2026).
+    ///
+    /// Alcanza con la palabra anime/manga, con el nombre de una franquicia
+    /// conocida, o con un verbo de cruce — porque "Free Fire anuncia una
+    /// colaboración con Attack on Titan" no dice "anime" en ningún lado y
+    /// obviamente sí es el cruce que buscamos. Público estático para tests.
+    /// </summary>
+    public static bool MentionsAnimeWorld(string normalizedText) =>
+        AnimeWorldWords.Any(normalizedText.Contains)
+        || BigFranchises.Any(normalizedText.Contains)
+        || CrossoverVerbs.Any(normalizedText.Contains);
+
+    private static readonly string[] AnimeWorldWords =
+        ["anime", "manga", "manhwa", "otaku", "seiyuu", "mangaka", "studio ghibli", "shonen", "shounen"];
+
+    private static readonly string[] CrossoverVerbs =
+        ["crossover", "colaboracion con", "se une a", "colabora con"];
+
+    // Las mismas franquicias que puntúan abajo, extraídas para poder reusarlas
+    // como señal de contexto.
+    private static readonly string[] BigFranchises =
+    [
+        "one piece", "naruto", "dragon ball", "jujutsu", "chainsaw", "attack on titan",
+        "shingeki", "demon slayer", "kimetsu", "ghibli", "evangelion",
+        "black clover", "spy x family", "spy family", "frieren", "solo leveling",
+        "dandadan", "blue lock", "my hero", "boku no hero", "bleach", "re:zero",
+        "mushoku tensei", "witch hat", "sword art", "tokyo revengers", "oshi no ko",
+        "pokemon", "sailor moon", "death note", "hunter x hunter", "fullmetal",
+    ];
+
+    // Reseñas/análisis: techo bajo, y en el feed de Crunchyroll casi siempre de
+    // videojuegos, no de anime.
+    private static readonly string[] ReviewWords =
+        ["analisis", "resena", "review", "impresiones", "critica"];
 
     /// <summary>
     /// Few-shot con NUESTROS resultados medidos: los titulares que más y menos
