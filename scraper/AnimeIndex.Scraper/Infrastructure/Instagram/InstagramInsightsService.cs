@@ -267,11 +267,21 @@ public class InstagramInsightsService(
     public async Task<List<Dictionary<string, string>>> ExportAccountDailyAsync(
         DateTimeOffset since, CancellationToken ct = default)
     {
-        var metrics = new[] { "follower_count", "reach", "profile_views" };
+        // Restricciones que la API nos dijo textualmente (10-sep-2026):
+        //   "(follower_count) metric only supports querying data for the last
+        //    30 days excluding the current day"
+        //   "The following metrics (profile_views) should be specified with
+        //    parameter metric_type=total_value"
+        // Así que la serie diaria se limita a follower_count + reach, y la
+        // ventana se recorta a los últimos 30 días terminando AYER. Pedir más
+        // atrás no devuelve nada: es un límite de Meta, no del export.
+        var metrics = new[] { "follower_count", "reach" };
         var days = new SortedDictionary<string, Dictionary<string, string>>();
 
-        var cursor = since;
-        var now = DateTimeOffset.UtcNow;
+        var yesterday = DateTimeOffset.UtcNow.Date.AddDays(-1);
+        var earliest = new DateTimeOffset(yesterday.AddDays(-29), TimeSpan.Zero);
+        var cursor = since > earliest ? since : earliest;
+        var now = new DateTimeOffset(yesterday, TimeSpan.Zero);
         while (cursor < now)
         {
             var until = cursor.AddDays(29) > now ? now : cursor.AddDays(29);
