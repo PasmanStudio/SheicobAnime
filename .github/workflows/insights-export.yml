@@ -62,7 +62,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: instagram-insights
-          path: instagram-insights.csv
+          path: |
+            instagram-insights.csv
+            instagram-insights-cuenta-diario.csv
           retention-days: 30
           # Sin esto, un CSV faltante es solo un warning y el job miente en
           # verde: el run 34418605209 exportó 672 piezas y no subió ninguna.

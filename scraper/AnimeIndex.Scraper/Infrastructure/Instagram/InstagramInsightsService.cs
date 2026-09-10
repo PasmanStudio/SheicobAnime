@@ -249,6 +249,86 @@ public class InstagramInsightsService(
         return result;
     }
 
+    /// <summary>
+    /// Insights de CUENTA por día: seguidores nuevos, alcance, visitas al perfil.
+    ///
+    /// Existe porque Meta NO permite medir conversión a seguidores por pieza en
+    /// reels. Verificado contra la API el 10-sep-2026, con este mensaje textual:
+    ///   (#100) The Media Insights API does not support the follows metric
+    ///          for this media product type.
+    /// Lo mismo para profile_visits. En feed sí están, pero el feed produjo
+    /// 1 (un) seguidor en 484 publicaciones, así que la pregunta real —¿los
+    /// reels hacen crecer la cuenta?— solo se puede responder a nivel cuenta:
+    /// serie diaria de seguidores nuevos, cruzada contra lo que se publicó ese día.
+    ///
+    /// La API acepta ventanas de 30 días como máximo por llamada, así que se
+    /// pagina de a 30.
+    /// </summary>
+    public async Task<List<Dictionary<string, string>>> ExportAccountDailyAsync(
+        DateTimeOffset since, CancellationToken ct = default)
+    {
+        var metrics = new[] { "follower_count", "reach", "profile_views" };
+        var days = new SortedDictionary<string, Dictionary<string, string>>();
+
+        var cursor = since;
+        var now = DateTimeOffset.UtcNow;
+        while (cursor < now)
+        {
+            var until = cursor.AddDays(29) > now ? now : cursor.AddDays(29);
+            foreach (var metric in metrics)
+            {
+                var url = $"{BaseUrl}/{settings.IgUserId}/insights"
+                        + $"?metric={metric}&period=day"
+                        + $"&since={cursor.ToUnixTimeSeconds()}&until={until.ToUnixTimeSeconds()}"
+                        + $"&access_token={settings.AccessToken}";
+
+                using var resp = await Http.GetAsync(url, ct);
+                var body = await resp.Content.ReadAsStringAsync(ct);
+                if (!resp.IsSuccessStatusCode)
+                {
+                    logger.LogWarning("Insights cuenta: {Metric} falló ({Status}): {Body}",
+                        metric, (int)resp.StatusCode, Truncate(body, 240));
+                    continue;
+                }
+
+                using var doc = JsonDocument.Parse(body);
+                if (!doc.RootElement.TryGetProperty("data", out var data)) continue;
+                foreach (var m in data.EnumerateArray())
+                {
+                    if (!m.TryGetProperty("values", out var values)) continue;
+                    foreach (var v in values.EnumerateArray())
+                    {
+                        var endTime = Str(v, "end_time");
+                        if (endTime.Length < 10) continue;
+                        var day = endTime[..10];
+                        if (!days.TryGetValue(day, out var row))
+                            days[day] = row = new Dictionary<string, string> { ["fecha"] = day };
+                        if (v.TryGetProperty("value", out var val) && val.TryGetInt64(out var n))
+                            row[metric] = n.ToString(CultureInfo.InvariantCulture);
+                    }
+                }
+            }
+            cursor = until.AddDays(1);
+        }
+
+        logger.LogInformation("Insights: {Count} días de métricas de cuenta", days.Count);
+        return [.. days.Values];
+    }
+
+    public static string AccountCsv(IReadOnlyList<Dictionary<string, string>> rows)
+    {
+        var cols = new List<string> { "fecha" };
+        foreach (var r in rows)
+            foreach (var k in r.Keys)
+                if (!cols.Contains(k)) cols.Add(k);
+
+        var sb = new StringBuilder();
+        sb.AppendLine(string.Join(",", cols));
+        foreach (var r in rows)
+            sb.AppendLine(string.Join(",", cols.Select(c => r.TryGetValue(c, out var v) ? v : "")));
+        return sb.ToString();
+    }
+
     /// <summary>CSV con una fila por pieza. Las columnas de métricas son la unión de todas.</summary>
     public static string ToCsv(IReadOnlyList<MediaRow> rows)
     {
