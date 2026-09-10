@@ -185,19 +185,93 @@ Implementable: en el prompt de selección de "noticia del día para el reel", ag
 
 ---
 
-## 3. Lo que todavía no sabemos
+---
 
-| Pregunta | Cómo responderla |
+## 3. ¿El alcance se convierte en seguidores? Sí — 825 de alcance por seguidor
+
+**Meta no permite medirlo por pieza en reels.** Textual, contra la API real:
+
+```
+(#100) The Media Insights API does not support the follows metric
+       for this media product type.
+(#100) ... does not support the profile_visits metric ...
+```
+
+En feed sí existen esas métricas — y el resultado es demoledor: **484 publicaciones de feed produjeron 1 (un) seguidor** y 16 visitas al perfil. Confirma la sección 2.A desde otro ángulo.
+
+La única vía es a nivel cuenta (`instagram-insights-cuenta-diario.csv`, 29 días, 11-ago → 8-sep):
+
+| | |
 |---|---|
-| **¿Los reels convierten a seguidores?** | `follows` y `profile_visits` ya se agregaron a `ReelMetrics`. La doc de Meta no los lista para REELS, así que el export ahora los pide y **descubre solo** si la API los soporta (degrada métrica por métrica). Falta correr el export con un token válido. |
-| ¿Cuánto del efecto "video real" es el video y cuánto la noticia? | Requiere un experimento: forzar slideshow en noticias que SÍ tienen tráiler, al azar, durante 2 semanas. Caro pero es la única forma de separarlo. |
-| ¿La duración del reel afecta la retención? | El export no trae duración. Se puede sacar de `ig_reels_video_view_total_time / views` vs `ig_reels_avg_watch_time`, o agregarla al pipeline al generar el video. |
-| ¿Por qué agosto tuvo 7× shares? | Vale mirar qué se publicó en agosto que no se publicó en julio/septiembre. Los 5 picos históricos son todos del 30-jul al 30-ago. |
-| ¿El horario de 14h es causal? | Un A/B real: alternar el mismo tipo de noticia entre franjas durante un mes. |
+| Seguidores ganados | **+154** (5,3/día) |
+| Alcance de cuenta | 127.059 |
+| **Alcance necesario por seguidor** | **~825** |
+| Correlación alcance ↔ seguidores nuevos | **rho = +0,67** |
+| Correlación views de reels ↔ seguidores | rho = +0,39 |
+
+Los días de más alcance son los de más seguidores, consistentemente:
+
+| Fecha | Alcance | Seguidores |
+|---|---|---|
+| 30-ago | 12.760 | **19** |
+| 23-ago | 10.580 | 12 |
+| 29-ago | 8.033 | 10 |
+| 21-ago | 1.925 | **0** |
+| 2-sep | 1.623 | 2 |
+
+**Conclusión: el alcance sí compone.** Un reel que hace 30.000 de alcance vale ~36 seguidores. Perseguir picos no es vanidad — es el mecanismo de crecimiento.
+
+Ojo con el límite: `follower_count` **solo admite los últimos 30 días, excluyendo hoy**. No se puede reconstruir historia más atrás. Conviene correr el export una vez por mes para ir acumulando la serie.
 
 ---
 
-## 4. Trampas técnicas ya conocidas
+## 4. Las métricas nuevas (segundo export)
+
+### `reels_skip_rate` — confirma la tesis de retención desde el otro lado
+
+Solo está disponible en **37 de 302 reels** (Meta lo reporta de forma despareja, no depende de la fecha). Pero en esos 37 el patrón es contundente:
+
+| Cuartil | Skip rate (med) | Views (med) | Watch time |
+|---|---|---|---|
+| Q1 (menos skip) | 42 % | **1.365** | 9,4 s |
+| Q2 | 49 % | 1.298 | 5,8 s |
+| Q3 | 57 % | 312 | 4,0 s |
+| Q4 (más skip) | 68 % | **180** | 3,5 s |
+
+**7,6× entre el mejor y el peor cuartil.** La mediana global de skip rate es **55 %**: más de la mitad de la gente pasa de largo. Ese es el número a atacar.
+
+### `reposts` — la señal más limpia de todas
+
+| | n | Views (med) |
+|---|---|---|
+| Reels con ≥1 repost | 112 | **1.632** |
+| Reels con 0 reposts | 190 | 238 |
+
+**6,9×.** 1.031 reposts en total. Junto con shares, confirma que la distribución la hace la gente compartiendo, no el alcance inicial.
+
+### Un canal que estamos dejando sin usar
+
+`crossposted_views` y `facebook_views` fallan con:
+
+> *"El error se produce si crossposted_views o facebook_views se usan en reels que no se incluyeron en publicaciones cruzadas en Facebook."*
+
+O sea: **ningún reel se está publicando también en Facebook.** Es una casilla en la configuración de la cuenta. Alcance adicional gratis, sin producir nada nuevo. Vale la pena probarlo aunque sea un mes.
+
+---
+
+## 5. Lo que todavía no sabemos
+
+| Pregunta | Cómo responderla |
+|---|---|
+| ¿Cuánto del efecto "video real" es el video y cuánto la noticia? | Requiere un experimento: forzar slideshow en noticias que SÍ tienen tráiler, al azar, durante 2 semanas. Caro, pero es la única forma de separarlo. |
+| ¿La duración del reel afecta la retención? | El export no trae duración. Se puede derivar de `ig_reels_video_view_total_time / views` contra `ig_reels_avg_watch_time`, o agregarla al pipeline al generar el video. |
+| ¿Por qué agosto tuvo 7× shares? | Los 5 picos históricos son todos del 30-jul al 30-ago. Vale mirar qué se publicó ahí que no se publicó antes ni después. |
+| ¿El horario de 14h es causal? | Un A/B real: alternar el mismo tipo de noticia entre franjas durante un mes. |
+| ¿Por qué `reels_skip_rate` solo aparece en 37 de 302? | Probablemente un umbral mínimo de reproducciones. No documentado. |
+
+---
+
+## 6. Trampas técnicas ya conocidas
 
 Cosas que costaron corridas y no deberían repetirse:
 
@@ -207,9 +281,30 @@ Cosas que costaron corridas y no deberían repetirse:
 - **La doc de Meta diverge de la realidad**: documenta `error_subcode 33` para falta de permisos y en producción devuelve `code 10`. Verificar contra la API, no contra la doc.
 - **`String.Replace`/`Contains` con `OrdinalIgnoreCase` no pliega acentos.** La `ñ` no matchea la `n`. Esto mató la escalera de búsqueda de tráilers durante ~2 semanas (ver `StripSpanishSuffix`).
 - El CSV se escribe en **UTF-8 con BOM** para que Excel no rompa los acentos.
+- **No decidir "falta permiso" desde una sola respuesta 400.** La primera versión
+  lo hacía y dio un falso positivo: el token TENÍA `instagram_manage_insights`
+  (verificado por `--token-scopes` en el paso anterior del mismo job) pero el 400
+  de una métrica no soportada matcheó la heurística y el export murió en la
+  primera pieza culpando al token. Ahora solo se afirma si **ninguna** métrica
+  funciona ni siquiera pedida de a una.
+- **`follower_count` solo admite los últimos 30 días excluyendo hoy**, y
+  `profile_views` exige `metric_type=total_value` (otra forma de respuesta).
 
 ---
 
-## 5. Resumen de una línea
+## 7. Resumen
 
-> El feed no sirve, el video real duplica todo, el watch time explica el 76 % de la varianza, y el 16 % de los reels produce el 62 % del alcance. La palanca es retención en los primeros segundos; la estrategia es producir más candidatos a explotar, no subir la mediana.
+> El feed no sirve (484 posts = 1 seguidor). El video real duplica todo. El watch
+> time es la variable que manda (rho 0,76). El 16 % de los reels produce el 62 %
+> del alcance. Y el alcance **sí** compone: ~825 de alcance = 1 seguidor nuevo.
+>
+> **La palanca es la retención en los primeros segundos. La estrategia es producir
+> más candidatos a explotar, no subir la mediana.**
+
+### Las 5 acciones, ordenadas
+
+1. **Matar los 2 crons de carrusel** o convertirlos en reels. 62 % del output → 2 % del alcance y 1 seguidor en 4 meses.
+2. **Atacar el skip rate** (mediana 55 %). Primer frame = contenido, sin intro ni placa de titular. Reels más cortos.
+3. **Subir la tasa de reels con video** del 60 %: elegir noticias que tengan video en vez de forzar video donde no hay.
+4. **Activar el crossposting a Facebook.** Está apagado; es alcance gratis.
+5. **Mover el slot de 17h a la franja 13-15h**, que rinde 2× la mediana.

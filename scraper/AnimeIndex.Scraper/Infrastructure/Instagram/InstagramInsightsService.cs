@@ -163,21 +163,41 @@ public class InstagramInsightsService(
         // Meta no lista follows/profile_visits para REELS, pero la única forma
         // seria de saberlo es preguntarle a la API, no a la doc.
         var recovered = new Dictionary<string, long>();
+        var rejected = new List<string>();
         foreach (var m in metrics)
         {
             var one = await RequestMetricsAsync(mediaId, [m], ct);
             if (one is null)
             {
+                rejected.Add(m);
                 if (skip.Add(m))
                     logger.LogInformation(
-                        "Insights: la métrica {Metric} no está soportada para {Type} — se saltea el resto de la corrida",
-                        m, key);
+                        "Insights: la métrica {Metric} no está soportada para {Type} — se saltea el resto de la corrida. Meta dijo: {Error}",
+                        m, key, _lastError);
                 continue;
             }
             foreach (var kv in one) recovered[kv.Key] = kv.Value;
         }
+
+        // Ninguna métrica funcionó, ni siquiera de a una. Eso ya no es "una
+        // métrica rara": es el token. Acá sí se puede afirmar con confianza,
+        // porque se probaron todas por separado.
+        if (recovered.Count == 0 && rejected.Count == metrics.Length && !_permissionChecked)
+        {
+            _permissionChecked = true;
+            throw new InvalidOperationException(
+                "Ninguna métrica de insights funcionó para el media " + mediaId + ". "
+                + "Listar el media anda pero leer métricas no, así que es el token: le falta "
+                + "instagram_manage_insights (Facebook Login) o instagram_business_manage_insights "
+                + "(Instagram Login). Respuesta de Meta: " + _lastError);
+        }
+        _permissionChecked = true;
         return recovered;
     }
+
+    // Último cuerpo de error de la API, para poder contarlo en vez de adivinar.
+    private string _lastError = "";
+    private bool _permissionChecked;
 
     /// <summary>
     /// Pide un conjunto de métricas. Devuelve null si la API rechazó la llamada
@@ -195,28 +215,19 @@ public class InstagramInsightsService(
 
         if (!resp.IsSuccessStatusCode)
         {
-            // El caso que más importa distinguir: token sin permiso de insights.
+            // NO se decide acá si es un problema de permisos.
             //
-            // Meta lo reporta de varias formas según cómo esté autorizada la app.
-            // Comprobado en prod el 9-sep-2026: devuelve
-            //   (#10) Application does not have permission for this action
-            // que viaja como "code":10, NO como el subcode 33 que documenta. Sin
-            // cubrir el 10, el export escupía un warning por CADA pieza (cientos
-            // de líneas) y recién moría al final, escondiendo la causa real.
-            if (body.Contains("error_subcode\":33", StringComparison.Ordinal)
-                || body.Contains("\"code\":10", StringComparison.Ordinal)
-                || body.Contains("does not have permission", StringComparison.OrdinalIgnoreCase)
-                || body.Contains("manage_insights", StringComparison.OrdinalIgnoreCase))
-            {
-                throw new InvalidOperationException(
-                    "El token de Instagram NO tiene permiso de insights. Listar el media funciona, "
-                    + "leer métricas no: son scopes distintos. Hay que re-autorizar la app agregando "
-                    + "instagram_manage_insights (Facebook Login) o instagram_business_manage_insights "
-                    + "(Instagram Login), y regenerar el secret INSTAGRAM_ACCESS_TOKEN.");
-            }
-            // No es un problema de permisos: probablemente una métrica no
-            // soportada para este tipo. Se devuelve null para que el llamador
-            // degrade a pedirlas de a una.
+            // La primera versión lo hacía y dio un falso positivo (run
+            // 34428545476): el token TENÍA instagram_manage_insights —
+            // verificado por --token-scopes en el paso anterior — pero el 400 de
+            // una métrica no soportada matcheó la heurística de "sin permiso" y
+            // el export murió en la primera pieza culpando al token.
+            //
+            // Un 400 acá puede ser cualquiera de las dos cosas y desde una sola
+            // respuesta no se distinguen bien. Quien puede distinguirlas es
+            // FetchMetricsAsync: si NINGUNA métrica funciona ni siquiera pedida
+            // de a una, es el token; si algunas andan, era la métrica.
+            _lastError = Truncate(body, 400);
             return null;
         }
 
@@ -236,6 +247,96 @@ public class InstagramInsightsService(
             }
         }
         return result;
+    }
+
+    /// <summary>
+    /// Insights de CUENTA por día: seguidores nuevos, alcance, visitas al perfil.
+    ///
+    /// Existe porque Meta NO permite medir conversión a seguidores por pieza en
+    /// reels. Verificado contra la API el 10-sep-2026, con este mensaje textual:
+    ///   (#100) The Media Insights API does not support the follows metric
+    ///          for this media product type.
+    /// Lo mismo para profile_visits. En feed sí están, pero el feed produjo
+    /// 1 (un) seguidor en 484 publicaciones, así que la pregunta real —¿los
+    /// reels hacen crecer la cuenta?— solo se puede responder a nivel cuenta:
+    /// serie diaria de seguidores nuevos, cruzada contra lo que se publicó ese día.
+    ///
+    /// La API acepta ventanas de 30 días como máximo por llamada, así que se
+    /// pagina de a 30.
+    /// </summary>
+    public async Task<List<Dictionary<string, string>>> ExportAccountDailyAsync(
+        DateTimeOffset since, CancellationToken ct = default)
+    {
+        // Restricciones que la API nos dijo textualmente (10-sep-2026):
+        //   "(follower_count) metric only supports querying data for the last
+        //    30 days excluding the current day"
+        //   "The following metrics (profile_views) should be specified with
+        //    parameter metric_type=total_value"
+        // Así que la serie diaria se limita a follower_count + reach, y la
+        // ventana se recorta a los últimos 30 días terminando AYER. Pedir más
+        // atrás no devuelve nada: es un límite de Meta, no del export.
+        var metrics = new[] { "follower_count", "reach" };
+        var days = new SortedDictionary<string, Dictionary<string, string>>();
+
+        var yesterday = DateTimeOffset.UtcNow.Date.AddDays(-1);
+        var earliest = new DateTimeOffset(yesterday.AddDays(-29), TimeSpan.Zero);
+        var cursor = since > earliest ? since : earliest;
+        var now = new DateTimeOffset(yesterday, TimeSpan.Zero);
+        while (cursor < now)
+        {
+            var until = cursor.AddDays(29) > now ? now : cursor.AddDays(29);
+            foreach (var metric in metrics)
+            {
+                var url = $"{BaseUrl}/{settings.IgUserId}/insights"
+                        + $"?metric={metric}&period=day"
+                        + $"&since={cursor.ToUnixTimeSeconds()}&until={until.ToUnixTimeSeconds()}"
+                        + $"&access_token={settings.AccessToken}";
+
+                using var resp = await Http.GetAsync(url, ct);
+                var body = await resp.Content.ReadAsStringAsync(ct);
+                if (!resp.IsSuccessStatusCode)
+                {
+                    logger.LogWarning("Insights cuenta: {Metric} falló ({Status}): {Body}",
+                        metric, (int)resp.StatusCode, Truncate(body, 240));
+                    continue;
+                }
+
+                using var doc = JsonDocument.Parse(body);
+                if (!doc.RootElement.TryGetProperty("data", out var data)) continue;
+                foreach (var m in data.EnumerateArray())
+                {
+                    if (!m.TryGetProperty("values", out var values)) continue;
+                    foreach (var v in values.EnumerateArray())
+                    {
+                        var endTime = Str(v, "end_time");
+                        if (endTime.Length < 10) continue;
+                        var day = endTime[..10];
+                        if (!days.TryGetValue(day, out var row))
+                            days[day] = row = new Dictionary<string, string> { ["fecha"] = day };
+                        if (v.TryGetProperty("value", out var val) && val.TryGetInt64(out var n))
+                            row[metric] = n.ToString(CultureInfo.InvariantCulture);
+                    }
+                }
+            }
+            cursor = until.AddDays(1);
+        }
+
+        logger.LogInformation("Insights: {Count} días de métricas de cuenta", days.Count);
+        return [.. days.Values];
+    }
+
+    public static string AccountCsv(IReadOnlyList<Dictionary<string, string>> rows)
+    {
+        var cols = new List<string> { "fecha" };
+        foreach (var r in rows)
+            foreach (var k in r.Keys)
+                if (!cols.Contains(k)) cols.Add(k);
+
+        var sb = new StringBuilder();
+        sb.AppendLine(string.Join(",", cols));
+        foreach (var r in rows)
+            sb.AppendLine(string.Join(",", cols.Select(c => r.TryGetValue(c, out var v) ? v : "")));
+        return sb.ToString();
     }
 
     /// <summary>CSV con una fila por pieza. Las columnas de métricas son la unión de todas.</summary>

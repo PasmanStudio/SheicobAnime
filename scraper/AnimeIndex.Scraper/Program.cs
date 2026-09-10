@@ -483,6 +483,29 @@ if (args.Contains("--insights"))
             AnimeIndex.Scraper.Infrastructure.Instagram.InstagramInsightsService.ToCsv(rows),
             new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
 
+        // Segundo CSV: métricas de CUENTA por día. Es la única forma de medir si
+        // los reels traen seguidores — Meta no expone `follows` por pieza para
+        // reels (ver ExportAccountDailyAsync).
+        try
+        {
+            var daily = await insights.ExportAccountDailyAsync(DateTimeOffset.UtcNow.AddDays(-days));
+            if (daily.Count > 0)
+            {
+                var dailyPath = Path.Combine(
+                    Path.GetDirectoryName(outPath) ?? ".",
+                    Path.GetFileNameWithoutExtension(outPath) + "-cuenta-diario.csv");
+                await File.WriteAllTextAsync(dailyPath,
+                    AnimeIndex.Scraper.Infrastructure.Instagram.InstagramInsightsService.AccountCsv(daily),
+                    new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
+                Console.WriteLine($"OK -> {dailyPath} ({daily.Count} días)");
+            }
+        }
+        catch (Exception ex)
+        {
+            // Best effort: el CSV por pieza ya está escrito y es lo principal.
+            Console.Error.WriteLine($"AVISO: no se pudieron traer las métricas de cuenta: {ex.Message}");
+        }
+
         var reels = rows.Count(r => r.ProductType.Equals("REELS", StringComparison.OrdinalIgnoreCase));
         Console.WriteLine($"OK -> {outPath}");
         Console.WriteLine($"   {rows.Count} piezas ({reels} reels, {rows.Count - reels} feed) de los ultimos {days} dias");
