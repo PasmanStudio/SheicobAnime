@@ -53,7 +53,7 @@ jobs:
       - name: Exportar
         run: |
           dotnet run --project scraper/AnimeIndex.Scraper --no-build -c Release -- \
-            --insights "${{ inputs.days || '90' }}" instagram-insights.csv
+            --insights "${{ inputs.days || '90' }}" "$GITHUB_WORKSPACE/instagram-insights.csv"
         env:
           Instagram__AccessToken: ${{ secrets.INSTAGRAM_ACCESS_TOKEN }}
           Instagram__IgUserId: ${{ secrets.INSTAGRAM_IG_USER_ID }}
@@ -64,3 +64,9 @@ jobs:
           name: instagram-insights
           path: instagram-insights.csv
           retention-days: 30
+          # Sin esto, un CSV faltante es solo un warning y el job miente en
+          # verde: el run 34418605209 exportó 672 piezas y no subió ninguna.
+          # `dotnet run --project` usa el directorio del PROYECTO como working
+          # dir, no la raíz del repo, así que el CSV quedaba en
+          # scraper/AnimeIndex.Scraper/ y esto lo buscaba en la raíz.
+          if-no-files-found: error

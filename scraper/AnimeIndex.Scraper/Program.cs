@@ -445,8 +445,12 @@ if (args.Contains("--insights"))
             return;
         }
 
+        // UTF-8 CON BOM a propósito: los captions traen emojis y acentos, y Excel
+        // abre un CSV sin BOM en la codificación local — los títulos en español
+        // salen con símbolos raros. El BOM se lo dice explícitamente.
         await File.WriteAllTextAsync(outPath,
-            AnimeIndex.Scraper.Infrastructure.Instagram.InstagramInsightsService.ToCsv(rows));
+            AnimeIndex.Scraper.Infrastructure.Instagram.InstagramInsightsService.ToCsv(rows),
+            new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
 
         var reels = rows.Count(r => r.ProductType.Equals("REELS", StringComparison.OrdinalIgnoreCase));
         Console.WriteLine($"OK -> {outPath}");

@@ -192,7 +192,7 @@ public class InstagramInsightsService(
                 r.Timestamp.UtcDateTime.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture),
                 art.Hour.ToString(CultureInfo.InvariantCulture),
                 r.Permalink,
-                Csv(Truncate(r.Caption.ReplaceLineEndings(" "), 90)),
+                Csv(TruncateText(r.Caption.ReplaceLineEndings(" "), 90)),
             };
             cells.AddRange(metricNames.Select(m =>
                 r.Metrics.TryGetValue(m, out var v) ? v.ToString(CultureInfo.InvariantCulture) : ""));
@@ -206,6 +206,23 @@ public class InstagramInsightsService(
 
     private static string Str(JsonElement e, string prop) =>
         e.TryGetProperty(prop, out var v) ? v.GetString() ?? "" : "";
+
+    /// <summary>
+    /// Corta sin partir un emoji al medio.
+    ///
+    /// `s[..max]` a secas rompió el export del 10-sep-2026 con
+    /// EncoderFallbackException sobre \uD83D: los captions de Instagram están
+    /// llenos de emojis, que en UTF-16 son PARES de char. Cortar justo entre
+    /// los dos deja un surrogate huérfano, que no es texto válido y explota
+    /// recién al codificar el archivo — a 785 piezas de terminar.
+    /// </summary>
+    private static string TruncateText(string s, int max)
+    {
+        if (string.IsNullOrEmpty(s) || s.Length <= max) return s ?? string.Empty;
+        // Si el corte cae sobre un high surrogate, su par quedó afuera: retroceder uno.
+        var cut = char.IsHighSurrogate(s[max - 1]) ? max - 1 : max;
+        return s[..cut];
+    }
 
     private static string Truncate(string s, int max) =>
         string.IsNullOrEmpty(s) ? "" : (s.Length <= max ? s : s[..max]);
