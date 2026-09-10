@@ -206,11 +206,14 @@ public class InstagramVideoService(
             }
 
             // Cuánto tráiler mostrar: lo disponible tras saltear la intro, capado
-            // por settings y por el techo duro del reel. El techo bajó de 59s a
-            // 45s (sep-2026): con 12 % de retención mediana el espectador
-            // abandonaba en el segundo 7 de 55, así que la cola larga no la veía
-            // nadie y en cambio hundía la finalización y el loop.
-            var maxForBudget = 45.0 - slidePaths.Count * InfoSlideSeconds;
+            // por settings y por el techo duro del reel.
+            //
+            // 120 s de techo: la idea es que el tráiler se vea ENTERO (ver
+            // TrailerClipSeconds — cortarlo le pone un techo al watch time, que es
+            // lo único que correlaciona con views). Sigue habiendo un tope porque
+            // PickBestSearchResult acepta videos de hasta 6 min y un "tráiler" de
+            // 6 minutos es un compilado, no un PV.
+            var maxForBudget = 120.0 - slidePaths.Count * InfoSlideSeconds;
             var available = trailerDurationSeconds > startSkip + 4
                 ? trailerDurationSeconds - startSkip
                 : settings.TrailerClipSeconds;   // duración desconocida → usar el cap

@@ -205,8 +205,12 @@ Ideas para testear (no medidas todavía):
 > Lo que sí sobra son los **10,5 s de slides estáticas al final**: con 12 % de
 > retención el espectador mediano abandona en el segundo 7 de 55, así que esas
 > slides no las ve casi nadie y en cambio destruyen la finalización y matan el
-> *loop* (que IG cuenta como reproducción nueva). El objetivo correcto es **~30 s**
-> (`TrailerClipSeconds` 45 → 25-28 y 1 sola info slide), no 8.
+> *loop* (que IG cuenta como reproducción nueva). Eso se resolvió dejando 1 sola
+> info slide.
+>
+> **Corrección posterior (10-sep-2026): acortar el TRÁILER también era un error**
+> — ver §8.3. El argumento de arriba llevado hasta el final dice que el tráiler
+> tiene que ir entero, no recortado a 26 s.
 >
 > **La palanca limpia e independiente de la duración es `reels_skip_rate`** — se
 > mide en los primeros segundos. Mediana 55 %, y 7,6× entre el mejor y el peor
@@ -452,8 +456,8 @@ views. Antes de tocar nada, así era un reel de tráiler:
 
 | | Antes | Ahora |
 |---|---|---|
-| Duración total | 55,5 s (45 tráiler + 3 slides) | **29,5 s** (26 + 1 slide) |
-| Retención implícita | 6,9 s / 55,5 s = **12 %** | 6,9 s / 29,5 s = **23 %** |
+| Cola muerta al final | 3 slides estáticas (10,5 s) | **1** (solo el CTA, 3,5 s) |
+| Tráiler | hasta 45 s | **hasta 90 s** (que se vea entero — ver §8.3) |
 | Video en pantalla | banda de 900 px sobre panel abismo = **47 %** | **100 %** (banda nítida + relleno desenfocado) |
 | Texto en el frame 0 | ninguno (aparecía a los ~1,4 s) | el **gancho**, completo |
 | Salteo del arranque | 1,5 s fijos | 12 % de la duración (1,5–6 s) |
@@ -486,13 +490,32 @@ Kentaro Miura", no las primeras N palabras a ciegas.
 Las dos capas traen su propio scrim: el fondo dejó de ser el panel abismo
 controlado y pasó a ser un frame cualquiera del tráiler.
 
-### 8.3 Duración a ~30 s y salteo proporcional
+### 8.3 Duración: el tráiler entero, sin la cola muerta
 
-`TrailerClipSeconds` 45 → **26**, y las slides finales pasaron de 3 a **1** (solo
-el CTA): los puntos clave vivían en los últimos 10,5 s de un reel con 12 % de
-retención, o sea que no los veía nadie mientras hundían la finalización y el
-loop. No se pierde contenido — el titular va quemado sobre el video y el cuerpo
-entero está en el caption.
+**Las slides finales pasaron de 3 a 1** (solo el CTA). Los puntos clave vivían en
+los últimos 10,5 s de un reel con 12 % de retención, o sea que no los veía nadie
+mientras hundían la finalización y el loop. No se pierde contenido — el titular
+va quemado sobre el video y el cuerpo entero está en el caption.
+
+**El TRÁILER, en cambio, va entero: `TrailerClipSeconds` = 90.** Este número dio
+dos vueltas y la segunda corrige un error propio: primero se bajó de 45 a 26
+buscando subir la finalización, y el 10-sep-2026 se subió a 90 por decisión del
+usuario. Ganó el mismo argumento que ya habíamos usado para rechazar "acortar a
+8 s", solo que llevado hasta el final: `ig_reels_avg_watch_time` está **acotado
+por la duración**, así que recortar el tráiler le pone un techo a la única
+métrica que correlaciona con views (rho 0,76).
+
+El detalle que decide: **acortar NO recupera watch time.** Quien abandona en el
+segundo 7 lo abandona igual dure 26 o 90 — la curva de caída no cambia. Lo único
+que cambia es el techo: con 26 s, el espectador enganchado que habría mirado 40 s
+mira 26. Y en un negocio de cola larga (el top 10 se lleva el 39 % de las views)
+ese espectador enganchado es justo el que comparte. Recortarle el video para
+mejorar un promedio es el trade-off equivocado.
+
+Lo que sí se paga: tasa de finalización y loop, que IG cuenta como reproducción
+nueva. Costo real y asumido. Lo que hay que vigilar en el próximo export es
+`reels_skip_rate` (que no depende de la duración) y el watch time absoluto — si
+el watch time sube con el tráiler largo, la decisión fue correcta.
 
 `TrailerStartSkip` era la constante 1,5 s; ahora es el 12 % de la duración con
 piso 1,5 y techo 6. Los PV oficiales abren con logos de distribuidora que duran
@@ -555,6 +578,45 @@ Ojo con la fuerza de esa evidencia: el run 3 tenía otro pool (la nota de Marvel
 ya estaba consumida), así que **no es un A/B controlado del fix**. Lo que
 verifica el fix es el test de regresión con el titular real; el run 3 solo
 confirma que nada más se rompió.
+
+⚠️ **Las duraciones de 29,5 s de la tabla son de ANTES de subir
+`TrailerClipSeconds` a 90** (§8.3). Con el valor actual, un tráiler de 60 s sale
+como un reel de ~63,5 s. Las corridas siguen sirviendo para lo que verificaron
+—que la duración calculada coincide con la renderizada, que el salteo es
+proporcional y que el tiempo de corrida está lejos del cap— pero el número
+absoluto ya no aplica.
+
+### 8.5.1 El caption que salió pobre, y por qué
+
+El reel de *Witch on the Holy Night* se terminó borrando a mano: el caption tenía
+dos renglones y cerraba con *"Te lo contamos completo en SheicobAnime"* sin nada
+detrás. Causa, del log:
+
+```
+Gemini blocked the prompt: PROHIBITED_CONTENT
+→ AiRewrite: rewrite failed — using heuristic
+```
+
+El filtro de seguridad de Gemini dio un **falso positivo** sobre una noticia de
+anime perfectamente normal, así que el caption lo escribió `BuildHeuristic`. Y
+ese fallback tenía dos defectos que venían de antes y recién ahí se vieron:
+
+1. **Arrancaba a leer el artículo desde el párrafo 3**, para "no repetir las
+   slides". Con un artículo de 3 párrafos, el caption quedaba siendo SOLO el
+   lede. Peor todavía desde el sprint 2: el reel de tráiler ya no lleva slides de
+   puntos clave, así que esos párrafos no se muestran en ningún lado — saltearlos
+   era tirar la única información que teníamos. Ahora recorre todo el artículo y
+   corta por presupuesto de caracteres, no por índice.
+2. **Prometía una nota que no existe.** SheicobAnime es un índice de series, no
+   un medio: no hay artículo que leer, y el original es de la fuente, que por
+   regla no acreditamos. Quien tocaba "link en la bio" buscando la nota completa
+   no encontraba nada. El cierre ahora invita a comentar, que es lo que sí
+   podemos cumplir — y de paso es señal de ranking.
+
+Y la causa raíz: un bloqueo de seguridad ahora **reintenta en el modelo de
+respaldo** (Gemma tiene otros umbrales), igual que ya se hacía con el 429 de
+cuota. La diferencia entre que el modelo conteste o no es un caption editorial
+completo contra el heurístico pelado.
 
 ### 8.6 Lo que quedó pendiente
 
@@ -679,7 +741,7 @@ para confirmar que las columnas `profile_views` y `reach_follower` /
 caption invertido hacia el share · los 7 crons a reel (y de paso la franja 13-15).
 
 **Sprint 2 — hecho (§8).** Full-bleed con fondo desenfocado · gancho desde el
-frame 0 · duración a ~30 s · salteo proporcional del arranque. Pendiente ahí: el
+frame 0 · tráiler entero sin cola muerta · salteo proporcional del arranque. Pendiente ahí: el
 cierre en loop, que es una decisión de contenido (§8.6).
 
 **Sprint 3 — hecho (§9).** Selección por techo de audiencia + crossovers en la

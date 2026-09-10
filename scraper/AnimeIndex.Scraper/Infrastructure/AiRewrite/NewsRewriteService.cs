@@ -165,23 +165,39 @@ public class NewsRewriteService(
             if (!string.IsNullOrWhiteSpace(s) && s!.Length >= 20) keyPoints.Add(s!);
         }
 
-        // Caption = cuerpo un poco más completo que las slides, sin dumpear el
-        // artículo entero ni su chrome: el lede + hasta 2 frases de contexto de
-        // párrafos POSTERIORES (los que NO se usaron como key points), así el texto
-        // del post no es idéntico a lo que ya se ve en las imágenes. La profundidad
-        // real (reescritura con más contexto) la aporta la IA; esto es el fallback
-        // cuando no hay API key o se agotó la cuota.
+        // Caption = el cuerpo de la noticia, lo más completo que dé el artículo.
+        //
+        // Antes arrancaba en el párrafo 3 para "no repetir lo que ya se ve en las
+        // slides", y eso lo dejaba anémico: con un artículo de 3 párrafos el
+        // caption terminaba siendo SOLO el lede. Además desde sep-2026 el reel de
+        // tráiler ya no lleva slides de puntos clave (maxKeyPoints: 0), así que
+        // esos párrafos no se muestran en ningún lado — saltearlos era tirar la
+        // única información que teníamos. Caso real: "Witch on the Holy Night"
+        // (10-sep-2026), donde Gemini bloqueó el rewrite por un falso positivo de
+        // seguridad y el post salió con dos renglones.
+        //
+        // Se recorre TODO el artículo desde el párrafo 1 y se corta por
+        // presupuesto de caracteres, no por índice.
         var caption = new StringBuilder();
         if (!string.IsNullOrWhiteSpace(lede)) caption.Append(lede);
-        for (var i = 3; i < paragraphs.Count && caption.Length < 600; i++)
+        for (var i = 1; i < paragraphs.Count && caption.Length < 1200; i++)
         {
-            var s = FirstSentence(paragraphs[i], 160);
+            var s = FirstSentence(paragraphs[i], 220);
             if (string.IsNullOrWhiteSpace(s) || s!.Length < 25) continue;
+            // Sin repetir el lede ni una frase ya incluida
+            if (caption.ToString().Contains(s!, StringComparison.OrdinalIgnoreCase)) continue;
             if (caption.Length > 0 && caption[^1] is not ('.' or '!' or '?')) caption.Append('.');
             caption.Append("\n\n").Append(s);
         }
         if (caption.Length > 0 && caption[^1] is not ('.' or '!' or '?')) caption.Append('.');
-        caption.Append("\n\n¿Qué opinás? Te lo contamos completo en SheicobAnime.");
+
+        // Cierre SIN promesa falsa. "Te lo contamos completo en SheicobAnime"
+        // prometía una nota que no existe: el sitio es un índice de series, no un
+        // medio, y el artículo original es de la fuente —que por regla no
+        // acreditamos—. Quien tocaba "link en la bio" buscando la nota completa
+        // no encontraba nada. Ahora se cierra invitando a comentar, que es lo que
+        // sí podemos cumplir y además es señal de ranking.
+        caption.Append("\n\n¿Qué opinás? Contanos en los comentarios 👇");
 
         return new NewsContent(item.Title.Trim(), lede, keyPoints, caption.ToString(), [], FromAi: false);
     }

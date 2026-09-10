@@ -106,12 +106,26 @@ public class GeminiClient(
         {
             return await FallbackAsync(systemInstruction, userPrompt, useWebSearch, quota, ct);
         }
+        catch (GeminiBlockedException blocked)
+        {
+            // Falso positivo del filtro de seguridad sobre una noticia de anime
+            // normal. Gemma tiene otros umbrales, así que lo que un modelo
+            // bloquea el otro suele escribirlo — y la diferencia entre que
+            // conteste o no es un caption editorial completo contra el heurístico
+            // pelado (caso real "Witch on the Holy Night", 10-sep-2026).
+            logger.LogWarning(
+                "Gemini {Model} bloqueó el prompt por seguridad — reintento en el modelo de respaldo. {Reason}",
+                settings.Model, blocked.Message);
+            return await FallbackAsync(systemInstruction, userPrompt, useWebSearch, blocked, ct);
+        }
     }
 
     /// <summary>
-    /// Reintento en el modelo de respaldo (Gemma: cuota separada, sin grounding).
-    /// Sin fallback utilizable se propaga el 429 ORIGINAL —con el cuerpo que
-    /// devolvió la API— en vez de una excepción nueva que lo tape.
+    /// Reintento en el modelo de respaldo (Gemma: cuota separada, otros umbrales
+    /// de seguridad, sin grounding). Lo disparan tanto el 429 de cuota como un
+    /// bloqueo del filtro de seguridad. Sin fallback utilizable se propaga la
+    /// excepción ORIGINAL —con el cuerpo que devolvió la API— en vez de una nueva
+    /// que la tape.
     /// </summary>
     private async Task<GeminiResult> FallbackAsync(
         string systemInstruction, string userPrompt, bool useWebSearch,
@@ -122,7 +136,8 @@ public class GeminiClient(
             throw original;
 
         var fallback = _resolvedFallback ?? settings.FallbackModel;
-        logger.LogWarning("Gemini {Model} sin cuota (429) — fallback a {Fallback}", settings.Model, fallback);
+        logger.LogWarning("Gemini {Model} no pudo responder — fallback a {Fallback}. Causa: {Causa}",
+            settings.Model, fallback, original.Message);
         try
         {
             return new GeminiResult(
@@ -282,6 +297,19 @@ public class GeminiClient(
     /// <summary>404: el modelo no existe (Google lo renombró/retiró) — dispara el descubrimiento.</summary>
     private sealed class GeminiModelNotFoundException(string message) : InvalidOperationException(message);
 
+    /// <summary>
+    /// El filtro de seguridad de Gemini rechazó el prompt. NO es un error nuestro
+    /// ni de cuota: es un falso positivo del clasificador sobre una noticia de
+    /// anime perfectamente normal. Caso real del 10-sep-2026: "La película Witch
+    /// on the Holy Night anuncia su estreno mundial" → PROHIBITED_CONTENT, y el
+    /// reel salió con el caption pobre del heurístico.
+    ///
+    /// Vale la pena reintentar en el modelo de respaldo porque Gemma tiene otros
+    /// umbrales de seguridad, así que lo que un modelo bloquea el otro suele
+    /// escribirlo sin problema.
+    /// </summary>
+    private sealed class GeminiBlockedException(string message) : InvalidOperationException(message);
+
     /// <summary>Pulls candidates[0].content.parts[*].text out of the Gemini response envelope.</summary>
     private static string ExtractText(string responseBody)
     {
@@ -290,7 +318,7 @@ public class GeminiClient(
 
         if (root.TryGetProperty("promptFeedback", out var fb)
             && fb.TryGetProperty("blockReason", out var reason))
-            throw new InvalidOperationException($"Gemini blocked the prompt: {reason.GetString()}");
+            throw new GeminiBlockedException($"Gemini blocked the prompt: {reason.GetString()}");
 
         if (!root.TryGetProperty("candidates", out var candidates) || candidates.GetArrayLength() == 0)
             throw new InvalidOperationException("Gemini returned no candidates");
