@@ -880,6 +880,22 @@ public class NewsRelevanceTests
             TrailerDownloadService.Normalize(title)));
 
     [Fact]
+    public void HeuristicNewsScore_DemotesOtherRegionNews_RealCase()
+    {
+        // Caso REAL: "[España] Studio Ghibli protagoniza una actividad del
+        // programa Toma la palabra" salió publicado el 10-sep-2026 (run
+        // 34496989827). Un evento de TV española que no le interesa a nadie en
+        // México ni en Argentina, pero pasaba el gate de anime por nombrar a
+        // Ghibli. La cuenta apunta a toda LATAM.
+        var regional = AnimeNewsPublisherService.HeuristicNewsScore(
+            "[España] Studio Ghibli protagoniza una actividad del programa Toma la palabra");
+        var latam = AnimeNewsPublisherService.HeuristicNewsScore(
+            "Studio Ghibli anuncia una nueva película para 2027");
+
+        Assert.True(latam > regional, $"LATAM ({latam}) tiene que ganarle a la regional ({regional})");
+    }
+
+    [Fact]
     public void HeuristicNewsScore_DoesNotTreatDistributorsAsCrossovers()
     {
         // "llega a Netflix" es dónde se ve, no un cruce de audiencias. Si contara

@@ -517,6 +517,15 @@ nueva. Costo real y asumido. Lo que hay que vigilar en el próximo export es
 `reels_skip_rate` (que no depende de la duración) y el watch time absoluto — si
 el watch time sube con el tráiler largo, la decisión fue correcta.
 
+**Y se paga tiempo de render.** Verificado localmente con un tráiler sintético de
+60 s (que da un reel de 57,5 s): el render pasó de ~50 s a **166 s**. Con el cap
+de 90 s serían ~280 s de ffmpeg, y el job de `news-cron` topea a 12 minutos.
+Por eso el preset de x264 bajó de `medium` a **`fast`**: medido, **113 s contra
+166 s (−32 %)**, con el mismo tamaño de salida — el bitrate está fijado en 6 Mbps,
+así que el preset no mueve el peso, solo la eficiencia de compresión, y a esa tasa
+sobre 1080×1920 la diferencia es imperceptible. Deja el peor caso en ~6,5 min de
+job contra el cap de 12.
+
 `TrailerStartSkip` era la constante 1,5 s; ahora es el 12 % de la duración con
 piso 1,5 y techo 6. Los PV oficiales abren con logos de distribuidora que duran
 3-6 s: en un tráiler de 90 s, saltearse solo 1,5 s era regalarle el arranque del

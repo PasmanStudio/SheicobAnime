@@ -159,6 +159,9 @@ public class AnimeNewsPublisherService(
                     "Pokémon, Ghibli, Evangelion): estreno confirmado, nueva temporada, película, live-action. " +
                     "3) Noticias de peso real: fallecimientos de figuras grandes, polémicas fuertes, hitos " +
                     "históricos de estudios. " +
+                    "La audiencia es LATAM: una noticia marcada como de otra región (ej. un titular que " +
+                    "arranca con \"[España]\") o un evento local de un solo país tiene techo casi nulo — " +
+                    "elegila solo si no hay nada mejor en el pool. " +
                     "Un estreno de nicho, por bueno que sea, tiene techo bajo — no lo elijas por sobre lo anterior. " +
                     "A igual peso, preferí noticias con material audiovisual oficial (anuncio de tráiler, " +
                     "teaser, nueva temporada o película, opening/ending o video musical, corto o video " +
@@ -216,6 +219,16 @@ public class AnimeNewsPublisherService(
         // Crunchyroll, casi siempre de videojuegos. Penalización explícita para
         // que no ganen por acumulación de otras palabras.
         if (ReviewWords.Any(t.Contains)) score -= 6;
+
+        // Noticias marcadas como de OTRA región. El feed en español de
+        // Crunchyroll prefija los items regionales, y la cuenta apunta a toda
+        // LATAM: "[España] Studio Ghibli protagoniza una actividad del programa
+        // Toma la palabra" es un evento de TV española que no le interesa a
+        // nadie en México ni en Argentina — pero pasaba el gate de anime por
+        // nombrar a Ghibli y salió publicado el 10-sep-2026 (run 34496989827).
+        // Penalización, no exclusión: un "[España] Crunchyroll anuncia..." puede
+        // ser relevante igual si el resto del titular pesa.
+        if (OtherRegionTags.Any(t.Contains)) score -= 6;
 
         // Anuncios grandes / lanzamientos
         score += new[] { "estreno", "estrena", "trailer", "temporada", "pelicula",
@@ -294,6 +307,11 @@ public class AnimeNewsPublisherService(
     // videojuegos, no de anime.
     private static readonly string[] ReviewWords =
         ["analisis", "resena", "review", "impresiones", "critica"];
+
+    // Prefijos de región del feed en español de Crunchyroll. La cuenta es para
+    // toda LATAM, así que un evento local español tiene techo casi nulo.
+    private static readonly string[] OtherRegionTags =
+        ["[espana]", "[esp]", "(espana)"];
 
     /// <summary>
     /// Few-shot con NUESTROS resultados medidos: los titulares que más y menos

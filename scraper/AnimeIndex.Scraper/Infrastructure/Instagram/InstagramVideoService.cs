@@ -345,7 +345,10 @@ public class InstagramVideoService(
             $"-filter_complex \"{string.Join(';', filters)}\"",
             "-map [v] -map [a]",
             $"-t {totalArg} -r {Fps}",
-            "-c:v libx264 -profile:v high -preset medium -flags +cgop -g 60 -sc_threshold 0",
+            // preset "fast" y no "medium": desde que el tráiler va entero (hasta 90 s) el
+            // render creció ~3×, y a 6 Mbps sobre 1080×1920 la diferencia de calidad
+            // entre los dos presets es imperceptible mientras que la de tiempo no lo es.
+            "-c:v libx264 -profile:v high -preset fast -flags +cgop -g 60 -sc_threshold 0",
             "-b:v 6M -maxrate 8M -bufsize 12M",
             "-c:a aac -b:a 128k -ar 44100",
             "-movflags +faststart",
@@ -491,7 +494,10 @@ public class InstagramVideoService(
             $"-filter_complex \"{string.Join(';', filters)}{audioFilter}\"",
             $"-map [v] {audioMap}",
             $"-t {durArg} -r {Fps}",
-            "-c:v libx264 -profile:v high -preset medium -flags +cgop -g 60 -sc_threshold 0",
+            // preset "fast" y no "medium": desde que el tráiler va entero (hasta 90 s) el
+            // render creció ~3×, y a 6 Mbps sobre 1080×1920 la diferencia de calidad
+            // entre los dos presets es imperceptible mientras que la de tiempo no lo es.
+            "-c:v libx264 -profile:v high -preset fast -flags +cgop -g 60 -sc_threshold 0",
             "-b:v 6M -maxrate 8M -bufsize 12M",
             "-c:a aac -b:a 128k -ar 44100",
             "-movflags +faststart",
@@ -578,7 +584,10 @@ public class InstagramVideoService(
             $"-map [v] {audioMap}",
             $"-t {durationSeconds} -r {Fps}",
             // closed GOP + keyframe cada 2s, como piden las specs de Reels
-            "-c:v libx264 -profile:v high -preset medium -flags +cgop -g 60 -sc_threshold 0",
+            // preset "fast" y no "medium": desde que el tráiler va entero (hasta 90 s) el
+            // render creció ~3×, y a 6 Mbps sobre 1080×1920 la diferencia de calidad
+            // entre los dos presets es imperceptible mientras que la de tiempo no lo es.
+            "-c:v libx264 -profile:v high -preset fast -flags +cgop -g 60 -sc_threshold 0",
             "-b:v 6M -maxrate 8M -bufsize 12M",
             "-c:a aac -b:a 128k -ar 44100",
             "-movflags +faststart",
