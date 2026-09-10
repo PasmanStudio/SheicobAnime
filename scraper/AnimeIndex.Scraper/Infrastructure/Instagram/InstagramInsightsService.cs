@@ -163,21 +163,41 @@ public class InstagramInsightsService(
         // Meta no lista follows/profile_visits para REELS, pero la única forma
         // seria de saberlo es preguntarle a la API, no a la doc.
         var recovered = new Dictionary<string, long>();
+        var rejected = new List<string>();
         foreach (var m in metrics)
         {
             var one = await RequestMetricsAsync(mediaId, [m], ct);
             if (one is null)
             {
+                rejected.Add(m);
                 if (skip.Add(m))
                     logger.LogInformation(
-                        "Insights: la métrica {Metric} no está soportada para {Type} — se saltea el resto de la corrida",
-                        m, key);
+                        "Insights: la métrica {Metric} no está soportada para {Type} — se saltea el resto de la corrida. Meta dijo: {Error}",
+                        m, key, _lastError);
                 continue;
             }
             foreach (var kv in one) recovered[kv.Key] = kv.Value;
         }
+
+        // Ninguna métrica funcionó, ni siquiera de a una. Eso ya no es "una
+        // métrica rara": es el token. Acá sí se puede afirmar con confianza,
+        // porque se probaron todas por separado.
+        if (recovered.Count == 0 && rejected.Count == metrics.Length && !_permissionChecked)
+        {
+            _permissionChecked = true;
+            throw new InvalidOperationException(
+                "Ninguna métrica de insights funcionó para el media " + mediaId + ". "
+                + "Listar el media anda pero leer métricas no, así que es el token: le falta "
+                + "instagram_manage_insights (Facebook Login) o instagram_business_manage_insights "
+                + "(Instagram Login). Respuesta de Meta: " + _lastError);
+        }
+        _permissionChecked = true;
         return recovered;
     }
+
+    // Último cuerpo de error de la API, para poder contarlo en vez de adivinar.
+    private string _lastError = "";
+    private bool _permissionChecked;
 
     /// <summary>
     /// Pide un conjunto de métricas. Devuelve null si la API rechazó la llamada
@@ -195,28 +215,19 @@ public class InstagramInsightsService(
 
         if (!resp.IsSuccessStatusCode)
         {
-            // El caso que más importa distinguir: token sin permiso de insights.
+            // NO se decide acá si es un problema de permisos.
             //
-            // Meta lo reporta de varias formas según cómo esté autorizada la app.
-            // Comprobado en prod el 9-sep-2026: devuelve
-            //   (#10) Application does not have permission for this action
-            // que viaja como "code":10, NO como el subcode 33 que documenta. Sin
-            // cubrir el 10, el export escupía un warning por CADA pieza (cientos
-            // de líneas) y recién moría al final, escondiendo la causa real.
-            if (body.Contains("error_subcode\":33", StringComparison.Ordinal)
-                || body.Contains("\"code\":10", StringComparison.Ordinal)
-                || body.Contains("does not have permission", StringComparison.OrdinalIgnoreCase)
-                || body.Contains("manage_insights", StringComparison.OrdinalIgnoreCase))
-            {
-                throw new InvalidOperationException(
-                    "El token de Instagram NO tiene permiso de insights. Listar el media funciona, "
-                    + "leer métricas no: son scopes distintos. Hay que re-autorizar la app agregando "
-                    + "instagram_manage_insights (Facebook Login) o instagram_business_manage_insights "
-                    + "(Instagram Login), y regenerar el secret INSTAGRAM_ACCESS_TOKEN.");
-            }
-            // No es un problema de permisos: probablemente una métrica no
-            // soportada para este tipo. Se devuelve null para que el llamador
-            // degrade a pedirlas de a una.
+            // La primera versión lo hacía y dio un falso positivo (run
+            // 34428545476): el token TENÍA instagram_manage_insights —
+            // verificado por --token-scopes en el paso anterior — pero el 400 de
+            // una métrica no soportada matcheó la heurística de "sin permiso" y
+            // el export murió en la primera pieza culpando al token.
+            //
+            // Un 400 acá puede ser cualquiera de las dos cosas y desde una sola
+            // respuesta no se distinguen bien. Quien puede distinguirlas es
+            // FetchMetricsAsync: si NINGUNA métrica funciona ni siquiera pedida
+            // de a una, es el token; si algunas andan, era la métrica.
+            _lastError = Truncate(body, 400);
             return null;
         }
 
