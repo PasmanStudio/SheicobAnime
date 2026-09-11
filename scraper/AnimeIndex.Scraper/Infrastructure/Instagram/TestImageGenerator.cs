@@ -133,14 +133,20 @@ public static class TestImageGenerator
             await File.WriteAllBytesAsync(Path.Combine(outDir, $"news-{slug}-story.jpg"), storyBytes);
             Console.WriteLine($"  [story] {storyBytes.Length / 1024} KB  ({sw.ElapsedMilliseconds} ms)");
 
-            // Show the caption that would be posted (first sample only)
+            // El caption solo del primero (es largo y se repetiría), pero las
+            // CAPAS DEL REEL de todos: cada sample estresa algo distinto —
+            // titulares largos, comillas, nombres con dos puntos— y son
+            // justamente las piezas que hay que revisar componiéndolas sobre un
+            // video real.
             if (slug == "kudasai-cloverworks")
             {
                 Console.WriteLine("\n  ── Caption preview ──────────────────────────");
                 foreach (var line in BuildPreviewCaption(content).Split('\n'))
                     Console.WriteLine($"  {line}");
                 Console.WriteLine("  ─────────────────────────────────────────────\n");
+            }
 
+            {
                 // ── Piezas del reel (crédito de música EN el video) ──
                 const string sampleCredit =
                     "Música: Hyperfun — Kevin MacLeod (incompetech.com) · CC BY 4.0";

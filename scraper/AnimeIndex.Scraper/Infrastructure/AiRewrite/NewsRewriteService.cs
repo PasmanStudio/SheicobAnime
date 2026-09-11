@@ -268,7 +268,12 @@ public class NewsRewriteService(
         {
             var slice = s[..maxLen];
             var space = slice.LastIndexOf(' ');
-            s = (space > 0 ? slice[..space] : slice).TrimEnd();
+            s = (space > 0 ? slice[..space] : slice).TrimEnd(' ', ',', ';', ':');
+            // Puntos suspensivos al recortar. Sin esto el fragmento sale pelado y
+            // se lee como un error, no como una frase cortada: el 10-sep-2026 un
+            // reel mostraba "…está en producción temprana, con una ventana de" y
+            // ahí terminaba, quemado sobre el video.
+            s += "…";
         }
         return s;
     }

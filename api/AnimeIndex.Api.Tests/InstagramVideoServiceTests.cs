@@ -397,6 +397,9 @@ public class HookTextTests
     // Y un conector colgando por el corte se cae ("… confirma su" → "… confirma")
     [InlineData("Jujutsu Kaisen confirma su cuarta temporada para 2027", "Jujutsu Kaisen confirma")]
     [InlineData("Solo Leveling estrena el tráiler de la temporada 3", "Solo Leveling estrena")]
+    // Los pronombres átonos de los verbos pronominales también cuelgan: caso real
+    // del 10-sep-2026, el gancho salía "MY HERO ACADEMIA SE"
+    [InlineData("My Hero Academia se une a la Selección Japonesa de Fútbol", "My Hero Academia")]
     public void DerivedHookCutsAtTheClause(string headline, string expected)
         => Assert.Equal(expected, AnimeNewsImageService.HookTextFor(With(headline, null)));
 }

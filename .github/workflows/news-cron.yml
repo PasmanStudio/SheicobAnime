@@ -41,10 +41,13 @@ jobs:
   news:
     name: Post anime news
     runs-on: ubuntu-latest
-    # Safety cap — una corrida normal son ~3–5 min. Se subió de 10 a 12: el
-    # arranque de WARP ahora reintenta y puede sumar hasta 90 s en el peor caso
-    # (y con 10 min ya se habían cancelado corridas: 18 y 19-ago-2026).
-    timeout-minutes: 12
+    # Safety cap. Subió de 12 a 20 el 10-sep-2026, cuando el tráiler pasó a ir
+    # entero (hasta 90 s): renderizar un reel de 93,5 s midió 260-296 s de ffmpeg
+    # contra los ~50 s del de 26 s. Sumado a RSS + scrape + Gemini + descarga +
+    # subida a IG, el peor caso se acerca demasiado a 12 — y pasarse no falla
+    # limpio: CANCELA el job a mitad de publicación. Ya había pasado con el cap
+    # de 10 (18 y 19-ago-2026). El margen es barato; una corrida cancelada no.
+    timeout-minutes: 20
 
     steps:
       # Todos los horarios del cron publican reel (ver el porqué arriba). Las

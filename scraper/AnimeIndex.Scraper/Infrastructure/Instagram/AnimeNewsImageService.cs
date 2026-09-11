@@ -229,6 +229,11 @@ public class AnimeNewsImageService(
         {
             "su", "sus", "el", "la", "lo", "los", "las", "un", "una", "unos", "unas",
             "de", "del", "y", "e", "o", "u", "con", "en", "que", "a", "al", "por", "para", "sin",
+            // Pronombres átonos y adverbios de grado: los pegan los verbos
+            // pronominales, que son pura muletilla de titular. Caso real del
+            // 10-sep-2026: "My Hero Academia se une a la Selección Japonesa…"
+            // dejaba el gancho en "MY HERO ACADEMIA SE".
+            "se", "le", "les", "me", "te", "nos", "ya", "muy", "tan",
         };
 
     private static string FirstWords(string text, int maxWords, int maxChars)
@@ -893,9 +898,17 @@ public class AnimeNewsImageService(
             lines = WrapNoTruncate(text, size, maxWidth, bold, display);
             if (lines.Count <= maxLines) return (lines, size);
         }
-        // Still too tall at minSize (extreme): keep min size, hard-cap line count.
+        // Ni siquiera entra en minSize (extremo): se capan las líneas, pero con
+        // puntos suspensivos. Antes se descartaban en SILENCIO y el texto
+        // terminaba a mitad de frase quemado sobre el video — que se lee como un
+        // error, no como un recorte. Es además lo que el doc de esta clase
+        // promete que no pasa.
         lines = WrapNoTruncate(text, minSize, maxWidth, bold, display);
-        if (lines.Count > maxLines) lines = lines.Take(maxLines).ToList();
+        if (lines.Count > maxLines)
+        {
+            lines = lines.Take(maxLines).ToList();
+            lines[^1] = lines[^1].TrimEnd(' ', ',', ';', ':') + "…";
+        }
         return (lines, minSize);
     }
 
