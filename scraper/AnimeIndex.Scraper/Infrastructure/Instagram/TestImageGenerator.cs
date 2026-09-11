@@ -158,7 +158,14 @@ public static class TestImageGenerator
                 // componen SOBRE el video, así que abiertas sueltas se ven casi
                 // vacías — para revisarlas de verdad hay que mirarlas encima de
                 // un frame, o renderizar el reel entero con ffmpeg.
-                var (trailerHook, trailerOv) = newsService.GenerateVideoReelLayers(content, sampleCredit);
+                // Sin API key el heurístico no llena cuando/donde (los saca del
+                // artículo la IA), así que para poder REVISAR la línea de meta se
+                // inyectan valores de muestra cuando vienen vacíos.
+                var previewContent = content.Cuando is null && content.Donde is null
+                    ? content with { Cuando = "1 de julio 2026", Donde = "Crunchyroll" }
+                    : content;
+
+                var (trailerHook, trailerOv) = newsService.GenerateVideoReelLayers(previewContent, sampleCredit);
                 await File.WriteAllBytesAsync(Path.Join(outDir, $"news-{slug}-trailer-hook.png"), trailerHook);
                 await File.WriteAllBytesAsync(Path.Join(outDir, $"news-{slug}-trailer-overlay.png"), trailerOv);
                 Console.WriteLine(

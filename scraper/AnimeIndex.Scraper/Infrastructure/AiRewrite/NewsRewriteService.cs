@@ -93,6 +93,8 @@ public class NewsRewriteService(
         sb.AppendLine("""
             {
               "hook": "3 a 6 PALABRAS para el primer frame del video, en tipografía gigante. Máx 30 caracteres. Nombrá la obra o el hecho concreto — nada de ganchos vacíos tipo 'no vas a creer esto'. Sin punto final. Escribilo normal: el renderer lo pasa a mayúsculas. Ej: 'Jujutsu Kaisen vuelve', 'Free Fire x anime', 'Murió el creador de Berserk'.",
+              "cuando": "CUÁNDO pasa lo que anuncia la noticia, corto y en español: '1 de julio 2026', 'enero 2027', 'otoño 2026', 'ya disponible', '20 de noviembre'. SOLO si la fecha aparece en el material de referencia. Si no aparece, null. NO la deduzcas, NO la estimes, NO uses tu conocimiento previo para completarla: una fecha equivocada es peor que ninguna.",
+              "donde": "DÓNDE se va a poder ver, corto: 'Crunchyroll', 'Netflix', 'cines de Japón', 'Disney+'. Misma regla que cuando: SOLO si está en el material de referencia, si no null.",
               "headline": "titular original, atractivo, máx ~80 caracteres. Frase completa, SIN puntos suspensivos.",
               "lede": "una sola frase que amplíe el titular, máx ~110 caracteres. Completa, SIN puntos suspensivos.",
               "key_points": ["3 a 5 ideas cortas, autoconclusivas y bien distintas entre sí, máx ~95 caracteres cada una. Cada una es una frase COMPLETA, sin '...' ni recortes. Van en las slides."],
@@ -102,6 +104,15 @@ public class NewsRewriteService(
             """);
         sb.AppendLine();
         sb.AppendLine("IMPORTANTE: key_points (slides) y caption (cuerpo del post) NO pueden decir lo mismo — el caption suma contexto y detalle.");
+        sb.AppendLine();
+        // "cuando"/"donde" se renderizan como una línea propia sobre el video
+        // ("1 DE JULIO 2026 • CRUNCHYROLL"), así que un dato equivocado queda
+        // quemado en el reel a la vista de todos. Por eso se insiste acá además
+        // del schema: los modelos completan fechas plausibles con demasiada
+        // facilidad, y para esto preferimos el hueco antes que el invento.
+        sb.AppendLine("SOBRE \"cuando\" y \"donde\": se muestran QUEMADOS sobre el video, así que un dato "
+                    + "equivocado queda a la vista de todos. Extraelos del material de referencia y nada más. "
+                    + "Si el material no dice la fecha o la plataforma, poné null. Preferimos el hueco al invento.");
         return sb.ToString();
     }
 
@@ -143,7 +154,11 @@ public class NewsRewriteService(
             .ToList();
 
         return new NewsContent(headline!, Clean(dto.Lede), keyPoints, caption!, hashtags,
-            FromAi: true, Hook: Clean(dto.Hook));
+            FromAi: true, Hook: Clean(dto.Hook),
+            // Se capan cortos: son una línea sobre el video, no una frase. Un
+            // modelo que devuelve "a partir del 1 de julio de 2026 en exclusiva
+            // por Crunchyroll" en `cuando` se descarta en vez de romper el layout.
+            Cuando: ShortMeta(dto.Cuando, 24), Donde: ShortMeta(dto.Donde, 22));
     }
 
     // ── Heuristic fallback (clean, but not a true rewrite) ───────────────────────
@@ -204,6 +219,25 @@ public class NewsRewriteService(
 
     // ── Helpers ──────────────────────────────────────────────────────────────────
 
+    /// <summary>
+    /// Un dato de meta ("cuando"/"donde") solo sirve si es CORTO: va en una línea
+    /// sobre el video junto al otro. Más largo que el cap se descarta entero en
+    /// vez de romper el layout o salir recortado a la mitad. También se filtran
+    /// los "null"/"n/a" que los modelos devuelven como texto en vez de como null.
+    /// Público estático para tests.
+    /// </summary>
+    public static string? ShortMeta(string? raw, int maxLen)
+    {
+        var s = Clean(raw)?.TrimEnd('.', ',', ';');
+        if (string.IsNullOrWhiteSpace(s)) return null;
+        if (NullishText.Contains(s)) return null;
+        return s.Length <= maxLen ? s : null;
+    }
+
+    private static readonly HashSet<string> NullishText =
+        new(StringComparer.OrdinalIgnoreCase)
+        { "null", "none", "n/a", "na", "-", "?", "desconocido", "sin fecha", "no especificado", "no especificada" };
+
     private static string? Clean(string? s)
     {
         if (string.IsNullOrWhiteSpace(s)) return null;
@@ -243,6 +277,8 @@ public class NewsRewriteService(
 
     private sealed record RewriteDto(
         [property: JsonPropertyName("hook")]       string? Hook,
+        [property: JsonPropertyName("cuando")]     string? Cuando,
+        [property: JsonPropertyName("donde")]      string? Donde,
         [property: JsonPropertyName("headline")]   string? Headline,
         [property: JsonPropertyName("lede")]       string? Lede,
         [property: JsonPropertyName("key_points")] List<string>? KeyPoints,

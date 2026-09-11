@@ -627,6 +627,43 @@ respaldo** (Gemma tiene otros umbrales), igual que ya se hacía con el 429 de
 cuota. La diferencia entre que el modelo conteste o no es un caption editorial
 completo contra el heurístico pelado.
 
+### 8.7 Cuatro cambios que salieron de mirar a la competencia (10-sep-2026)
+
+Relevados contra @isekai.feed (§10), que hace lo mismo con 11× los seguidores:
+
+1. **Línea de cuándo y dónde** — `1 DE JULIO 2026 · CRUNCHYROLL`, en cian. Es la
+   información más práctica que puede dar un reel de noticias y la estábamos
+   tirando: venía en el artículo y no se renderizaba en ningún lado. La extrae la
+   IA (`cuando` / `donde` en `NewsContent`), **solo del material de referencia**:
+   el prompt insiste dos veces en que un dato inventado queda quemado sobre el
+   video, así que ante la duda va null. Ojo: el grounding con `google_search` da
+   429 el 100 % de las veces, o sea que la IA **no busca** la fecha, la extrae.
+2. **Marca de agua `SEGUINOS EN @handle`** al pie de la zona segura. Viaja con el
+   video: un reel reposteado no decía en ningún lado quién lo hizo, y los reels
+   con al menos un repost hacen 6,9× la mediana del resto — era alcance sin
+   atribuir. Va en la capa editorial y no en la del gancho porque el scrim
+   inferior (alpha 0xFC) se la comía entera (verificado renderizando).
+3. **Acento de color en el gancho**: la última línea en cian cuando ocupa más de
+   una. Sin eso el gancho es blanco plano y no hay jerarquía *dentro* del texto.
+   Con una sola línea se deja blanca — pintarlo entero lo vuelve un cartel.
+4. **Chip de categoría (`NOTICIAS`) en el reel de tráiler.** El cover ya lo tenía
+   y el reel no: se entraba sin saber si esto es una noticia, un tráiler o una
+   opinión.
+
+Y dos que cambian la jerarquía, no solo suman elementos:
+
+5. **El pie usa el LEDE, no el titular.** Antes ponía el titular completo a 72 px
+   en 3 líneas, que pesaba más que el propio gancho y encima **repetía lo que el
+   gancho ya decía** (el gancho se deriva del titular): salía
+   *"CLOVERWORKS PREPARA"* arriba y *"CLOVERWORKS PREPARA GRANDES ANUNCIOS…"*
+   abajo. El lede existe justamente para ampliar el titular, así que suma.
+6. **La portada vertical muestra el GANCHO, no el titular de 5 líneas.** Era el
+   problema visual más grande de la cuenta: llenaba la tarjeta de mayúsculas,
+   tapaba la foto y hacía que la grilla entera se leyera como un muro de texto.
+   Peor, el auto-fit lo achicaba para que entrara — cuanto más larga la noticia,
+   más denso el resultado. El carrusel cuadrado se queda con el titular: ahí no
+   hay video que acompañe y la tarjeta ES la noticia.
+
 ### 8.6 Lo que quedó pendiente
 
 **El cierre no loopea.** El reel termina en la tarjeta estática de CTA, así que
@@ -735,7 +772,72 @@ para confirmar que las columnas `profile_views` y `reach_follower` /
 
 ---
 
-## 10. Resumen
+## 10. Benchmark: la competencia directa (10-sep-2026)
+
+Relevado mirando las cuentas en vivo. El par real **no** son Kudasai (129K, medio
+establecido) ni Crunchyroll LA (1.4M, marca oficial): es **@isekai.feed**, que
+hace exactamente lo mismo —noticias y tráilers de anime en español, con portadas
+de póster editorial— y publica hasta las mismas notas el mismo día.
+
+| | @sheicobanime | @isekai.feed |
+|---|---|---|
+| Seguidores | 350 | **3.817** |
+| Siguiendo | 154 | 25 |
+| Campo Nombre | `SheicobAnime` | `Isekai Feed \| Anime News & Trailers` |
+| Bio | `#anime #animelover #animefans` | 4 líneas: qué es · qué recibís · diferencial · CTA |
+| Destacadas | **0** | **10** |
+| Reels fijados | 0 | 3 |
+
+### Lo que dicen sus vistas
+
+La pestaña de reels muestra los contadores. Sus cuatro primeros:
+
+| Reel | Vistas |
+|---|---|
+| 📌 estreno confirmado (+ fecha + plataforma) | **140K** |
+| 📌 tráiler, estreno anunciado | **175K** |
+| 📌 Dragon Ball, confirmado para 2027 | **157K** |
+| reseña del videojuego de Wolverine | **188** |
+
+Tres lecturas:
+
+1. **Nuestra mediana (341) le gana a su cuarto reel (188).** Su ventaja no es
+   rendir parejo: son **tres hits**. Es validación externa de la tesis de §1 —
+   esto no es un negocio de subir la mediana.
+2. **El techo está mal calibrado en este documento.** Tratamos los 35.192 views
+   del Free Fire como "el pico". El pico real del nicho, mismo formato y mismo
+   idioma, es **175K: 5× más**.
+3. **La reseña de videojuego hizo 188.** Es la misma clase de nota que nuestro
+   selector eligió el 10-sep y que arregló el gate `MentionsAnimeWorld` (§9.2).
+   Confirmación externa, a tres órdenes de magnitud.
+
+⚠️ Son **4 contadores**, no su distribución completa. El patrón es sugestivo, no
+concluyente.
+
+### Su fórmula de reel, y qué nos faltaba
+
+```
+[TRÁILER]                      ← chip de categoría
+The Eminence in Shadow         ← obra, chica
+ESTRENO ANUNCIADO              ← el hecho, ENORME, con acento de color
+1 DE JULIO 2026 · CRUNCHYROLL  ← cuándo y dónde
+     [ video ]
+Síguenos en ✦ @isekai.feed     ← marca de agua fija
+```
+
+De ahí salieron los cuatro cambios de §11. Lo que **no** copiamos: ellos enmarcan
+el video con un borde y nosotros vamos full-bleed con fondo desenfocado. No hay
+evidencia de que el marco rinda más y el full-bleed es de esta semana — que lo
+decida el skip rate.
+
+**Lo que sigue siendo de ellos y no nuestro: la capa de conversión.** Nombre
+buscable, bio con propuesta, 10 destacadas y 3 reels fijados. Nada de eso es
+código: es media hora en la app, y es el factor que separa "alcance" de
+"seguidores" en la ecuación de los ~825 (§3).
+
+---
+
+## 11. Resumen
 
 > El feed no sirve (484 posts = 1 seguidor). El video real duplica todo. El watch
 > time es la variable que manda (rho 0,76). El 16 % de los reels produce el 62 %

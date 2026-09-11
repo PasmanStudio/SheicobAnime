@@ -23,10 +23,17 @@ namespace AnimeIndex.Scraper.Infrastructure.Instagram;
 /// All text comes from the already-rewritten <see cref="NewsContent"/> — never the raw summary —
 /// so no source chrome or copyright can reach a slide.
 /// </summary>
+/// <param name="settings">Solo se usa para el handle de la marca de agua. Es
+/// opcional para que <c>--images</c> y los tests puedan construir el renderer sin
+/// armar la config de Instagram; sin él se cae al handle por defecto.</param>
 public class AnimeNewsImageService(
     IHttpClientFactory httpFactory,
-    ILogger<AnimeNewsImageService> logger)
+    ILogger<AnimeNewsImageService> logger,
+    InstagramSettings? settings = null)
 {
+    private string Handle =>
+        string.IsNullOrWhiteSpace(settings?.Handle) ? "sheicobanime" : settings!.Handle;
+
     // ── Brand palette — "Abismo + Neón" ─────────────────────────────────────────
     private static readonly SKColor BgTop     = new(0x0B, 0x14, 0x22);   // abismo, blue cast (top)
     private static readonly SKColor BgBottom  = new(0x07, 0x09, 0x0E);   // abismo base (bottom)
@@ -167,13 +174,26 @@ public class AnimeNewsImageService(
         var ov = ovSurface.Canvas;
         ov.Clear(SKColors.Transparent);
         DrawBottomScrim(ov, width, height);
-        // En vertical SafeBottom devuelve lo mismo para cualquier margen, así que
-        // el crédito y la última línea del titular caían en la MISMA línea de
-        // base, encimados. En el reel de tráiler musicCredit es siempre null
-        // (suena el audio del video), pero el defecto estaba latente.
-        DrawVideoReelHeadline(ov, content, width, height,
-            bottomInset: musicCredit is null ? 0f : 46 * scale);
-        if (musicCredit is not null) DrawMusicCredit(ov, musicCredit, width, height);
+
+        // La marca de agua va DESPUÉS del scrim y en ESTA capa, no en la del
+        // gancho: el overlay se compone encima, así que un scrim de alpha 0xFC
+        // en el pie se comía la marca por completo (verificado renderizando —
+        // salía gris oscuro sobre el degradado). Perder el primer segundo por el
+        // fade no importa para una atribución que dura todo el video.
+        DrawWatermark(ov, width, height);
+
+        // El pie se apila de abajo hacia arriba y CADA elemento reserva su lugar:
+        // en vertical SafeBottom devuelve lo mismo para cualquier margen, así que
+        // sin esto la marca de agua, el crédito y el texto caen todos en la MISMA
+        // línea de base. Orden: marca de agua (capa del gancho) → crédito CC →
+        // bloque editorial.
+        float pie = SafeBottom(width, height, 0.07f) - WatermarkHeight * scale;
+        if (musicCredit is not null)
+        {
+            DrawMusicCredit(ov, musicCredit, width, pie);
+            pie -= 46 * scale;
+        }
+        DrawVideoReelFooter(ov, content, width, height, pie, MetaLineFor(content));
 
         return (EncodePng(hookSurface), EncodePng(ovSurface));
     }
@@ -254,10 +274,69 @@ public class AnimeNewsImageService(
             112 * scale, 58 * scale, width * 0.86f, maxLines: 2, bold: true, display: true);
         float lineH = size * 1.04f;
 
-        float firstBaseline = SafeTop(width, height) + 118 * scale;
-        DrawLines(canvas, lines, x, firstBaseline, size, TextWhite, lineH, display: true, bold: true);
+        // Chip de categoría arriba del gancho. El cover ya lo tenía y el reel de
+        // tráiler no: el espectador entraba sin saber si esto es una noticia, un
+        // tráiler o una opinión. Las cuentas grandes del nicho lo ponen siempre.
+        //
+        // Se ancla a SafeTop y el gancho se corre abajo: derivar la posición del
+        // kicker restándole el cuerpo al gancho lo mandaba a y≈240, ARRIBA de la
+        // zona segura (lo agarró InstagramSafeAreaTests). La barra del cut se
+        // dibuja 24 px por encima de la línea de base, así que el +34 es lo que
+        // la deja justo adentro.
+        DrawKicker(canvas, x, SafeTop(width, height) + 34 * scale, scale, "NOTICIAS");
+
+        float firstBaseline = SafeTop(width, height) + 150 * scale;
+
+        // La ÚLTIMA línea va en cian cuando el gancho ocupa más de una. Sin esto
+        // el gancho entero es blanco plano y no hay jerarquía DENTRO del texto —
+        // las cuentas grandes del nicho resaltan la frase clave en un segundo
+        // color. Con una sola línea se deja blanca: pintar el gancho completo de
+        // cian lo vuelve un cartel, no un énfasis.
+        for (var i = 0; i < lines.Count; i++)
+        {
+            var color = lines.Count > 1 && i == lines.Count - 1 ? Accent : TextWhite;
+            DrawLines(canvas, [lines[i]], x, firstBaseline + i * lineH, size, color,
+                lineH, display: true, bold: true);
+        }
+
         DrawCut(canvas, x, firstBaseline + (lines.Count - 1) * lineH + 26 * scale,
             96 * scale, 12 * scale, Accent);
+    }
+
+    // Alto que la marca de agua se reserva al pie de la zona segura.
+    private const float WatermarkHeight = 44f;
+
+    /// <summary>
+    /// "Seguinos en @handle" al pie de la zona segura. Va en la capa del gancho
+    /// (sin fade) porque tiene que estar desde el frame 0 y, sobre todo, porque
+    /// VIAJA CON EL VIDEO: un reel reposteado no decía en ningún lado quién lo
+    /// hizo — solo llevaba el logo chico arriba —, y los reels con al menos un
+    /// repost hacen 6,9× la mediana del resto. Era alcance sin atribuir.
+    /// </summary>
+    private void DrawWatermark(SKCanvas canvas, int width, int height)
+    {
+        float scale = width / 1080f;
+        float x     = width * 0.07f;
+        float y     = SafeBottom(width, height, 0.024f);
+
+        var label = $"SEGUINOS EN @{Handle.TrimStart('@')}";
+        DrawMono(canvas, label, x, y, 26 * scale, TextWhite.WithAlpha(0xCC), bold: true);
+    }
+
+    /// <summary>
+    /// La línea de "cuándo y dónde": <c>1 DE JULIO 2026 · CRUNCHYROLL</c>. Es la
+    /// información más práctica que puede dar un reel de noticias y hasta
+    /// sep-2026 se tiraba — venía en el artículo y no se renderizaba en ningún
+    /// lado. Devuelve null cuando la IA no pudo extraer ninguno de los dos
+    /// (preferimos el hueco al invento). Público estático para tests.
+    /// </summary>
+    public static string? MetaLineFor(NewsContent content)
+    {
+        var partes = new[] { content.Cuando, content.Donde }
+            .Where(p => !string.IsNullOrWhiteSpace(p))
+            .Select(p => p!.Trim().ToUpperInvariant());
+        var linea = string.Join("  ·  ", partes);
+        return linea.Length == 0 ? null : linea;
     }
 
     /// <summary>
@@ -265,22 +344,44 @@ public class AnimeNewsImageService(
     /// Acá acompaña al gancho y al video, no es el protagonista, y tiene que
     /// caber debajo de la banda sin comerse media pantalla.
     /// </summary>
-    private static void DrawVideoReelHeadline(
-        SKCanvas canvas, NewsContent content, int width, int height, float bottomInset = 0f)
+    /// <summary>
+    /// El pie del reel de tráiler: la línea de cuándo/dónde y una frase de apoyo.
+    ///
+    /// Usa el LEDE, no el titular. Antes ponía el titular completo a 72 px en 3
+    /// líneas y eso rompía la jerarquía por dos motivos: pesaba más que el propio
+    /// gancho (2 líneas), y sobre todo REPETÍA lo que el gancho ya decía — el
+    /// gancho se deriva del titular, así que salía "CLOVERWORKS PREPARA" arriba y
+    /// "CLOVERWORKS PREPARA GRANDES ANUNCIOS PARA EL ANIME EXPO…" abajo. El lede
+    /// es exactamente la frase que existe para AMPLIAR el titular, así que suma
+    /// en vez de repetir. Sin lede cae al titular.
+    /// </summary>
+    private static void DrawVideoReelFooter(
+        SKCanvas canvas, NewsContent content, int width, int height, float baseline, string? metaLine)
     {
-        var title = content.Headline?.Trim();
-        if (string.IsNullOrWhiteSpace(title)) return;
-
         float scale = width / 1080f;
         float x     = width * 0.07f;
 
-        var (lines, size) = WrapFit(title!.ToUpperInvariant(),
-            72 * scale, 40 * scale, width * 0.86f, maxLines: 3, bold: true, display: true);
-        float lineH = size * 1.06f;
-        float last  = SafeBottom(width, height, 0.07f) - bottomInset;
+        var texto = string.IsNullOrWhiteSpace(content.Lede)
+            ? content.Headline?.Trim()
+            : content.Lede!.Trim();
 
-        DrawLines(canvas, lines, x, last - (lines.Count - 1) * lineH, size, TextWhite,
-            lineH, display: true, bold: true);
+        float top = baseline;
+        if (!string.IsNullOrWhiteSpace(texto))
+        {
+            // 46 px y no 72: acá el texto ACOMPAÑA, no grita. El que grita es el
+            // gancho, arriba. Sin display font (Anton) tampoco: la condensada a
+            // este cuerpo se lee peor que la sans en un bloque de 3 líneas.
+            var (lines, size) = WrapFit(texto!, 46 * scale, 30 * scale, width * 0.86f,
+                maxLines: 3, bold: false, display: false);
+            float lineH = size * 1.3f;
+            top = baseline - (lines.Count - 1) * lineH;
+            DrawLines(canvas, lines, x, top, size, TextWhite, lineH, display: false, bold: false);
+            top -= size;
+        }
+
+        // "1 DE JULIO 2026 · CRUNCHYROLL", en cian, arriba de la frase de apoyo.
+        if (metaLine is not null)
+            DrawMono(canvas, metaLine, x, top - 24 * scale, 27 * scale, Accent, bold: true);
     }
 
     /// <summary>
@@ -331,7 +432,8 @@ public class AnimeNewsImageService(
         var ov = ovSurface.Canvas;
         ov.Clear(SKColors.Transparent);
         DrawCoverText(ov, content, width, height, swipeHint: false);
-        if (musicCredit is not null) DrawMusicCredit(ov, musicCredit, width, height);
+        if (musicCredit is not null)
+            DrawMusicCredit(ov, musicCredit, width, SafeBottom(width, height, 0.024f));
 
         return (Encode(bgSurface), EncodePng(ovSurface));
     }
@@ -373,7 +475,9 @@ public class AnimeNewsImageService(
 
     // ── Cover poster ───────────────────────────────────────────────────────────
 
-    private static byte[] RenderCover(NewsContent content, SKBitmap? photo, int width, int height, bool swipeHint)
+    // De instancia (y no estática) desde que la portada dibuja la marca de agua,
+    // que necesita el handle de la cuenta.
+    private byte[] RenderCover(NewsContent content, SKBitmap? photo, int width, int height, bool swipeHint)
     {
         using var surface = SKSurface.Create(new SKImageInfo(width, height));
         var canvas = surface.Canvas;
@@ -392,14 +496,25 @@ public class AnimeNewsImageService(
     /// Todo el texto/branding del cover (logo, kicker, titular, lede, swipe hint).
     /// Separado del fondo para que el Reel lo anime como capa independiente.
     /// </summary>
-    private static void DrawCoverText(SKCanvas canvas, NewsContent content, int width, int height, bool swipeHint)
+    private void DrawCoverText(SKCanvas canvas, NewsContent content, int width, int height, bool swipeHint)
     {
         float scale  = width / 1080f;
         float x      = width * 0.07f;
+        bool vertical = height > width;
         float bottom = SafeBottom(width, height, 0.07f);
 
         // Logo lives at the TOP on the cover so it never sits over the bottom-anchored text.
         DrawLogoTop(canvas, width, height, scale);
+
+        // La marca de agua y la línea de cuándo/dónde valen para TODAS las piezas
+        // verticales, no solo para el reel de tráiler: la portada del slideshow
+        // pasa por acá, y el slideshow es ~40 % de los reels. Sin esto, esas
+        // piezas salían sin atribución y tirando la fecha.
+        if (vertical)
+        {
+            DrawWatermark(canvas, width, height);
+            bottom -= WatermarkHeight * scale;
+        }
 
         float y = bottom;
 
@@ -407,6 +522,12 @@ public class AnimeNewsImageService(
         {
             DrawMono(canvas, "DESLIZÁ PARA LEER  →", x, y, 25 * scale, Accent, bold: true);
             y -= 58 * scale;
+        }
+
+        if (vertical && MetaLineFor(content) is { } meta)
+        {
+            DrawMono(canvas, meta, x, y, 27 * scale, Accent, bold: true);
+            y -= 48 * scale;
         }
 
         var lede = string.IsNullOrWhiteSpace(content.Lede) ? null : content.Lede!.Trim();
@@ -418,10 +539,27 @@ public class AnimeNewsImageService(
                 - 18 * scale;
         }
 
-        // Big condensed title (Anton, uppercase), auto-fit so it never truncates.
-        var title = string.IsNullOrWhiteSpace(content.Headline) ? "" : content.Headline.Trim();
+        // En VERTICAL la portada muestra el GANCHO, no el titular completo.
+        //
+        // El titular a 5 líneas era el problema visual más grande de la cuenta:
+        // llenaba la tarjeta de mayúsculas, tapaba la foto y hacía que toda la
+        // grilla se leyera como un muro de texto indistinguible. Y encima el
+        // auto-fit lo achicaba para que entrara, o sea que cuanto más larga la
+        // noticia, más chico y más denso el resultado.
+        //
+        // El gancho + el lede hacen el trabajo mejor repartido: el gancho frena
+        // el scroll, el lede explica. Es lo que hacen las cuentas del nicho que
+        // más rinden. El titular completo no se pierde — vive en el caption.
+        //
+        // El carrusel cuadrado se queda con el titular: ahí no hay video que
+        // acompañe y la tarjeta ES la noticia.
+        bool useHook = height > width;
+        var title = useHook
+            ? HookTextFor(content)
+            : (string.IsNullOrWhiteSpace(content.Headline) ? "" : content.Headline.Trim());
         var (titleLines, titleSize) = WrapFit(title.ToUpperInvariant(),
-            (height > width ? 104 : 92) * scale, 50 * scale, width * 0.86f, maxLines: 5, bold: true, display: true);
+            (useHook ? 128 : 92) * scale, 50 * scale, width * 0.86f,
+            maxLines: useHook ? 3 : 5, bold: true, display: true);
         float titleLineH = titleSize * 1.06f;
         y = DrawBlockBottomUp(canvas, titleLines, x, y, titleSize, TextWhite, titleLineH, display: true, bold: true)
             - 22 * scale;
@@ -518,7 +656,8 @@ public class AnimeNewsImageService(
         // cuando hay uno (que ahora también vive dentro de la zona segura).
         float mark = SafeBottom(width, height, 0.07f) - (musicCredit is null ? 0 : 46 * scale);
         DrawBrandingMark(canvas, width, mark, scale);
-        if (musicCredit is not null) DrawMusicCredit(canvas, musicCredit, width, height);
+        if (musicCredit is not null)
+            DrawMusicCredit(canvas, musicCredit, width, SafeBottom(width, height, 0.024f));
         return Encode(surface);
     }
 
@@ -528,7 +667,7 @@ public class AnimeNewsImageService(
     /// pegado al borde del canvas (donde estaba) lo tapaba el caption de IG en
     /// los reels. Vive EN el video (estilo créditos de cierre), nunca en el caption.
     /// </summary>
-    private static void DrawMusicCredit(SKCanvas canvas, string credit, int width, int height)
+    private static void DrawMusicCredit(SKCanvas canvas, string credit, int width, float baseline)
     {
         float scale    = width / 1080f;
         float x        = width * 0.08f;
@@ -541,8 +680,7 @@ public class AnimeNewsImageService(
             if (w > maxWidth) size *= maxWidth / w;   // que nunca se salga del canvas
         }
 
-        DrawMono(canvas, credit, x, SafeBottom(width, height, 0.024f), size,
-            TextGray.WithAlpha(0xB4), bold: false);
+        DrawMono(canvas, credit, x, baseline, size, TextGray.WithAlpha(0xB4), bold: false);
     }
 
     // ── Shared chrome ────────────────────────────────────────────────────────────
