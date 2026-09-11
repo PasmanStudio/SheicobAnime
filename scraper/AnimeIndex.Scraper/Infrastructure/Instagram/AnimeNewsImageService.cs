@@ -373,11 +373,16 @@ public class AnimeNewsImageService(
         float top = baseline;
         if (!string.IsNullOrWhiteSpace(texto))
         {
-            // 46 px y no 72: acá el texto ACOMPAÑA, no grita. El que grita es el
+            // 44 px y no 72: acá el texto ACOMPAÑA, no grita. El que grita es el
             // gancho, arriba. Sin display font (Anton) tampoco: la condensada a
-            // este cuerpo se lee peor que la sans en un bloque de 3 líneas.
-            var (lines, size) = WrapFit(texto!, 46 * scale, 30 * scale, width * 0.86f,
-                maxLines: 3, bold: false, display: false);
+            // este cuerpo se lee peor que la sans.
+            //
+            // 2 líneas y no 3: el pie entero tiene que entrar entre el pie de la
+            // banda de video (y=1210) y el de la zona segura (y=1478) SIN subirse
+            // al video. Con 3 líneas el bloque arrancaba en y≈1198 y la línea de
+            // cuándo/dónde quedaba escrita sobre el tráiler.
+            var (lines, size) = WrapFit(texto!, 44 * scale, 28 * scale, width * 0.86f,
+                maxLines: 2, bold: false, display: false);
             float lineH = size * 1.3f;
             top = baseline - (lines.Count - 1) * lineH;
             DrawLines(canvas, lines, x, top, size, TextWhite, lineH, display: false, bold: false);

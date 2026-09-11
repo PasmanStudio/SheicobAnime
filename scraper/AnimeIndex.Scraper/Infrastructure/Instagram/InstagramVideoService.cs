@@ -135,14 +135,25 @@ public class InstagramVideoService(
     private const int BlurWidth = 270;
     private const int BlurHeight = 480;
     private const int BlurSigma = 10;
-    // Alto máximo de la banda nítida. 1250 deja pasar casi entero un clip
-    // vertical (los respaldos de X vienen así) sin recortarle medio cuadro.
-    private const int BandMaxHeight = 1250;
-    // Centro de la banda, como fracción de la altura. Justo en el medio: con
-    // 0.46 el borde superior de la banda caía en y≈579 y la segunda línea del
-    // gancho terminaba en ≈583 — pegada al filo del video (verificado
-    // renderizando el reel completo con ffmpeg, no solo los argumentos).
-    private const double BandCenter = 0.50;
+    // ── Las tres zonas del reel, que NO se pisan ────────────────────────────
+    // El video tiene que verse LIMPIO: nada de texto encima. Antes la banda se
+    // centraba en una fracción de la altura y el pie se anclaba al borde
+    // inferior, así que se solapaban — con un clip 16:9 la banda terminaba en
+    // y≈1264 y la línea de cuándo/dónde arrancaba en y≈1198, escrita sobre el
+    // video (visto renderizando un reel completo con un tráiler real).
+    //
+    //   288 – 600   gancho (kicker + 2 líneas)
+    //   610 – 1210  BANDA DE VIDEO, sin nada encima
+    //   1240 – 1478 pie (cuándo/dónde + lede + marca de agua)
+    //
+    // La banda es una CAJA FIJA y el clip entra adentro con
+    // force_original_aspect_ratio=decrease: así el alto no depende del aspecto
+    // de la fuente. Un 16:9 a 1080 de ancho da 1066×600 —prácticamente ancho
+    // completo— y un clip vertical entra angosto pero entero, sin recortarle
+    // medio cuadro como hacía el crop anterior. El desenfoque llena los lados.
+    private const int BandBoxWidth = 1080;
+    private const int BandBoxHeight = 600;
+    private const int BandTop = 610;
 
     /// <summary>
     /// Cuánto tráiler saltear al arranque. Era la constante 1,5 s, pero los PV
@@ -261,7 +272,6 @@ public class InstagramVideoService(
         var totalSeconds = trailerSeconds + infoSlidePaths.Count * InfoSlideSeconds;
         var trailArg = trailerSeconds.ToString("0.0#", inv);
         var totalArg = totalSeconds.ToString("0.0#", inv);
-        var band = BandMaxHeight.ToString(inv);
 
         var inputs = new List<string>
         {
@@ -294,13 +304,12 @@ public class InstagramVideoService(
             $"crop={BlurWidth}:{BlurHeight},gblur=sigma={BlurSigma}," +
             $"scale={OutWidth}:{OutHeight}:flags=bicubic," +
             $"tpad=stop_mode=clone:stop_duration={trailArg}[bg]",
-            // Banda nítida: 1080 de ancho, capada por si el clip es vertical,
-            // congelada al final si quedó corto
-            $"[src]scale={OutWidth}:-2,setsar=1," +
-            $"crop={OutWidth}:'min(ih,{band})':0:'(ih-min(ih,{band}))/2'," +
+            // Banda nítida: el clip entra ENTERO dentro de la caja fija, sin
+            // recortes, y se congela al final si quedó corto
+            $"[src]scale={BandBoxWidth}:{BandBoxHeight}:force_original_aspect_ratio=decrease,setsar=1," +
             subsFilter +
             $"tpad=stop_mode=clone:stop_duration={trailArg}[band]",
-            $"[bg][band]overlay=x='(W-w)/2':y='H*{BandCenter.ToString("0.00", inv)}-h/2'[base]",
+            $"[bg][band]overlay=x='(W-w)/2':y={BandTop}[base]",
             // El gancho está desde el FRAME 0 y sin fade: es lo único que puede
             // frenar el scroll antes de que se decida el skip (mediana 55 %).
             "[1:v]format=rgba[hk]",

@@ -145,11 +145,14 @@ public class InstagramVideoServiceTests
         // Fade-out corto del audio al cierre (40 − 0.9 = 39.1) y nivel estándar
         Assert.Contains("afade=t=out:st=39.1", args);
         Assert.Contains("loudnorm=I=-16", args);
-        // Banda de video capada y congelada si el clip es corto
-        Assert.Contains("crop=1080:'min(ih,1250)'", args);
+        // El clip entra ENTERO en la caja fija (sin recortes) y se congela si
+        // quedó corto. La caja no depende del aspecto de la fuente.
+        Assert.Contains("scale=1080:600:force_original_aspect_ratio=decrease", args);
         Assert.Contains("tpad=stop_mode=clone", args);
-        // Banda centrada sobre el fondo desenfocado + slide-up de marca
-        Assert.Contains("overlay=x='(W-w)/2':y='H*0.50-h/2'", args);
+        // Y se ancla a una Y FIJA: el video ocupa 610-1210 y nada se le escribe
+        // encima — el pie arranca recién en 1240 (ver DrawVideoReelFooter).
+        Assert.Contains("overlay=x='(W-w)/2':y=610", args);
+        Assert.DoesNotContain("crop=1080:'min(ih", args);
         Assert.Contains("fade=t=in:st=0.5:d=0.8:alpha=1", args);
         // …pero NADA de fade desde negro sobre el video (ver test dedicado)
         Assert.DoesNotContain("fade=t=in:st=0:d=0.4", args);
@@ -559,6 +562,34 @@ public class InstagramSafeAreaTests
         Assert.True(overlay.Skip(1500).Sum() == 0, "el titular cae bajo la botonera de IG");
         Assert.True(overlay.Sum() > 3000, "no se rindió el titular");
         Assert.True(overlay.Take(1000).Sum() == 0, "el titular sube hasta la banda del tráiler");
+    }
+
+    [Fact]
+    public void VideoReelLayers_LeaveTheVideoBandCompletelyClean()
+    {
+        // El video tiene que verse LIMPIO: nada de texto encima. La banda ocupa
+        // y=610..1210 (caja fija, ver InstagramVideoService), así que NINGUNA de
+        // las dos capas puede tener un píxel ahí.
+        //
+        // Antes se solapaban: la banda se centraba en una fracción de la altura
+        // y el pie se anclaba al borde inferior, así que con un clip 16:9 la
+        // banda terminaba en y≈1264 y la línea de cuándo/dónde arrancaba en
+        // y≈1198 — escrita sobre el tráiler. Solo se vio renderizando un reel
+        // completo con video real.
+        var (hook, overlay) = NewService().GenerateVideoReelLayers(
+            Content() with { Hook = "Jujutsu Kaisen vuelve", Cuando = "1 de julio 2026", Donde = "Crunchyroll" },
+            musicCredit: "Música: Hyperfun — Kevin MacLeod · CC BY 4.0");
+
+        foreach (var (capa, rows) in new[]
+                 {
+                     ("gancho", TextPixelsPerRow(hook)),
+                     ("pie", TextPixelsPerRow(overlay)),
+                 })
+        {
+            var invaden = rows.Skip(610).Take(600).Sum();
+            Assert.True(invaden == 0,
+                $"la capa de {capa} escribe {invaden} píxeles sobre la banda de video (y 610-1210)");
+        }
     }
 
     [Fact]
