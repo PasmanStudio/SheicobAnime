@@ -105,6 +105,86 @@ if (args.Contains("--news"))
     return;
 }
 
+// ── Sincronizar métricas de los reels a la DB (one-shot, workflow semanal) ──
+// Usage: dotnet run --project scraper/AnimeIndex.Scraper -- --insights-sync [dias]
+//
+// Cierra el loop entre publicar y medir. El export a CSV (--insights) baja las
+// ~800 piezas de la cuenta pero NO sabe qué noticia era cada una, así que
+// responder "¿qué tipo de titular funciona?" pedía cruzar el CSV contra los logs
+// a mano. Y como cada medición costaba una corrida manual de 8 minutos, se medía
+// cada varios meses y en el medio se publicaban 7 piezas por día a ciegas.
+//
+// Esto guarda las métricas AL LADO del titular que las produjo, en
+// anime_news_items. A partir de ahí cada pregunta futura es una query — y el
+// selector de la noticia del día hace few-shot con nuestros propios resultados.
+if (args.Contains("--insights-sync"))
+{
+    Log.Logger = new LoggerConfiguration()
+        .WriteTo.Console(new JsonFormatter())
+        .CreateBootstrapLogger();
+
+    try
+    {
+        var syncIdx = Array.IndexOf(args, "--insights-sync");
+        var syncDays = args.Length > syncIdx + 1 && int.TryParse(args[syncIdx + 1], out var sd) ? sd : 60;
+
+        var syncHost = Host.CreateApplicationBuilder(args);
+
+        syncHost.Services.AddSerilog((_, lc) => lc
+            .ReadFrom.Configuration(syncHost.Configuration)
+            .Enrich.FromLogContext()
+            .Enrich.WithProperty("Service", "insights-sync")
+            .WriteTo.Console(new JsonFormatter()));
+
+        var syncConnStr = syncHost.Configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrEmpty(syncConnStr))
+            syncConnStr = syncHost.Configuration["DATABASE_URL"];
+        if (string.IsNullOrEmpty(syncConnStr))
+            throw new InvalidOperationException("Missing DATABASE_URL / ConnectionStrings:DefaultConnection");
+        syncConnStr = NormalizePostgresConnectionString(syncConnStr);
+        syncHost.Services.AddDbContext<AppDbContext>(opts =>
+            opts.UseNpgsql(syncConnStr, o => o.EnableRetryOnFailure(3)));
+
+        var syncIgSettings = new AnimeIndex.Scraper.Infrastructure.Instagram.InstagramSettings();
+        syncHost.Configuration.GetSection("Instagram").Bind(syncIgSettings);
+        syncHost.Services.AddSingleton(syncIgSettings);
+
+        syncHost.Services.AddHttpClient();
+        // El insights service pide este cliente por nombre; sin registrarlo sale
+        // con el timeout por defecto de 100 s en vez de 30.
+        syncHost.Services.AddHttpClient("instagram-graph", c => c.Timeout = TimeSpan.FromSeconds(30));
+        syncHost.Services.AddScoped<AnimeIndex.Scraper.Infrastructure.Instagram.InstagramInsightsService>();
+        syncHost.Services.AddScoped<AnimeIndex.Scraper.Infrastructure.Instagram.NewsInsightsSyncService>();
+
+        var syncApp = syncHost.Build();
+        await using var syncScope = syncApp.Services.CreateAsyncScope();
+
+        // Migrar: la corrida que estrena las columnas de métricas puede ser esta
+        // y no la de --news.
+        var syncDb = syncScope.ServiceProvider.GetRequiredService<AppDbContext>();
+        await syncDb.Database.MigrateAsync();
+
+        var syncSvc = syncScope.ServiceProvider
+            .GetRequiredService<AnimeIndex.Scraper.Infrastructure.Instagram.NewsInsightsSyncService>();
+        using var syncCts = new CancellationTokenSource(TimeSpan.FromMinutes(10));
+        await syncSvc.SyncAsync(syncDays, syncCts.Token);
+
+        // Resumen legible en los logs: sin esto la corrida deja solo un contador
+        // y hay que abrir la DB para saber si algo cambió.
+        Console.WriteLine("Resumen: " + await syncSvc.SummaryAsync(syncDays, syncCts.Token));
+    }
+    catch (Exception ex)
+    {
+        Log.Fatal(ex, "Insights sync terminated unexpectedly");
+        throw;
+    }
+    finally
+    {
+        await Log.CloseAndFlushAsync();
+    }
+    return;
+}
+
 // ── IMDb/TMDB linking (one-shot, dedicated daily workflow) ──
 // Usage: dotnet run --project scraper/AnimeIndex.Scraper -- --imdb
 // Resolves series→TMDB→episode IMDb ids and refreshes IMDb ratings (best-effort).

@@ -133,31 +133,51 @@ public static class TestImageGenerator
             await File.WriteAllBytesAsync(Path.Combine(outDir, $"news-{slug}-story.jpg"), storyBytes);
             Console.WriteLine($"  [story] {storyBytes.Length / 1024} KB  ({sw.ElapsedMilliseconds} ms)");
 
-            // Show the caption that would be posted (first sample only)
+            // El caption solo del primero (es largo y se repetiría), pero las
+            // CAPAS DEL REEL de todos: cada sample estresa algo distinto —
+            // titulares largos, comillas, nombres con dos puntos— y son
+            // justamente las piezas que hay que revisar componiéndolas sobre un
+            // video real.
             if (slug == "kudasai-cloverworks")
             {
                 Console.WriteLine("\n  ── Caption preview ──────────────────────────");
                 foreach (var line in BuildPreviewCaption(content).Split('\n'))
                     Console.WriteLine($"  {line}");
                 Console.WriteLine("  ─────────────────────────────────────────────\n");
+            }
 
-                // ── Piezas del reel (crédito de música EN el video) ──
-                const string sampleCredit =
-                    "Música: Hyperfun — Kevin MacLeod (incompetech.com) · CC BY 4.0";
-
+            {
                 sw.Restart();
                 var reelSlides = await newsService.GenerateReelSlidesAsync(
-                    newsItem, content, [], maxKeyPoints: 3, musicCredit: sampleCredit);
+                    newsItem, content, [], maxKeyPoints: 3);
                 sw.Stop();
                 for (var i = 0; i < reelSlides.Count; i++)
                     await File.WriteAllBytesAsync(
                         Path.Join(outDir, $"news-{slug}-reel-slide{i + 1}.jpg"), reelSlides[i]);
-                Console.WriteLine($"  [reel slides ×{reelSlides.Count}, crédito CC en la última]  ({sw.ElapsedMilliseconds} ms)");
+                Console.WriteLine($"  [reel slides ×{reelSlides.Count}]  ({sw.ElapsedMilliseconds} ms)");
 
-                var (trailerBg, trailerOv) = newsService.GenerateVideoReelLayers(content, sampleCredit);
-                await File.WriteAllBytesAsync(Path.Join(outDir, $"news-{slug}-trailer-bg.jpg"), trailerBg);
+                // Las dos capas del reel de tráiler. Son PNG con alpha y se
+                // componen SOBRE el video, así que abiertas sueltas se ven casi
+                // vacías — para revisarlas de verdad hay que mirarlas encima de
+                // un frame, o renderizar el reel entero con ffmpeg.
+                //
+                // Sin API key el heurístico no llena cuando/donde ni siempre el
+                // resumen (los redacta la IA), así que se inyectan valores de
+                // muestra cuando vienen vacíos: si no, la vista previa no muestra
+                // las líneas que justamente hay que revisar.
+                var previewContent = content with
+                {
+                    Cuando = content.Cuando ?? "1 de julio 2026",
+                    Donde = content.Donde ?? "Crunchyroll",
+                    Resumen = content.Resumen ?? "MAPPA confirmó la nueva temporada para el invierno de 2027.",
+                };
+
+                var (trailerHook, trailerOv) = newsService.GenerateVideoReelLayers(previewContent);
+                await File.WriteAllBytesAsync(Path.Join(outDir, $"news-{slug}-trailer-hook.png"), trailerHook);
                 await File.WriteAllBytesAsync(Path.Join(outDir, $"news-{slug}-trailer-overlay.png"), trailerOv);
-                Console.WriteLine("  [trailer-reel layers: bg + overlay con crédito]");
+                Console.WriteLine(
+                    $"  [trailer-reel layers: hook \"{AnimeNewsImageService.HookTextFor(content)}\" + " +
+                    $"pie \"{AnimeNewsImageService.FooterTextFor(previewContent)}\"]");
             }
         }
 

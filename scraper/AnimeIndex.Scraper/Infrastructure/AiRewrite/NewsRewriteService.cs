@@ -92,6 +92,10 @@ public class NewsRewriteService(
         sb.AppendLine("Devolvé un JSON con exactamente estas claves:");
         sb.AppendLine("""
             {
+              "hook": "3 a 6 PALABRAS para el primer frame del video, en tipografía gigante. Máx 30 caracteres. Nombrá la obra o el hecho concreto — nada de ganchos vacíos tipo 'no vas a creer esto'. Sin punto final. Escribilo normal: el renderer lo pasa a mayúsculas. Ej: 'Jujutsu Kaisen vuelve', 'Free Fire x anime', 'Murió el creador de Berserk'.",
+              "cuando": "CUÁNDO pasa lo que anuncia la noticia, corto y en español: '1 de julio 2026', 'enero 2027', 'otoño 2026', 'ya disponible', '20 de noviembre'. SOLO si la fecha aparece en el material de referencia. Si no aparece, null. NO la deduzcas, NO la estimes, NO uses tu conocimiento previo para completarla: una fecha equivocada es peor que ninguna.",
+              "donde": "DÓNDE se va a poder ver, corto: 'Crunchyroll', 'Netflix', 'cines de Japón', 'Disney+'. Misma regla que cuando: SOLO si está en el material de referencia, si no null.",
+              "resumen": "UNA frase COMPLETA de máximo 90 caracteres que se muestra sobre el video, debajo de la fecha. Tiene que entenderse sola, sin haber leído nada más, y cerrar con punto. Contá QUÉ pasó, no repitas el hook. Si no te entra en 90 caracteres, acortá la idea — NO la cortes por la mitad. Ej: 'MAPPA confirmó la cuarta temporada para el invierno de 2027.'",
               "headline": "titular original, atractivo, máx ~80 caracteres. Frase completa, SIN puntos suspensivos.",
               "lede": "una sola frase que amplíe el titular, máx ~110 caracteres. Completa, SIN puntos suspensivos.",
               "key_points": ["3 a 5 ideas cortas, autoconclusivas y bien distintas entre sí, máx ~95 caracteres cada una. Cada una es una frase COMPLETA, sin '...' ni recortes. Van en las slides."],
@@ -101,6 +105,15 @@ public class NewsRewriteService(
             """);
         sb.AppendLine();
         sb.AppendLine("IMPORTANTE: key_points (slides) y caption (cuerpo del post) NO pueden decir lo mismo — el caption suma contexto y detalle.");
+        sb.AppendLine();
+        // "cuando"/"donde" se renderizan como una línea propia sobre el video
+        // ("1 DE JULIO 2026 • CRUNCHYROLL"), así que un dato equivocado queda
+        // quemado en el reel a la vista de todos. Por eso se insiste acá además
+        // del schema: los modelos completan fechas plausibles con demasiada
+        // facilidad, y para esto preferimos el hueco antes que el invento.
+        sb.AppendLine("SOBRE \"cuando\" y \"donde\": se muestran QUEMADOS sobre el video, así que un dato "
+                    + "equivocado queda a la vista de todos. Extraelos del material de referencia y nada más. "
+                    + "Si el material no dice la fecha o la plataforma, poné null. Preferimos el hueco al invento.");
         return sb.ToString();
     }
 
@@ -141,7 +154,17 @@ public class NewsRewriteService(
             .Take(10)
             .ToList();
 
-        return new NewsContent(headline!, Clean(dto.Lede), keyPoints, caption!, hashtags, FromAi: true);
+        return new NewsContent(headline!, Clean(dto.Lede), keyPoints, caption!, hashtags,
+            FromAi: true, Hook: Clean(dto.Hook),
+            // Se capan cortos: son una línea sobre el video, no una frase. Un
+            // modelo que devuelve "a partir del 1 de julio de 2026 en exclusiva
+            // por Crunchyroll" en `cuando` se descarta en vez de romper el layout.
+            Cuando: ShortMeta(dto.Cuando, 24), Donde: ShortMeta(dto.Donde, 22),
+            // 90 es el presupuesto real del renderer: más que eso no entra en 2
+            // líneas sobre el video. Si el modelo se pasa se descarta entero —
+            // recortarlo acá nos devolvería el mismo texto cortado que este
+            // campo vino a evitar.
+            Resumen: ShortMeta(dto.Resumen, 90));
     }
 
     // ── Heuristic fallback (clean, but not a true rewrite) ───────────────────────
@@ -163,28 +186,73 @@ public class NewsRewriteService(
             if (!string.IsNullOrWhiteSpace(s) && s!.Length >= 20) keyPoints.Add(s!);
         }
 
-        // Caption = cuerpo un poco más completo que las slides, sin dumpear el
-        // artículo entero ni su chrome: el lede + hasta 2 frases de contexto de
-        // párrafos POSTERIORES (los que NO se usaron como key points), así el texto
-        // del post no es idéntico a lo que ya se ve en las imágenes. La profundidad
-        // real (reescritura con más contexto) la aporta la IA; esto es el fallback
-        // cuando no hay API key o se agotó la cuota.
+        // Caption = el cuerpo de la noticia, lo más completo que dé el artículo.
+        //
+        // Antes arrancaba en el párrafo 3 para "no repetir lo que ya se ve en las
+        // slides", y eso lo dejaba anémico: con un artículo de 3 párrafos el
+        // caption terminaba siendo SOLO el lede. Además desde sep-2026 el reel de
+        // tráiler ya no lleva slides de puntos clave (maxKeyPoints: 0), así que
+        // esos párrafos no se muestran en ningún lado — saltearlos era tirar la
+        // única información que teníamos. Caso real: "Witch on the Holy Night"
+        // (10-sep-2026), donde Gemini bloqueó el rewrite por un falso positivo de
+        // seguridad y el post salió con dos renglones.
+        //
+        // Se recorre TODO el artículo desde el párrafo 1 y se corta por
+        // presupuesto de caracteres, no por índice.
         var caption = new StringBuilder();
         if (!string.IsNullOrWhiteSpace(lede)) caption.Append(lede);
-        for (var i = 3; i < paragraphs.Count && caption.Length < 600; i++)
+        for (var i = 1; i < paragraphs.Count && caption.Length < 1200; i++)
         {
-            var s = FirstSentence(paragraphs[i], 160);
+            var s = FirstSentence(paragraphs[i], 220);
             if (string.IsNullOrWhiteSpace(s) || s!.Length < 25) continue;
+            // Sin repetir el lede ni una frase ya incluida
+            if (caption.ToString().Contains(s!, StringComparison.OrdinalIgnoreCase)) continue;
             if (caption.Length > 0 && caption[^1] is not ('.' or '!' or '?')) caption.Append('.');
             caption.Append("\n\n").Append(s);
         }
         if (caption.Length > 0 && caption[^1] is not ('.' or '!' or '?')) caption.Append('.');
-        caption.Append("\n\n¿Qué opinás? Te lo contamos completo en SheicobAnime.");
 
-        return new NewsContent(item.Title.Trim(), lede, keyPoints, caption.ToString(), [], FromAi: false);
+        // Cierre SIN promesa falsa. "Te lo contamos completo en SheicobAnime"
+        // prometía una nota que no existe: el sitio es un índice de series, no un
+        // medio, y el artículo original es de la fuente —que por regla no
+        // acreditamos—. Quien tocaba "link en la bio" buscando la nota completa
+        // no encontraba nada. Ahora se cierra invitando a comentar, que es lo que
+        // sí podemos cumplir y además es señal de ranking.
+        caption.Append("\n\n¿Qué opinás? Contanos en los comentarios 👇");
+
+        // El resumen del video tiene que entrar COMPLETO o no ir. Sin IA no hay
+        // quien redacte una frase de 90 caracteres, así que se busca la primera
+        // oración del artículo que YA entre en el presupuesto; si ninguna entra,
+        // queda null y el renderer no dibuja nada. Recortar acá reintroduciría
+        // el "…" que este campo vino a sacar.
+        var resumen = paragraphs
+            .Select(p => FirstSentence(p, 400))
+            .FirstOrDefault(s => s is { Length: >= 25 and <= 90 } && !s.EndsWith('…'));
+
+        return new NewsContent(item.Title.Trim(), lede, keyPoints, caption.ToString(), [],
+            FromAi: false, Resumen: resumen);
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Un dato de meta ("cuando"/"donde") solo sirve si es CORTO: va en una línea
+    /// sobre el video junto al otro. Más largo que el cap se descarta entero en
+    /// vez de romper el layout o salir recortado a la mitad. También se filtran
+    /// los "null"/"n/a" que los modelos devuelven como texto en vez de como null.
+    /// Público estático para tests.
+    /// </summary>
+    public static string? ShortMeta(string? raw, int maxLen)
+    {
+        var s = Clean(raw)?.TrimEnd('.', ',', ';');
+        if (string.IsNullOrWhiteSpace(s)) return null;
+        if (NullishText.Contains(s)) return null;
+        return s.Length <= maxLen ? s : null;
+    }
+
+    private static readonly HashSet<string> NullishText =
+        new(StringComparer.OrdinalIgnoreCase)
+        { "null", "none", "n/a", "na", "-", "?", "desconocido", "sin fecha", "no especificado", "no especificada" };
 
     private static string? Clean(string? s)
     {
@@ -216,7 +284,12 @@ public class NewsRewriteService(
         {
             var slice = s[..maxLen];
             var space = slice.LastIndexOf(' ');
-            s = (space > 0 ? slice[..space] : slice).TrimEnd();
+            s = (space > 0 ? slice[..space] : slice).TrimEnd(' ', ',', ';', ':');
+            // Puntos suspensivos al recortar. Sin esto el fragmento sale pelado y
+            // se lee como un error, no como una frase cortada: el 10-sep-2026 un
+            // reel mostraba "…está en producción temprana, con una ventana de" y
+            // ahí terminaba, quemado sobre el video.
+            s += "…";
         }
         return s;
     }
@@ -224,6 +297,10 @@ public class NewsRewriteService(
     private static string Truncate(string s, int max) => s.Length <= max ? s : s[..max] + "…";
 
     private sealed record RewriteDto(
+        [property: JsonPropertyName("hook")]       string? Hook,
+        [property: JsonPropertyName("cuando")]     string? Cuando,
+        [property: JsonPropertyName("donde")]      string? Donde,
+        [property: JsonPropertyName("resumen")]    string? Resumen,
         [property: JsonPropertyName("headline")]   string? Headline,
         [property: JsonPropertyName("lede")]       string? Lede,
         [property: JsonPropertyName("key_points")] List<string>? KeyPoints,

@@ -133,24 +133,29 @@ public class InstagramVideoServiceTests
     public void BuildTrailerReelArguments_UsesOriginalTrailerAudio()
     {
         var args = InstagramVideoService.BuildTrailerReelArguments(
-            "trailer.mp4", "bg.jpg", "overlay.png", [], "out.mp4", 40);
+            "trailer.mp4", "hook.png", "overlay.png", [], "out.mp4", 40);
 
         // El tráiler entra salteando el arranque (logos/negro) CON su audio
         // original — nada de música nuestra ni pista silenciosa
         Assert.Contains("-ss 1.5 -i \"trailer.mp4\"", args);
-        Assert.Contains("[1:a]apad,atrim=0:40", args);
+        Assert.Contains("[0:a]apad,atrim=0:40", args);
         Assert.Contains("-map [v] -map [a]", args);
         Assert.DoesNotContain("anullsrc", args);
         Assert.DoesNotContain("music", args);
-        // Fade-out del audio al cierre (40 − 1.8 = 38.2) y nivel social estándar
-        Assert.Contains("afade=t=out:st=38.2", args);
+        // Fade-out corto del audio al cierre (40 − 0.9 = 39.1) y nivel estándar
+        Assert.Contains("afade=t=out:st=39.1", args);
         Assert.Contains("loudnorm=I=-16", args);
-        // Banda de video capada y congelada si el clip es corto
-        Assert.Contains("crop=1080:'min(ih,900)'", args);
+        // El clip entra ENTERO en la caja fija (sin recortes) y se congela si
+        // quedó corto. La caja no depende del aspecto de la fuente.
+        Assert.Contains("scale=1080:600:force_original_aspect_ratio=decrease", args);
         Assert.Contains("tpad=stop_mode=clone", args);
-        // Fondo + tráiler + overlay de texto con el slide-up de marca
-        Assert.Contains("overlay=x='(W-w)/2':y=240", args);
+        // Y se ancla a una Y FIJA: el video ocupa 610-1210 y nada se le escribe
+        // encima — el pie arranca recién en 1240 (ver DrawVideoReelFooter).
+        Assert.Contains("overlay=x='(W-w)/2':y=610", args);
+        Assert.DoesNotContain("crop=1080:'min(ih", args);
         Assert.Contains("fade=t=in:st=0.5:d=0.8:alpha=1", args);
+        // …pero NADA de fade desde negro sobre el video (ver test dedicado)
+        Assert.DoesNotContain("fade=t=in:st=0:d=0.4", args);
         // Specs de Reels intactas
         Assert.Contains("-movflags +faststart", args);
         Assert.Contains("format=yuv420p", args);
@@ -161,7 +166,7 @@ public class InstagramVideoServiceTests
     public void BuildTrailerReelArguments_BurnsSpanishSubtitlesWhenProvided()
     {
         var args = InstagramVideoService.BuildTrailerReelArguments(
-            "t.mp4", "bg.jpg", "ov.png", [], "out.mp4", 30,
+            "t.mp4", "hook.png", "ov.png", [], "out.mp4", 30,
             subtitlesPath: @"C:\temp\subs.vtt");
 
         // El filtro subtitles va sobre la banda del tráiler, con la ruta
@@ -171,7 +176,7 @@ public class InstagramVideoServiceTests
 
         // Sin subs no hay filtro
         var noSubs = InstagramVideoService.BuildTrailerReelArguments(
-            "t.mp4", "bg.jpg", "ov.png", [], "out.mp4", 30);
+            "t.mp4", "hook.png", "ov.png", [], "out.mp4", 30);
         Assert.DoesNotContain("subtitles=", noSubs);
     }
 
@@ -189,7 +194,7 @@ public class InstagramVideoServiceTests
     public void BuildTrailerReelArguments_AppendsInfoSlidesAfterTrailer()
     {
         var args = InstagramVideoService.BuildTrailerReelArguments(
-            "t.mp4", "bg.jpg", "ov.png", ["kp1.jpg", "cta.jpg"], "out.mp4", 30);
+            "t.mp4", "hook.png", "ov.png", ["kp1.jpg", "cta.jpg"], "out.mp4", 30);
 
         // Las 2 slides entran como inputs 3 y 4 y se concatenan tras el tráiler
         Assert.Contains("-i \"kp1.jpg\"", args);
@@ -201,9 +206,482 @@ public class InstagramVideoServiceTests
         Assert.Contains("trim=duration=30", args);
         // Total = 30 + 2×3.5 = 37s; el audio del tráiler cubre TODO el reel
         Assert.Contains("-t 37", args);
-        Assert.Contains("[1:a]apad,atrim=0:37", args);
-        // Fade-out del audio al final de las slides (37 − 1.8 = 35.2)
-        Assert.Contains("afade=t=out:st=35.2", args);
+        Assert.Contains("[0:a]apad,atrim=0:37", args);
+        // Fade-out del audio al final de las slides (37 − 0.9 = 36.1)
+        Assert.Contains("afade=t=out:st=36.1", args);
+    }
+}
+
+/// <summary>
+/// El primer frame decide el skip. La mediana de <c>reels_skip_rate</c> medida el
+/// 10-sep-2026 es 55 % — más de la mitad de la gente pasa de largo — y el cuartil
+/// que menos skipea hace 7,6× las views del que más. Arrancar en negro regalaba
+/// ese instante: el reel de tráiler tenía <c>fade=t=in:st=0:d=0.4</c> sobre el
+/// video y el motion-card <c>fade=t=in:st=0:d=0.6</c> sobre el fondo.
+/// </summary>
+public class FirstFrameTests
+{
+    [Fact]
+    public void TrailerReel_StartsAtFullBrightness_NoFadeFromBlack()
+    {
+        var args = InstagramVideoService.BuildTrailerReelArguments(
+            "t.mp4", "hook.png", "ov.png", ["kp.jpg"], "out.mp4", 30);
+
+        // Ningún fade de VIDEO desde negro…
+        Assert.DoesNotContain("fade=t=in:st=0:d=0.4", args);
+        Assert.DoesNotContain("fade=t=in:st=0:d=0.6", args);
+        // …y el trim del segmento del tráiler sigue en su lugar
+        Assert.Contains("trim=duration=30.0,setpts=PTS-STARTPTS[seg0]", args);
+        // El fade del TEXTO (canal alpha, arranca a los 0.5s) no se toca: es la
+        // animación de marca, no un arranque en negro.
+        Assert.Contains("fade=t=in:st=0.5:d=0.8:alpha=1", args);
+    }
+
+    [Fact]
+    public void MotionCard_StartsAtFullBrightness_NoFadeFromBlack()
+    {
+        var plain   = InstagramVideoService.BuildFfmpegArguments("in.png", "out.mp4", 12);
+        var layered = InstagramVideoService.BuildFfmpegArguments(
+            "bg.jpg", "out.mp4", 12, overlayPath: "overlay.png");
+
+        foreach (var args in new[] { plain, layered })
+        {
+            Assert.DoesNotContain("fade=t=in:st=0:d=0.6", args);
+            // El Ken Burns sigue intacto — lo que se sacó es solo el fade
+            Assert.Contains("zoompan=z=", args);
+            Assert.Contains("format=yuv420p", args);
+        }
+
+        // Con overlay, la animación del texto sobrevive
+        Assert.Contains("fade=t=in:st=0.5:d=0.8:alpha=1", layered);
+        // Y el fade de AUDIO tampoco se toca (nada que ver con el primer frame)
+        Assert.Contains("afade=t=in:st=0:d=0.8",
+            InstagramVideoService.BuildFfmpegArguments("in.png", "o.mp4", 12, musicPath: "m.mp3"));
+    }
+}
+
+/// <summary>
+/// Composición full-bleed del reel de tráiler: el propio clip, desenfocado y
+/// ampliado, hace de fondo, y la banda nítida va centrada encima. Antes el fondo
+/// era un panel abismo fijo y la banda ocupaba 900 de 1920 px — el 47 % de la
+/// pantalla flotando sobre un fondo muerto.
+/// </summary>
+public class FullBleedTrailerTests
+{
+    private static string Args(double seconds = 30) =>
+        InstagramVideoService.BuildTrailerReelArguments(
+            "t.mp4", "hook.png", "ov.png", ["cta.jpg"], "out.mp4", seconds);
+
+    [Fact]
+    public void TheTrailerIsDecodedOnceAndUsedTwice()
+    {
+        var args = Args();
+
+        // Una sola decodificación, dos ramas
+        Assert.Contains("[0:v]fps=30,split=2[src][blurbase]", args);
+        // El fondo YA NO es una imagen aparte: no hay input de bg
+        Assert.DoesNotContain("bg.jpg", args);
+        Assert.Single(System.Text.RegularExpressions.Regex.Matches(args, @"-i ""t\.mp4"""));
+    }
+
+    [Fact]
+    public void BackgroundIsBlurredSmallThenUpscaled()
+    {
+        var args = Args();
+
+        // El blur se calcula en 270×480 (≈16× más barato que a 1080×1920) y
+        // recién después se amplía a pantalla completa
+        Assert.Contains("[blurbase]scale=270:480:force_original_aspect_ratio=increase", args);
+        Assert.Contains("crop=270:480,gblur=sigma=10", args);
+        Assert.Contains("scale=1080:1920:flags=bicubic", args);
+        // El gblur nunca corre a resolución completa
+        Assert.DoesNotContain("scale=1080:1920:flags=bicubic,gblur", args);
+    }
+
+    [Fact]
+    public void HookLayerHasNoFade_EditorialLayerDoes()
+    {
+        var args = Args();
+
+        // El gancho se compone tal cual, desde el frame 0
+        Assert.Contains("[1:v]format=rgba[hk]", args);
+        Assert.Contains("[base][hk]overlay=x=0:y=0[hooked]", args);
+        // El bloque editorial sí entra animado, encima del gancho
+        Assert.Contains("[2:v]format=rgba,fade=t=in:st=0.5:d=0.8:alpha=1[ov]", args);
+        Assert.Contains("[hooked][ov]overlay=", args);
+    }
+
+    [Theory]
+    // Proporcional al largo: los PV oficiales abren con logos de distribuidora
+    // que duran 3-6 s, así que en un tráiler largo saltearse 1,5 s era regalarle
+    // el arranque del reel a un logo.
+    [InlineData(120, 6.0)]   // techo
+    [InlineData(90, 6.0)]    // 10.8 → techo
+    [InlineData(30, 3.6)]
+    [InlineData(17, 2.0)]    // teaser corto
+    [InlineData(8, 1.5)]     // piso
+    [InlineData(0, 1.5)]     // duración desconocida → piso
+    public void StartSkipScalesWithDuration(double duration, double expected)
+        => Assert.Equal(expected, InstagramVideoService.TrailerStartSkipFor(duration));
+
+    [Fact]
+    public void StartSkipReachesTheFilterGraph()
+    {
+        var args = InstagramVideoService.BuildTrailerReelArguments(
+            "t.mp4", "hook.png", "ov.png", [], "out.mp4", 26, startSkip: 4.8);
+
+        Assert.Contains("-ss 4.8 -i \"t.mp4\"", args);
+    }
+}
+
+/// <summary>
+/// El gancho del primer frame: 3-6 palabras enormes. Lo escribe la IA, y sin él
+/// se derivan las primeras palabras del titular — el titular ENTERO no sirve,
+/// porque ~80 caracteres se rompen en 3-5 líneas chicas.
+/// </summary>
+/// <summary>
+/// La frase del pie del reel entra COMPLETA o no se pone. Antes usaba el Lede,
+/// que está escrito para el caption (~110 caracteres) y sobre el video no
+/// entraba: salía "…está en producción temprana, con una ventana de…" y ahí
+/// terminaba, que se lee como un error y no como un recorte.
+/// </summary>
+public class FooterTextTests
+{
+    private static AnimeIndex.Scraper.Infrastructure.AiRewrite.NewsContent With(
+        string? resumen, string? lede) =>
+        new("Titular cualquiera", lede, [], "cuerpo", [], FromAi: true, Resumen: resumen);
+
+    [Fact]
+    public void PrefersTheResumen_WrittenForTheVideo()
+        => Assert.Equal("MAPPA confirmó la cuarta temporada para 2027.",
+            AnimeNewsImageService.FooterTextFor(
+                With("MAPPA confirmó la cuarta temporada para 2027.", "un lede cualquiera")));
+
+    [Fact]
+    public void FallsBackToTheLede_OnlyIfItAlreadyFits()
+    {
+        // Corto: sirve
+        Assert.Equal("El estudio lo confirmó hoy.",
+            AnimeNewsImageService.FooterTextFor(With(null, "El estudio lo confirmó hoy.")));
+
+        // Largo: NO se recorta, se descarta — mejor el hueco que el "…"
+        var largo = new string('a', 120);
+        Assert.Null(AnimeNewsImageService.FooterTextFor(With(null, largo)));
+    }
+
+    [Theory]
+    // Nada usable → nada dibujado
+    [InlineData(null, null)]
+    [InlineData("", "")]
+    public void ReturnsNullWhenThereIsNothingThatFits(string? resumen, string? lede)
+        => Assert.Null(AnimeNewsImageService.FooterTextFor(With(resumen, lede)));
+
+    [Fact]
+    public void RejectsTextThatAlreadyCameTruncated()
+    {
+        // Si el candidato YA viene con puntos suspensivos, ponerlo sobre el video
+        // reintroduce exactamente el problema que este campo vino a resolver.
+        Assert.Null(AnimeNewsImageService.FooterTextFor(
+            With(null, "El estudio confirmó que la película está en producción temprana, con una ventana de…")));
+    }
+}
+
+public class HookTextTests
+{
+    private static AnimeIndex.Scraper.Infrastructure.AiRewrite.NewsContent With(
+        string headline, string? hook) =>
+        new(headline, null, [], "cuerpo", [], FromAi: true, Hook: hook);
+
+    [Fact]
+    public void UsesTheAiHookWhenItFits()
+        => Assert.Equal("Jujutsu Kaisen vuelve",
+            AnimeNewsImageService.HookTextFor(
+                With("Jujutsu Kaisen confirma su cuarta temporada para 2027", "Jujutsu Kaisen vuelve")));
+
+    [Theory]
+    // Sin hook (heurística, cuota agotada, o el modelo ignoró el campo)
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    // Y con un hook que se fue de largo: deja de ser gancho, se descarta
+    [InlineData("Jujutsu Kaisen confirma oficialmente su cuarta temporada")]
+    public void FallsBackToTheFirstWordsOfTheHeadline(string? hook)
+    {
+        var text = AnimeNewsImageService.HookTextFor(
+            With("Jujutsu Kaisen confirma su cuarta temporada para 2027", hook));
+
+        // Las primeras palabras nombran la obra, que es lo que importa
+        Assert.StartsWith("Jujutsu Kaisen", text);
+        Assert.True(text.Length <= 30, $"gancho de {text.Length} caracteres: {text}");
+    }
+
+    [Theory]
+    // Un separador suelto al inicio dejaba el token vacío y CORTABA el loop, así
+    // que el fallback devolvía el titular entero (~80 caracteres) y WrapFit lo
+    // truncaba en seco a 2 líneas, sin puntos suspensivos.
+    [InlineData("— Confirmado: Jujutsu Kaisen vuelve en 2027", "Confirmado")]
+    // El "de" colgando se cae por la regla de conectores, como corresponde
+    [InlineData("- Nuevo tráiler de Solo Leveling", "Nuevo tráiler")]
+    public void SkipsLeadingSeparators_InsteadOfFallingBackToTheWholeHeadline(
+        string headline, string expected)
+    {
+        var text = AnimeNewsImageService.HookTextFor(With(headline, null));
+
+        Assert.Equal(expected, text);
+        Assert.True(text.Length <= 30, $"gancho de {text.Length} caracteres: {text}");
+    }
+
+    [Fact]
+    public void NeverReturnsEmpty_EvenWithAOneWordHeadline()
+    {
+        Assert.Equal("Berserk", AnimeNewsImageService.HookTextFor(With("Berserk", null)));
+        // Una sola palabra larguísima no entra en el presupuesto pero igual sale
+        Assert.NotEqual("", AnimeNewsImageService.HookTextFor(
+            With("Supercalifragilisticoexpialidosisaurio", null)));
+    }
+
+    [Theory]
+    // La coma cierra la cláusula y ahí está el gancho — no se corta por conteo
+    [InlineData("Murió Kentaro Miura, el creador de Berserk", "Murió Kentaro Miura")]
+    [InlineData("Chainsaw Man: la película ya tiene fecha", "Chainsaw Man")]
+    // Y un conector colgando por el corte se cae ("… confirma su" → "… confirma")
+    [InlineData("Jujutsu Kaisen confirma su cuarta temporada para 2027", "Jujutsu Kaisen confirma")]
+    [InlineData("Solo Leveling estrena el tráiler de la temporada 3", "Solo Leveling estrena")]
+    // Los pronombres átonos de los verbos pronominales también cuelgan: caso real
+    // del 10-sep-2026, el gancho salía "MY HERO ACADEMIA SE"
+    [InlineData("My Hero Academia se une a la Selección Japonesa de Fútbol", "My Hero Academia")]
+    public void DerivedHookCutsAtTheClause(string headline, string expected)
+        => Assert.Equal(expected, AnimeNewsImageService.HookTextFor(With(headline, null)));
+}
+
+/// <summary>
+/// El caption abre pidiendo el share, no repitiendo el titular. IG corta a ~125
+/// caracteres: ese renglón es lo único que se lee sin tocar "más", y hasta
+/// sep-2026 se gastaba en el mismo texto que ya está quemado en el cover.
+/// </summary>
+public class ShareHookTests
+{
+    [Fact]
+    public void PickShareHook_IsStableAcrossCallsAndVariesByHeadline()
+    {
+        const string a = "Jujutsu Kaisen confirma su cuarta temporada";
+        const string b = "Free Fire suma un crossover con Attack on Titan";
+
+        // Estable: la misma noticia da siempre el mismo gancho (no depende de
+        // string.GetHashCode, que .NET aleatoriza por proceso)
+        Assert.Equal(AnimeNewsPublisherService.PickShareHook(a),
+                     AnimeNewsPublisherService.PickShareHook(a));
+
+        // Y a lo largo del feed rota: 20 titulares distintos no pueden dar todos
+        // el mismo renglón de apertura
+        var variants = Enumerable.Range(0, 20)
+            .Select(i => AnimeNewsPublisherService.PickShareHook($"{a} parte {i}"))
+            .Distinct()
+            .Count();
+        Assert.True(variants > 1, "el gancho debería variar entre noticias");
+
+        Assert.NotEqual(string.Empty, AnimeNewsPublisherService.PickShareHook(b));
+    }
+
+    [Theory]
+    [InlineData("A")]
+    [InlineData("Una noticia cualquiera")]
+    [InlineData("")]
+    public void PickShareHook_AsksForTheShare_AndFitsThePreview(string seed)
+    {
+        // Los 125 caracteres del preview de IG tienen que alcanzar para el
+        // gancho entero — si se corta, el pedido no se lee.
+        var hook = AnimeNewsPublisherService.PickShareHook(seed);
+
+        Assert.True(hook.Length <= 125, $"gancho demasiado largo: {hook.Length}");
+        Assert.DoesNotContain("📰", hook);   // el titular ya está en el video
+    }
+}
+
+/// <summary>
+/// Zona segura de Instagram en las piezas 9:16. En Reels IG dibuja su propia UI
+/// ENCIMA del video — caption, usuario, ticker de audio y la botonera derecha se
+/// comen los ~420 px de abajo, el header y la cámara los ~250 de arriba — y en la
+/// grilla del perfil el cover se recorta a 4:5. Hasta sep-2026 el titular se
+/// anclaba al 7 % del borde inferior (y≈1786 de 1920), o sea que el bloque
+/// titular+lede vivía casi entero debajo de la botonera y en la grilla no
+/// aparecía. El test renderiza de verdad y mira los píxeles.
+/// </summary>
+public class InstagramSafeAreaTests
+{
+    // El cover sin foto rinde el panel abismo + scrim: todo lo que quede claro
+    // en esa pieza es texto. Umbral de luminancia bien por encima del fondo
+    // (abismo 0x0B1422 → ~19; el scrim, más oscuro todavía).
+    private const int TextLuminance = 110;
+
+    private static AnimeNewsImageService NewService() =>
+        new(new NoHttpFactory(), Microsoft.Extensions.Logging.Abstractions.NullLogger<AnimeNewsImageService>.Instance);
+
+    private static AnimeIndex.Api.Data.Entities.AnimeNewsItem Item() =>
+        new() { Title = "Jujutsu Kaisen confirma su cuarta temporada", SourceKey = "test" };
+
+    private static AnimeIndex.Scraper.Infrastructure.AiRewrite.NewsContent Content() =>
+        new("Jujutsu Kaisen confirma su cuarta temporada para 2027",
+            "El estudio MAPPA lo anunció junto al primer arte promocional de la nueva etapa",
+            ["Sukuna vuelve como antagonista central", "El estreno quedó fijado para el invierno de 2027"],
+            "cuerpo", ["jujutsukaisen"], FromAi: true);
+
+    /// <summary>Cuenta píxeles claros (= texto) por fila.</summary>
+    private static int[] TextPixelsPerRow(byte[] jpeg)
+    {
+        using var bmp = SkiaSharp.SKBitmap.Decode(jpeg);
+        var rows = new int[bmp.Height];
+        for (var y = 0; y < bmp.Height; y++)
+            for (var x = 0; x < bmp.Width; x++)
+            {
+                var p = bmp.GetPixel(x, y);
+                // El alpha importa en las capas RGBA del reel (el JPEG del cover
+                // siempre trae 255, así que el chequeo no lo afecta).
+                if (p.Alpha < 128) continue;
+                // Luma BT.601 — barato y suficiente para separar texto de fondo
+                if ((299 * p.Red + 587 * p.Green + 114 * p.Blue) / 1000 >= TextLuminance) rows[y]++;
+            }
+        return rows;
+    }
+
+    [Fact]
+    public async Task Story916Cover_KeepsAllTextOutOfInstagramsChrome()
+    {
+        var rows = TextPixelsPerRow(await NewService().GenerateStoryAsync(Item(), Content(), []));
+
+        // 1920 − 420 = 1500: nada de texto de ahí para abajo…
+        var belowSafe = rows.Skip(1500).Sum();
+        Assert.True(belowSafe == 0,
+            $"{belowSafe} píxeles de texto caen bajo la UI de IG (y ≥ 1500)");
+
+        // …ni arriba del header/cámara (los primeros 250 px)
+        var aboveSafe = rows.Take(250).Sum();
+        Assert.True(aboveSafe == 0, $"{aboveSafe} píxeles de texto caen bajo el header de IG (y < 250)");
+
+        // Y el titular SÍ se rindió: si no, el test pasaría con un lienzo vacío
+        Assert.True(rows.Sum() > 5000, "no se rindió texto — el test no probaría nada");
+    }
+
+    [Fact]
+    public async Task Story916Cover_SurvivesTheProfileGrid_4by5Crop()
+    {
+        var rows = TextPixelsPerRow(await NewService().GenerateStoryAsync(Item(), Content(), []));
+
+        // La grilla del perfil recorta el cover a 4:5 centrado: 1080×1350 →
+        // se pierden 285 px arriba y abajo. El titular tiene que sobrevivir.
+        var inGrid = rows.Skip(285).Take(1350).Sum();
+        Assert.Equal(rows.Sum(), inGrid);
+    }
+
+    [Fact]
+    public async Task SquarePieces_KeepTheirTightMargin()
+    {
+        // Las piezas cuadradas (carrusel de feed) no tienen chrome encima: el
+        // margen chico de siempre se conserva, no se les aplica el de reels.
+        var slides = await NewService().GenerateCarouselSlidesAsync(Item(), Content(), [], maxKeyPoints: 2);
+        var rows   = TextPixelsPerRow(slides[0]);
+
+        // Con el margen de reels (22 %) el texto terminaría antes de y=842; con
+        // el de feed (7 %) llega cerca de y=1004.
+        var lastTextRow = Array.FindLastIndex(rows, n => n > 0);
+        Assert.True(lastTextRow > 900, $"el cuadrado perdió su margen chico (última fila con texto: {lastTextRow})");
+        Assert.True(lastTextRow < 1080, "el texto se sale del canvas");
+    }
+
+    [Fact]
+    public void VideoReelLayers_SplitTheScreenBetweenHookAndHeadline()
+    {
+        // El gancho arriba (visible desde el frame 0) y el bloque editorial
+        // abajo: entre los dos tiene que quedar libre la banda del tráiler,
+        // que va centrada en el 46 % de la altura.
+        var (hookPng, overlayPng) = NewService().GenerateVideoReelLayers(
+            Content() with { Hook = "Jujutsu Kaisen vuelve" });
+
+        var hook    = TextPixelsPerRow(hookPng);
+        var overlay = TextPixelsPerRow(overlayPng);
+
+        // Gancho: arriba, despejando el header del reel, y nada por debajo del
+        // medio. El techo acá es 250 y no 288: los 288 los impone el recorte 4:5
+        // de la grilla, que aplica a la PORTADA y no a los frames del video, así
+        // que sobre el reel el logo puede subir hasta el header. Con 288 caía en
+        // la misma franja que el kicker y la primera línea del gancho.
+        Assert.True(hook.Take(250).Sum() == 0, "el gancho invade el header de IG");
+        Assert.True(hook.Sum() > 3000, "no se rindió el gancho");
+        Assert.True(hook.Skip(900).Sum() == 0, "el gancho baja hasta la banda del tráiler");
+
+        // Titular: abajo, y NADA bajo la UI de IG
+        Assert.True(overlay.Skip(1500).Sum() == 0, "el titular cae bajo la botonera de IG");
+        Assert.True(overlay.Sum() > 3000, "no se rindió el titular");
+        Assert.True(overlay.Take(1000).Sum() == 0, "el titular sube hasta la banda del tráiler");
+    }
+
+    [Fact]
+    public void VideoReelLayers_LeaveTheVideoBandCompletelyClean()
+    {
+        // El video tiene que verse LIMPIO: nada de texto encima. La banda ocupa
+        // y=610..1210 (caja fija, ver InstagramVideoService), así que NINGUNA de
+        // las dos capas puede tener un píxel ahí.
+        //
+        // Antes se solapaban: la banda se centraba en una fracción de la altura
+        // y el pie se anclaba al borde inferior, así que con un clip 16:9 la
+        // banda terminaba en y≈1264 y la línea de cuándo/dónde arrancaba en
+        // y≈1198 — escrita sobre el tráiler. Solo se vio renderizando un reel
+        // completo con video real.
+        var (hook, overlay) = NewService().GenerateVideoReelLayers(
+            Content() with
+            {
+                Hook = "Jujutsu Kaisen vuelve",
+                Cuando = "1 de julio 2026",
+                Donde = "Crunchyroll",
+                Resumen = "MAPPA confirmó la cuarta temporada para el invierno de 2027.",
+            });
+
+        foreach (var (capa, rows) in new[]
+                 {
+                     ("gancho", TextPixelsPerRow(hook)),
+                     ("pie", TextPixelsPerRow(overlay)),
+                 })
+        {
+            var invaden = rows.Skip(610).Take(600).Sum();
+            Assert.True(invaden == 0,
+                $"la capa de {capa} escribe {invaden} píxeles sobre la banda de video (y 610-1210)");
+        }
+    }
+
+    [Fact]
+    public void VideoReelLayers_NeverDrawTheMusicCreditOnTheVideo()
+    {
+        // "Música: Hyperfun — Kevin MacLeod · CC BY 4.0" ocupaba un renglón del
+        // reel con algo que al espectador no le dice nada. La atribución sigue
+        // saliendo —CC BY obliga— pero como última línea del caption.
+        var (hook, overlay) = NewService().GenerateVideoReelLayers(Content());
+
+        // El pie ahora termina en la marca de agua: nada entre ella y el borde.
+        var rows = TextPixelsPerRow(overlay);
+        Assert.True(rows.Skip(1500).Sum() == 0, "algo cae bajo la botonera de IG");
+        Assert.True(TextPixelsPerRow(hook).Skip(1500).Sum() == 0, "el gancho invade la botonera");
+    }
+
+    [Fact]
+    public void VideoReelLayers_HookLayerIsReadableOverAnyFrame()
+    {
+        // El fondo dejó de ser el panel abismo controlado: ahora es un frame
+        // cualquiera del tráiler. Sin scrim, el gancho desaparece sobre una
+        // escena clara — así que la capa tiene que traer el suyo.
+        var (hookPng, _) = NewService().GenerateVideoReelLayers(Content());
+
+        using var bmp = SkiaSharp.SKBitmap.Decode(hookPng);
+        // Arriba de todo, el scrim es casi opaco…
+        Assert.True(bmp.GetPixel(20, 10).Alpha > 200, "falta el scrim superior");
+        // …y hacia el medio ya se disolvió (el video tiene que verse)
+        Assert.True(bmp.GetPixel(20, 900).Alpha < 20, "el scrim superior tapa la banda del tráiler");
+    }
+
+    /// <summary>Sin fotos que bajar, el renderer nunca pide un HttpClient.</summary>
+    private sealed class NoHttpFactory : IHttpClientFactory
+    {
+        public HttpClient CreateClient(string name) =>
+            throw new InvalidOperationException("el test no debería descargar imágenes");
     }
 }
 
@@ -439,6 +917,221 @@ public class NewsRelevanceTests
 
         Assert.True(estreno > figura, $"estreno ({estreno}) debería superar a figura ({figura})");
         Assert.True(fallecido > figura, $"luto ({fallecido}) debería superar a figura ({figura})");
+    }
+
+    [Fact]
+    public void HeuristicNewsScore_PutsCrossoversOnTop_TheRealPeaks()
+    {
+        // Los dos picos históricos de la cuenta son cruces con audiencias
+        // masivas de AFUERA del anime — Free Fire × anime (35.192 views) y The
+        // Ninth Jedi de Star Wars (27.622) — y hasta sep-2026 la heurística no
+        // tenía ni una de esas palabras, o sea que les daba 0 mientras eran lo
+        // mejor que publicamos.
+        var freeFire = AnimeNewsPublisherService.HeuristicNewsScore(
+            "Free Fire anuncia una colaboración con Attack on Titan");
+        var starWars = AnimeNewsPublisherService.HeuristicNewsScore(
+            "Star Wars: The Ninth Jedi presenta su serie anime");
+        var nicho = AnimeNewsPublisherService.HeuristicNewsScore(
+            "Una novela ligera poco conocida confirma adaptación al anime");
+
+        Assert.True(freeFire > nicho, $"crossover de gaming ({freeFire}) vs nicho ({nicho})");
+        Assert.True(starWars > nicho, $"crossover occidental ({starWars}) vs nicho ({nicho})");
+    }
+
+    [Fact]
+    public void HeuristicNewsScore_RejectsBrandMentionsOutsideTheAnimeWorld_RealCase()
+    {
+        // Caso REAL: "ANÁLISIS – Marvel's Wolverine" (feed de Crunchyroll) se
+        // llevó los 8 puntos de crossover por nombrar a Marvel y SALIÓ PUBLICADO
+        // el 10-sep-2026 (run 34493207860). Es una reseña de videojuego, sin
+        // nada de anime. La marca sola no es un cruce.
+        var resenaDeJuego = AnimeNewsPublisherService.HeuristicNewsScore("ANÁLISIS – Marvel's Wolverine");
+        var cruceReal = AnimeNewsPublisherService.HeuristicNewsScore(
+            "Marvel anuncia una colaboración con el anime de My Hero Academia");
+
+        Assert.True(cruceReal > resenaDeJuego,
+            $"el cruce real ({cruceReal}) tiene que ganarle a la reseña de juego ({resenaDeJuego})");
+        Assert.True(resenaDeJuego <= 0, $"la reseña de juego no debería puntuar ({resenaDeJuego})");
+    }
+
+    [Theory]
+    // Con contexto de anime, el cruce cuenta…
+    [InlineData("Star Wars: The Ninth Jedi presenta su serie anime", true)]
+    [InlineData("Free Fire anuncia una colaboración con Attack on Titan", true)]
+    [InlineData("El manga de Fortnite llega en octubre", true)]
+    // …sin él, no
+    [InlineData("ANÁLISIS – Marvel's Wolverine", false)]
+    [InlineData("Se filtró el tráiler de la nueva de Batman", false)]
+    public void MentionsAnimeWorld_GatesTheCrossoverBonus(string title, bool expected)
+        => Assert.Equal(expected, AnimeNewsPublisherService.MentionsAnimeWorld(
+            TrailerDownloadService.Normalize(title)));
+
+    [Fact]
+    public void HeuristicNewsScore_DemotesOtherRegionNews_RealCase()
+    {
+        // Caso REAL: "[España] Studio Ghibli protagoniza una actividad del
+        // programa Toma la palabra" salió publicado el 10-sep-2026 (run
+        // 34496989827). Un evento de TV española que no le interesa a nadie en
+        // México ni en Argentina, pero pasaba el gate de anime por nombrar a
+        // Ghibli. La cuenta apunta a toda LATAM.
+        var regional = AnimeNewsPublisherService.HeuristicNewsScore(
+            "[España] Studio Ghibli protagoniza una actividad del programa Toma la palabra");
+        var latam = AnimeNewsPublisherService.HeuristicNewsScore(
+            "Studio Ghibli anuncia una nueva película para 2027");
+
+        Assert.True(latam > regional, $"LATAM ({latam}) tiene que ganarle a la regional ({regional})");
+    }
+
+    [Fact]
+    public void HeuristicNewsScore_DoesNotTreatDistributorsAsCrossovers()
+    {
+        // "llega a Netflix" es dónde se ve, no un cruce de audiencias. Si contara
+        // como crossover, cualquier noticia rutinaria de licencias se comería los
+        // 8 puntos y desplazaría a los cruces de verdad.
+        var licencia = AnimeNewsPublisherService.HeuristicNewsScore(
+            "La serie llega a Netflix en octubre");
+        var crossover = AnimeNewsPublisherService.HeuristicNewsScore(
+            "La serie anuncia un crossover con Fortnite");
+
+        Assert.True(crossover > licencia, $"crossover ({crossover}) vs licencia ({licencia})");
+    }
+
+    [Fact]
+    public void HeuristicNewsScore_IsAccentInsensitive()
+    {
+        // El score normaliza el texto, así que "colaboración"/"colaboracion" y
+        // "película"/"pelicula" valen lo mismo. Escribir las keywords con tilde
+        // contra texto normalizado es el bug que ya mató la escalera de tráilers
+        // durante dos semanas (ver StripSpanishSuffix).
+        Assert.Equal(
+            AnimeNewsPublisherService.HeuristicNewsScore("La película estrena una colaboración"),
+            AnimeNewsPublisherService.HeuristicNewsScore("La pelicula estrena una colaboracion"));
+    }
+}
+
+/// <summary>
+/// El resumen que deja --insights-sync en los logs. Usa MEDIANA y no promedio a
+/// propósito: la distribución es de cola larga (el top 10 se lleva el 39 % de
+/// todas las views), así que el promedio no describe a ninguna pieza real.
+/// </summary>
+public class InsightsSummaryTests
+{
+    private static AnimeIndex.Api.Data.AppDbContext NewDb()
+    {
+        var opts = Microsoft.EntityFrameworkCore.InMemoryDbContextOptionsExtensions.UseInMemoryDatabase(
+                new Microsoft.EntityFrameworkCore.DbContextOptionsBuilder<AnimeIndex.Api.Data.AppDbContext>(),
+                $"insights-{Guid.NewGuid():N}")
+            .Options;
+        return new AnimeIndex.Api.Data.AppDbContext(opts);
+    }
+
+    private static AnimeIndex.Scraper.Infrastructure.Instagram.NewsInsightsSyncService Svc(
+        AnimeIndex.Api.Data.AppDbContext db) =>
+        new(db, null!,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<
+                AnimeIndex.Scraper.Infrastructure.Instagram.NewsInsightsSyncService>.Instance);
+
+    private static AnimeIndex.Api.Data.Entities.AnimeNewsItem Reel(
+        long views, double? watch = null, double? duration = null) =>
+        new()
+        {
+            Id = Guid.NewGuid(),
+            SourceKey = "test",
+            RssGuid = Guid.NewGuid().ToString(),
+            Title = $"Noticia de {views} views",
+            ArticleUrl = "https://example.com",
+            IgReelMediaId = "media-" + views,
+            IgPostedAt = DateTime.UtcNow.AddDays(-1),
+            IgReelViews = views,
+            IgReelAvgWatchSeconds = watch,
+            IgReelDurationSeconds = duration,
+        };
+
+    [Fact]
+    public async Task Summary_ReportsMedianNotMean_SoOneHitDoesNotHideTheFloor()
+    {
+        using var db = NewDb();
+        // Cuatro piezas normales y un pico — la forma real de la distribución.
+        db.AnimeNewsItems.AddRange(Reel(200), Reel(300), Reel(250), Reel(280), Reel(35000));
+        await db.SaveChangesAsync();
+
+        var summary = await Svc(db).SummaryAsync();
+
+        // Mediana 280 (el promedio sería 7.206, que no describe a ninguna)
+        Assert.Contains("views mediana 280", summary);
+        Assert.Contains("total 36030", summary);
+        Assert.Contains("5 reels", summary);
+    }
+
+    [Fact]
+    public async Task Summary_ComputesRealRetention_NotBareWatchTime()
+    {
+        using var db = NewDb();
+        // Mismo watch time, duraciones distintas: 6,9 s de 29,5 es 23 % y de
+        // 55,5 es 12 %. Es EXACTAMENTE la confusión que la columna de duración
+        // vino a resolver — watch time a secas los haría ver iguales.
+        db.AnimeNewsItems.AddRange(
+            Reel(500, watch: 6.9, duration: 29.5),
+            Reel(500, watch: 6.9, duration: 55.5));
+        await db.SaveChangesAsync();
+
+        var summary = await Svc(db).SummaryAsync();
+
+        // Mediana de 23,4 % y 12,4 % → 17,9 % → redondea a 18
+        Assert.Contains("retención mediana 18 %", summary);
+        Assert.Contains("n=2", summary);
+    }
+
+    [Fact]
+    public async Task Summary_SaysSoWhenThereIsNothingToReport()
+    {
+        using var db = NewDb();
+        Assert.Equal("sin reels medidos todavía", await Svc(db).SummaryAsync());
+
+        // Y con reels publicados pero sin duración guardada (los de antes del
+        // sprint 3), la retención no se puede calcular — pero las views sí.
+        db.AnimeNewsItems.Add(Reel(400, watch: 5.0, duration: null));
+        await db.SaveChangesAsync();
+
+        var summary = await Svc(db).SummaryAsync();
+        Assert.Contains("retención mediana sin datos", summary);
+        Assert.Contains("views mediana 400", summary);
+    }
+}
+
+/// <summary>
+/// La duración renderizada viaja con el MP4 porque NO se puede recuperar
+/// después: la API de insights no la expone y avg_watch_time es un promedio, no
+/// la duración. Sin ella solo se puede mirar watch time absoluto, que está
+/// acotado por la duración — que es justo lo que hacía parecer dos hallazgos
+/// distintos a lo que en buena medida era el mismo.
+/// </summary>
+public class RenderedDurationTests
+{
+    [Theory]
+    // n escenas de 4 s solapadas 0,6 s: n·4 − (n−1)·0,6
+    [InlineData(2, 7.4)]
+    [InlineData(3, 10.8)]
+    [InlineData(5, 17.6)]
+    public void SlideshowSeconds_MatchesTheFilterGraph(int slides, double expected)
+    {
+        Assert.Equal(expected, InstagramVideoService.SlideshowSeconds(slides));
+
+        // Y coincide con el -t que se le pasa a ffmpeg — si divergieran,
+        // guardaríamos en la DB una duración que el video no tiene.
+        var args = InstagramVideoService.BuildSlideshowArguments(
+            [.. Enumerable.Range(0, slides).Select(i => $"s{i}.jpg")], "out.mp4");
+        Assert.Contains($"-t {expected.ToString(System.Globalization.CultureInfo.InvariantCulture)} ", args);
+    }
+
+    [Fact]
+    public void TrailerReelDuration_MatchesTheFilterGraph()
+    {
+        // 26 s de tráiler + 1 slide de CTA de 3,5 = 29,5 (el objetivo del sprint 2)
+        var args = InstagramVideoService.BuildTrailerReelArguments(
+            "t.mp4", "hook.png", "ov.png", ["cta.jpg"], "out.mp4", 26);
+
+        Assert.Contains("-t 29.5", args);
     }
 }
 

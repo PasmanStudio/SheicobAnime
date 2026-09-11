@@ -52,7 +52,7 @@ public class InstagramSettings
 
     // Reel de NOTICIAS (slideshow/tráiler + música por IA de la noticia más
     // relevante del pool). La cadencia la fija el cron vía AnimeNews__RunFormat
-    // (5 corridas "reel" por día); sin ese env var, máx. uno cada 24 h.
+    // (7 corridas "reel" por día); sin ese env var, máx. uno cada 24 h.
     // Apagar del todo con Instagram__NewsReelEnabled=false.
     public bool NewsReelEnabled { get; set; } = true;
 
@@ -141,11 +141,28 @@ public class InstagramSettings
     // red murieron así entre el 18 y el 21-ago-2026.
     public string YtDlpProxy { get; set; } = string.Empty;
 
-    // Máximo de segundos de TRÁILER en el reel (la gente quiere VER el tráiler
-    // — cortarlo a los 18s era matar el formato). Si el tráiler dura menos, se
-    // usa lo que haya; el total del reel (tráiler + slides informativas + CTA)
-    // se capa solo a ~60s.
-    public int TrailerClipSeconds { get; set; } = 45;
+    // Máximo de segundos de TRÁILER en el reel. Si el tráiler dura menos, se usa
+    // lo que haya. 90 cubre entero prácticamente cualquier PV oficial.
+    //
+    // Historia, porque este número dio dos vueltas: estaba en 45, se bajó a 26
+    // buscando subir la tasa de finalización, y se volvió a subir a 90 el
+    // 10-sep-2026 por decisión del usuario. El argumento que ganó es el mismo que
+    // ya habíamos usado para rechazar "acortar a 8 s", solo que llevado hasta el
+    // final: `ig_reels_avg_watch_time` está ACOTADO por la duración, así que
+    // cortar el tráiler le pone un techo a la única métrica que correlaciona con
+    // views (rho 0,76).
+    //
+    // El detalle que hace la diferencia: acortar NO recupera watch time. Quien
+    // abandona en el segundo 7 lo abandona igual dure 26 o 90 — la curva de caída
+    // no cambia. Lo único que cambia es el TECHO: con 26 s, el espectador
+    // enganchado que habría mirado 40 s mira 26. Y en un negocio de cola larga
+    // (el top 10 se lleva el 39 % de todas las views) ese espectador enganchado
+    // es justo el que comparte. Recortarle el video para mejorar un promedio es
+    // exactamente el trade-off equivocado.
+    //
+    // Lo que sí se pierde con el tráiler largo: la tasa de finalización y el
+    // loop, que IG cuenta como reproducción nueva. Es un costo real y asumido.
+    public int TrailerClipSeconds { get; set; } = 90;
 
     // ── Suno (música generada FRESCA por reel, vía sunoapi.org — tercero) ──
     // Con la key configurada, cada reel de noticias genera un track instrumental

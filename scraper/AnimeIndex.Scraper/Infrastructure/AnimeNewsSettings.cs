@@ -3,7 +3,7 @@ namespace AnimeIndex.Scraper.Infrastructure;
 public class AnimeNewsSettings
 {
     /// <summary>
-    /// Maximum news items to post per run. Con el cron curado (5 corridas/día) cada corrida
+    /// Maximum news items to post per run. Con el cron curado (7 corridas/día) cada corrida
     /// publica solo la más relevante del pool → mantener en 1 (subirlo vuelve a spamear).
     /// </summary>
     public int MaxPerRun { get; set; } = 1;
@@ -12,8 +12,8 @@ public class AnimeNewsSettings
     public int MaxAgeHours { get; set; } = 48;
 
     /// <summary>
-    /// Formato forzado de la corrida — lo setea el workflow según el horario del
-    /// cron (cada franja publica un formato fijo: 5 reels + 2 carruseles por día).
+    /// Formato forzado de la corrida — lo setea el workflow. Desde sep-2026 las 7
+    /// corridas programadas son "reel"; "post" quedó solo para disparos manuales.
     ///   "reel" → siempre Reel (sin dedup de 24 h — el cron ya espacia los horarios).
     ///   "post" → nunca Reel (carrusel/imagen común, como siempre).
     ///   vacío u otro valor → automático: máx. un reel por 24 h (corridas manuales

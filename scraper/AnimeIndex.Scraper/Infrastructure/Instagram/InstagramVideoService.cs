@@ -12,8 +12,22 @@ public class FfmpegNotAvailableException(string message, Exception? inner = null
     : InvalidOperationException(message, inner);
 
 /// <summary>
+/// Un reel renderizado y su duración EXACTA en segundos.
+///
+/// La duración viaja con el MP4 porque no se puede recuperar después: la API de
+/// insights no la expone, y derivarla de las métricas no da (avg_watch_time es
+/// un promedio, no la duración). Pero acá la sabemos con precisión — es la que
+/// le pasamos a ffmpeg. Sin este dato solo se puede mirar watch time absoluto,
+/// que está ACOTADO por la duración: por eso "los reels con tráiler retienen
+/// más" y "el watch time predice las views" parecían dos hallazgos distintos
+/// cuando en buena medida eran el mismo (ver §2.C del playbook).
+/// </summary>
+public sealed record RenderedReel(byte[] Mp4, double DurationSeconds);
+
+/// <summary>
 /// Generates a 9:16 "motion card" MP4 (1080×1920) from a still card image:
-/// zoom lento estilo Ken Burns + fade-in, pista de audio AAC silenciosa.
+/// zoom lento estilo Ken Burns, pista de audio AAC silenciosa. Nada de fade
+/// desde negro al arranque — el frame 0 va a brillo completo.
 /// Cumple los requisitos de Reels de la Graph API: H.264 yuv420p, closed GOP,
 /// moov atom al frente (+faststart), 3s–15min, ≤300MB.
 ///
@@ -46,7 +60,7 @@ public class InstagramVideoService(
     /// sobre la tarjeta completa. Con <paramref name="musicMp3"/> mezcla el
     /// track (fade in/out + loudnorm); sin música, pista AAC silenciosa.
     /// </summary>
-    public async Task<byte[]> GenerateMotionCardAsync(
+    public async Task<RenderedReel> GenerateMotionCardAsync(
         byte[] cardImageBytes,
         byte[]? overlayPng = null,
         byte[]? musicMp3 = null,
@@ -84,7 +98,7 @@ public class InstagramVideoService(
             var bytes = await File.ReadAllBytesAsync(outputPath, ct);
             logger.LogInformation("Generated motion-card reel: {Seconds}s, {Mb:F1} MB",
                 settings.ReelDurationSeconds, bytes.Length / 1024.0 / 1024.0);
-            return bytes;
+            return new RenderedReel(bytes, settings.ReelDurationSeconds);
         }
         finally
         {
@@ -97,24 +111,75 @@ public class InstagramVideoService(
     }
 
     // ── Reel de tráiler ──
-    // El tráiler entra desde el segundo 1.5 (saltea logos/negro inicial); las
-    // slides informativas de después duran 3.5s cada una; el audio ORIGINAL
+    // Las slides informativas de después duran 3.5s cada una; el audio ORIGINAL
     // del tráiler suena de fondo durante todo el reel con fade-out al cierre.
-    private const double TrailerStartSkip = 1.5;
     private const double InfoSlideSeconds = 3.5;
-    private const double TrailerAudioFadeOut = 1.8;
+    // Fade-out corto: 1.8s era un disolve largo que arrastraba el final del reel.
+    private const double TrailerAudioFadeOut = 0.9;
+
+    // Cuánto tráiler saltear al arranque (ver TrailerStartSkipFor).
+    private const double MinStartSkip = 1.5;
+    private const double MaxStartSkip = 6.0;
+    private const double StartSkipFraction = 0.12;
+
+    // ── Composición full-bleed ──
+    // El propio tráiler, desenfocado y ampliado, hace de fondo; la banda nítida
+    // va centrada encima. Antes el fondo era un panel abismo fijo y la banda
+    // ocupaba 900 de 1920 px — el 47 % de la pantalla flotando sobre un fondo
+    // muerto, que se lee como "una tarjeta con un video adentro" en vez de como
+    // un video.
+    //
+    // El desenfoque se calcula en CHICO y se amplía: gblur con sigma grande
+    // sobre 1080×1920 a 30 fps es carísimo, y sobre 270×480 es ~16× más barato
+    // con un resultado indistinguible una vez ampliado.
+    private const int BlurWidth = 270;
+    private const int BlurHeight = 480;
+    private const int BlurSigma = 10;
+    // ── Las tres zonas del reel, que NO se pisan ────────────────────────────
+    // El video tiene que verse LIMPIO: nada de texto encima. Antes la banda se
+    // centraba en una fracción de la altura y el pie se anclaba al borde
+    // inferior, así que se solapaban — con un clip 16:9 la banda terminaba en
+    // y≈1264 y la línea de cuándo/dónde arrancaba en y≈1198, escrita sobre el
+    // video (visto renderizando un reel completo con un tráiler real).
+    //
+    //   288 – 600   gancho (kicker + 2 líneas)
+    //   610 – 1210  BANDA DE VIDEO, sin nada encima
+    //   1240 – 1478 pie (cuándo/dónde + lede + marca de agua)
+    //
+    // La banda es una CAJA FIJA y el clip entra adentro con
+    // force_original_aspect_ratio=decrease: así el alto no depende del aspecto
+    // de la fuente. Un 16:9 a 1080 de ancho da 1066×600 —prácticamente ancho
+    // completo— y un clip vertical entra angosto pero entero, sin recortarle
+    // medio cuadro como hacía el crop anterior. El desenfoque llena los lados.
+    private const int BandBoxWidth = 1080;
+    private const int BandBoxHeight = 600;
+    private const int BandTop = 610;
 
     /// <summary>
-    /// Renders el Reel "tráiler + titular": el PV como banda central sobre el
-    /// fondo abismo CON SU AUDIO ORIGINAL (el sonido del tráiler es lo que la
-    /// gente quiere escuchar), overlay de texto de marca, y a continuación las
-    /// slides informativas de la noticia (puntos clave + CTA) con el audio del
-    /// tráiler siguiendo de fondo. El formato de las cuentas grandes de
-    /// noticias de anime.
+    /// Cuánto tráiler saltear al arranque. Era la constante 1,5 s, pero los PV
+    /// oficiales abren con logos de distribuidora y estudio que duran 3-6 s: en
+    /// un tráiler de 90 s eso significaba regalarle a un logo el primer segundo
+    /// y medio del reel, que es justo donde se decide el skip. Proporcional a la
+    /// duración, con piso y techo para no saltearse el contenido de un teaser
+    /// corto ni quedarse corto en uno largo. Duración desconocida (0) → el piso.
+    /// Público estático para tests.
     /// </summary>
-    public async Task<byte[]> GenerateTrailerReelAsync(
+    public static double TrailerStartSkipFor(double durationSeconds) =>
+        durationSeconds <= 0
+            ? MinStartSkip
+            : Math.Round(Math.Clamp(durationSeconds * StartSkipFraction, MinStartSkip, MaxStartSkip), 1);
+
+    /// <summary>
+    /// Renders el Reel "tráiler + titular": el PV a pantalla completa —banda
+    /// nítida sobre una copia desenfocada de sí mismo— CON SU AUDIO ORIGINAL (el
+    /// sonido del tráiler es lo que la gente quiere escuchar), el gancho desde el
+    /// frame 0, el bloque editorial entrando con el slide-up de marca, y a
+    /// continuación las slides informativas con el audio del tráiler siguiendo de
+    /// fondo. El formato de las cuentas grandes de noticias de anime.
+    /// </summary>
+    public async Task<RenderedReel> GenerateTrailerReelAsync(
         string trailerPath,
-        byte[] backgroundJpeg,
+        byte[] hookPng,
         byte[] overlayPng,
         IReadOnlyList<byte[]> infoSlides,
         double trailerDurationSeconds,
@@ -123,13 +188,13 @@ public class InstagramVideoService(
     {
         var workDir = Path.Join(Path.GetTempPath(), $"ig-reel-{Guid.NewGuid():N}");
         Directory.CreateDirectory(workDir);
-        var bgPath = Path.Join(workDir, "bg.jpg");
+        var hookPath = Path.Join(workDir, "hook.png");
         var overlayPath = Path.Join(workDir, "overlay.png");
         var outputPath = Path.Join(workDir, "reel.mp4");
 
         try
         {
-            await File.WriteAllBytesAsync(bgPath, backgroundJpeg, ct);
+            await File.WriteAllBytesAsync(hookPath, hookPng, ct);
             await File.WriteAllBytesAsync(overlayPath, overlayPng, ct);
             var slidePaths = new List<string>(infoSlides.Count);
             for (var i = 0; i < infoSlides.Count; i++)
@@ -139,35 +204,45 @@ public class InstagramVideoService(
                 slidePaths.Add(p);
             }
 
-            // El tráiler entra desde el segundo 1.5 → los subtítulos se
-            // re-timean para que no queden corridos respecto del video.
+            // El tráiler entra pasado el arranque → los subtítulos se re-timean
+            // para que no queden corridos respecto del video.
+            var startSkip = TrailerStartSkipFor(trailerDurationSeconds);
             string? subsWorkPath = null;
             if (subtitlesPath is not null)
             {
                 var shifted = ShiftVttTimestamps(
-                    await File.ReadAllTextAsync(subtitlesPath, ct), -TrailerStartSkip);
+                    await File.ReadAllTextAsync(subtitlesPath, ct), -startSkip);
                 subsWorkPath = Path.Join(workDir, "subs.vtt");
                 await File.WriteAllTextAsync(subsWorkPath, shifted, ct);
             }
 
             // Cuánto tráiler mostrar: lo disponible tras saltear la intro, capado
-            // por settings y porque el reel completo no debería pasar de ~60s.
-            var maxForBudget = 59.0 - slidePaths.Count * InfoSlideSeconds;
-            var available = trailerDurationSeconds > TrailerStartSkip + 4
-                ? trailerDurationSeconds - TrailerStartSkip
+            // por settings y por el techo duro del reel.
+            //
+            // 120 s de techo: la idea es que el tráiler se vea ENTERO (ver
+            // TrailerClipSeconds — cortarlo le pone un techo al watch time, que es
+            // lo único que correlaciona con views). Sigue habiendo un tope porque
+            // PickBestSearchResult acepta videos de hasta 6 min y un "tráiler" de
+            // 6 minutos es un compilado, no un PV.
+            var maxForBudget = 120.0 - slidePaths.Count * InfoSlideSeconds;
+            var available = trailerDurationSeconds > startSkip + 4
+                ? trailerDurationSeconds - startSkip
                 : settings.TrailerClipSeconds;   // duración desconocida → usar el cap
             var trailerSeconds = Math.Round(
                 Math.Min(Math.Min(available, settings.TrailerClipSeconds), maxForBudget), 1);
 
             var args = BuildTrailerReelArguments(
-                trailerPath, bgPath, overlayPath, slidePaths, outputPath, trailerSeconds, subsWorkPath);
+                trailerPath, hookPath, overlayPath, slidePaths, outputPath, trailerSeconds,
+                startSkip, subsWorkPath);
             await RunFfmpegAsync(args, ct);
 
             var bytes = await File.ReadAllBytesAsync(outputPath, ct);
+            var totalSeconds = trailerSeconds + slidePaths.Count * InfoSlideSeconds;
             logger.LogInformation(
-                "Generated trailer reel: {Trailer}s de tráiler + {Slides} slides, {Mb:F1} MB",
-                trailerSeconds, slidePaths.Count, bytes.Length / 1024.0 / 1024.0);
-            return bytes;
+                "Generated trailer reel: {Trailer}s de tráiler (skip {Skip}s) + {Slides} slides " +
+                "= {Total}s, {Mb:F1} MB",
+                trailerSeconds, startSkip, slidePaths.Count, totalSeconds, bytes.Length / 1024.0 / 1024.0);
+            return new RenderedReel(bytes, totalSeconds);
         }
         finally
         {
@@ -178,17 +253,20 @@ public class InstagramVideoService(
     }
 
     /// <summary>
-    /// Público + static para poder testear sin ffmpeg. Inputs: 0 = fondo (imagen
-    /// loopeada), 1 = tráiler (video + SU AUDIO — nunca música nuestra), 2 =
-    /// overlay de texto, 3.. = slides informativas. El tráiler entra desde el
-    /// segundo 1.5 (saltea logos/negro inicial), escalado a 1080 de ancho, banda
-    /// centrada en y=240; después se concatenan las slides (Ken Burns suave)
-    /// mientras el audio del tráiler sigue sonando, con fade-out al cierre.
+    /// Público + static para poder testear sin ffmpeg. Inputs: 0 = tráiler
+    /// (video + SU AUDIO — nunca música nuestra), 1 = capa del gancho, 2 =
+    /// overlay editorial, 3.. = slides informativas.
+    ///
+    /// El tráiler se usa DOS veces: una copia desenfocada y ampliada llena los
+    /// 1080×1920 de fondo, y la banda nítida va centrada encima. Sobre eso, el
+    /// gancho desde el frame 0 (sin fade) y el bloque editorial con el slide-up
+    /// de marca. Después se concatenan las slides (Ken Burns suave) mientras el
+    /// audio del tráiler sigue sonando, con un fade-out corto al cierre.
     /// </summary>
     public static string BuildTrailerReelArguments(
-        string trailerPath, string backgroundPath, string overlayPath,
+        string trailerPath, string hookPath, string overlayPath,
         IReadOnlyList<string> infoSlidePaths, string outputPath, double trailerSeconds,
-        string? subtitlesPath = null)
+        double startSkip = MinStartSkip, string? subtitlesPath = null)
     {
         var inv = System.Globalization.CultureInfo.InvariantCulture;
         var totalSeconds = trailerSeconds + infoSlidePaths.Count * InfoSlideSeconds;
@@ -197,9 +275,9 @@ public class InstagramVideoService(
 
         var inputs = new List<string>
         {
-            $"-loop 1 -framerate {Fps} -t {trailArg} -i \"{backgroundPath}\"",
             // -ss antes de -i: seek rápido; trae video Y audio del tráiler
-            $"-ss {TrailerStartSkip.ToString("0.0#", inv)} -i \"{trailerPath}\"",
+            $"-ss {startSkip.ToString("0.0#", inv)} -i \"{trailerPath}\"",
+            $"-loop 1 -framerate {Fps} -t {trailArg} -i \"{hookPath}\"",
             $"-loop 1 -framerate {Fps} -t {trailArg} -i \"{overlayPath}\"",
         };
         // Slides: input de UN frame (sin -loop) + zoompan de d frames — mismo
@@ -217,18 +295,33 @@ public class InstagramVideoService(
 
         var filters = new List<string>
         {
-            // Tráiler: 1080 de ancho, banda capada a 900px de alto (por si es
-            // vertical), congelado al final si el clip quedó corto
-            "[1:v]scale=1080:-2,setsar=1,fps=30," +
-            "crop=1080:'min(ih,900)':0:'(ih-min(ih,900))/2'," +
+            // Una sola decodificación del tráiler, dos usos
+            $"[0:v]fps={Fps},split=2[src][blurbase]",
+            // Fondo: el propio tráiler desenfocado y ampliado a pantalla completa.
+            // El blur se hace en 270×480 y se escala — mismo resultado visible que
+            // gblur a 1080×1920, ~16× más barato en el runner.
+            $"[blurbase]scale={BlurWidth}:{BlurHeight}:force_original_aspect_ratio=increase,setsar=1," +
+            $"crop={BlurWidth}:{BlurHeight},gblur=sigma={BlurSigma}," +
+            $"scale={OutWidth}:{OutHeight}:flags=bicubic," +
+            $"tpad=stop_mode=clone:stop_duration={trailArg}[bg]",
+            // Banda nítida: el clip entra ENTERO dentro de la caja fija, sin
+            // recortes, y se congela al final si quedó corto
+            $"[src]scale={BandBoxWidth}:{BandBoxHeight}:force_original_aspect_ratio=decrease,setsar=1," +
             subsFilter +
-            $"tpad=stop_mode=clone:stop_duration={totalArg}[tr]",
-            // Fondo abismo + tráiler como banda superior-central
-            "[0:v][tr]overlay=x='(W-w)/2':y=240[base]",
-            // Overlay de texto de marca: mismo slide-up + fade del motion-card
+            $"tpad=stop_mode=clone:stop_duration={trailArg}[band]",
+            $"[bg][band]overlay=x='(W-w)/2':y={BandTop}[base]",
+            // El gancho está desde el FRAME 0 y sin fade: es lo único que puede
+            // frenar el scroll antes de que se decida el skip (mediana 55 %).
+            "[1:v]format=rgba[hk]",
+            "[base][hk]overlay=x=0:y=0[hooked]",
+            // El bloque editorial sí entra animado — es la firma de marca, no el
+            // gancho. SIN fade desde negro sobre el video: el `fade=t=in:st=0:d=0.4`
+            // que había acá arrancaba el reel en negro justo en el peor momento.
+            // De paso arregla la miniatura: IG toma el primer frame cuando el
+            // cover_url no sube.
             "[2:v]format=rgba,fade=t=in:st=0.5:d=0.8:alpha=1[ov]",
-            "[base][ov]overlay=x=0:y='pow(1-min(1,max(0,(t-0.5)/0.9)),3)*80'," +
-            $"fade=t=in:st=0:d=0.4,trim=duration={trailArg},setpts=PTS-STARTPTS[seg0]",
+            "[hooked][ov]overlay=x=0:y='pow(1-min(1,max(0,(t-0.5)/0.9)),3)*80'," +
+            $"trim=duration={trailArg},setpts=PTS-STARTPTS[seg0]",
         };
 
         // Cada slide informativa: Ken Burns suave y duración fija
@@ -251,7 +344,7 @@ public class InstagramVideoService(
         // slides; apad cubre tráilers más cortos que el reel; fade-out al cierre.
         var fadeOutStart = Math.Max(0, totalSeconds - TrailerAudioFadeOut).ToString("0.0#", inv);
         filters.Add(
-            $"[1:a]apad,atrim=0:{totalArg}," +
+            $"[0:a]apad,atrim=0:{totalArg}," +
             $"afade=t=out:st={fadeOutStart}:d={TrailerAudioFadeOut.ToString("0.0#", inv)}," +
             "loudnorm=I=-16:TP=-1.5:LRA=11[a]");
 
@@ -261,7 +354,10 @@ public class InstagramVideoService(
             $"-filter_complex \"{string.Join(';', filters)}\"",
             "-map [v] -map [a]",
             $"-t {totalArg} -r {Fps}",
-            "-c:v libx264 -profile:v high -preset medium -flags +cgop -g 60 -sc_threshold 0",
+            // preset "fast" y no "medium": desde que el tráiler va entero (hasta 90 s) el
+            // render creció ~3×, y a 6 Mbps sobre 1080×1920 la diferencia de calidad
+            // entre los dos presets es imperceptible mientras que la de tiempo no lo es.
+            "-c:v libx264 -profile:v high -preset fast -flags +cgop -g 60 -sc_threshold 0",
             "-b:v 6M -maxrate 8M -bufsize 12M",
             "-c:a aac -b:a 128k -ar 44100",
             "-movflags +faststart",
@@ -273,7 +369,7 @@ public class InstagramVideoService(
     /// alternado (in/out) y crossfade entre escenas, más música/pista muda.
     /// Con 1 sola slide degrada al motion-card simple.
     /// </summary>
-    public async Task<byte[]> GenerateSlideshowAsync(
+    public async Task<RenderedReel> GenerateSlideshowAsync(
         IReadOnlyList<byte[]> slides,
         byte[]? musicMp3 = null,
         int musicStartSeconds = 0,
@@ -307,9 +403,10 @@ public class InstagramVideoService(
             await RunFfmpegAsync(args, ct);
 
             var bytes = await File.ReadAllBytesAsync(outputPath, ct);
-            logger.LogInformation("Generated slideshow reel: {Slides} slides, {Mb:F1} MB",
-                slides.Count, bytes.Length / 1024.0 / 1024.0);
-            return bytes;
+            var totalSeconds = SlideshowSeconds(slides.Count);
+            logger.LogInformation("Generated slideshow reel: {Slides} slides = {Total}s, {Mb:F1} MB",
+                slides.Count, totalSeconds, bytes.Length / 1024.0 / 1024.0);
+            return new RenderedReel(bytes, totalSeconds);
         }
         finally
         {
@@ -318,6 +415,18 @@ public class InstagramVideoService(
             catch (UnauthorizedAccessException) { /* best-effort */ }
         }
     }
+
+    /// <summary>
+    /// Duración total de un slideshow de <paramref name="slideCount"/> escenas:
+    /// cada una dura S y se solapa F con la siguiente. Público estático para
+    /// tests y para que el publisher la guarde sin re-derivarla.
+    ///
+    /// Solo aplica con 2 o más escenas: con una sola,
+    /// <see cref="GenerateSlideshowAsync"/> delega en el motion-card, que dura
+    /// <c>ReelDurationSeconds</c> y devuelve su propia duración.
+    /// </summary>
+    public static double SlideshowSeconds(int slideCount) =>
+        Math.Round(slideCount * SlideSeconds - Math.Max(0, slideCount - 1) * CrossfadeSeconds, 1);
 
     /// <summary>
     /// Público + static para poder testear sin ffmpeg. Inputs: 0..n-1 = slides
@@ -394,7 +503,10 @@ public class InstagramVideoService(
             $"-filter_complex \"{string.Join(';', filters)}{audioFilter}\"",
             $"-map [v] {audioMap}",
             $"-t {durArg} -r {Fps}",
-            "-c:v libx264 -profile:v high -preset medium -flags +cgop -g 60 -sc_threshold 0",
+            // preset "fast" y no "medium": desde que el tráiler va entero (hasta 90 s) el
+            // render creció ~3×, y a 6 Mbps sobre 1080×1920 la diferencia de calidad
+            // entre los dos presets es imperceptible mientras que la de tiempo no lo es.
+            "-c:v libx264 -profile:v high -preset fast -flags +cgop -g 60 -sc_threshold 0",
             "-b:v 6M -maxrate 8M -bufsize 12M",
             "-c:a aac -b:a 128k -ar 44100",
             "-movflags +faststart",
@@ -421,12 +533,13 @@ public class InstagramVideoService(
         var zoomStep = (MaxZoom - 1.0) / frames;
 
         // zoompan tiembla con inputs chicos: se pre-escala 2× (lanczos) y el
-        // filtro recorta la ventana 1080×1920. fade-in de 0.6s al arranque.
+        // filtro recorta la ventana 1080×1920. SIN fade desde negro: el frame 0
+        // tiene que ser la tarjeta a brillo completo (ver [seg0] del reel de
+        // tráiler — mismo motivo, el skip se decide en el primer instante).
         var backgroundFilter =
             $"[0:v]scale={OutWidth * 2}:{OutHeight * 2}:flags=lanczos," +
             $"zoompan=z='min(1+on*{zoomStep.ToString("0.00000000", inv)},{MaxZoom.ToString("0.00", inv)})'" +
-            $":d={frames}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s={OutWidth}x{OutHeight}:fps={Fps}," +
-            "fade=t=in:st=0:d=0.6";
+            $":d={frames}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s={OutWidth}x{OutHeight}:fps={Fps}";
 
         string videoFilter, overlayInput;
         if (overlayPath is not null)
@@ -480,7 +593,10 @@ public class InstagramVideoService(
             $"-map [v] {audioMap}",
             $"-t {durationSeconds} -r {Fps}",
             // closed GOP + keyframe cada 2s, como piden las specs de Reels
-            "-c:v libx264 -profile:v high -preset medium -flags +cgop -g 60 -sc_threshold 0",
+            // preset "fast" y no "medium": desde que el tráiler va entero (hasta 90 s) el
+            // render creció ~3×, y a 6 Mbps sobre 1080×1920 la diferencia de calidad
+            // entre los dos presets es imperceptible mientras que la de tiempo no lo es.
+            "-c:v libx264 -profile:v high -preset fast -flags +cgop -g 60 -sc_threshold 0",
             "-b:v 6M -maxrate 8M -bufsize 12M",
             "-c:a aac -b:a 128k -ar 44100",
             "-movflags +faststart",

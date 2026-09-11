@@ -1,0 +1,77 @@
+name: Insights — sincronizar métricas de reels a la DB
+
+# Cierra el loop entre publicar y medir.
+#
+# El export a CSV (insights-export.yml) baja las ~800 piezas de la cuenta pero NO
+# sabe qué noticia era cada una, así que responder "¿qué tipo de titular
+# funciona?" pedía cruzar el CSV contra los logs a mano. Y como cada medición
+# costaba una corrida manual de 8 minutos, se medía cada varios meses y en el
+# medio se publicaban 7 piezas por día a ciegas.
+#
+# Esto guarda las métricas AL LADO del titular que las produjo, en
+# anime_news_items. A partir de ahí cada pregunta es una query — y el selector de
+# la noticia del día hace few-shot con nuestros propios resultados en vez de con
+# la intuición genérica del modelo.
+#
+# Semanal y no diario a propósito: las métricas de un reel siguen subiendo
+# durante días, así que sincronizar 60 días para atrás una vez por semana captura
+# la maduración sin gastar llamadas de más.
+
+on:
+  schedule:
+    - cron: '0 9 * * 1'   # lunes 06:00 ART
+  workflow_dispatch:
+    inputs:
+      days:
+        description: 'Cuántos días para atrás sincronizar'
+        type: string
+        default: '60'
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  sync:
+    name: Sync reel insights
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: '9.x'
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-scraper-${{ hashFiles('scraper/**/*.csproj', 'api/AnimeIndex.Api/AnimeIndex.Api.csproj') }}
+          restore-keys: nuget-scraper-
+
+      - name: Restore
+        run: dotnet restore scraper/AnimeIndex.Scraper/AnimeIndex.Scraper.csproj
+
+      - name: Build
+        run: dotnet build scraper/AnimeIndex.Scraper/AnimeIndex.Scraper.csproj --no-restore -c Release
+
+      # Chequeo de 5 segundos antes de gastar la corrida: leer insights necesita
+      # `instagram_manage_insights`, que es OTRO permiso que el de publicar. Un
+      # token que publica bien puede no poder leer métricas, y eso no se nota
+      # hasta la segunda llamada.
+      - name: Verificar scopes del token
+        run: dotnet run --project scraper/AnimeIndex.Scraper --no-build -c Release -- --token-scopes
+        env:
+          Instagram__AccessToken: ${{ secrets.INSTAGRAM_ACCESS_TOKEN }}
+
+      - name: Sincronizar
+        run: >
+          dotnet run --project scraper/AnimeIndex.Scraper --no-build -c Release --
+          --insights-sync ${{ inputs.days || '60' }}
+        env:
+          ASPNETCORE_ENVIRONMENT: Production
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          Instagram__AccessToken: ${{ secrets.INSTAGRAM_ACCESS_TOKEN }}
+          Instagram__IgUserId: ${{ secrets.INSTAGRAM_IG_USER_ID }}
