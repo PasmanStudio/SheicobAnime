@@ -518,8 +518,11 @@ public class AnimeNewsPublisherService(
             //   3. Motion-card de capas (tarjeta única, con música)
             RenderedReel? render = null;
             byte[] coverJpeg;
-            // Atribución CC del track, cuando el slideshow usa uno que la exige.
-            // Viaja hasta el caption: dejó de dibujarse sobre el video.
+            // Atribución CC del track. INVARIANTE: solo se asigna en la rama del
+            // SLIDESHOW, que es la única donde una pista nuestra realmente suena.
+            // El reel de tráiler usa el audio del video, así que acá queda null y
+            // su caption sale sin ninguna línea de música: acreditar un track que
+            // nadie escucha no tiene sentido.
             string? musicCredit = null;
 
             if (igSettings.TrailerReelEnabled)
@@ -1220,6 +1223,10 @@ public class AnimeNewsPublisherService(
     /// renglón del reel con algo que al espectador no le dice nada. Pero no se
     /// puede simplemente omitir: CC BY obliga a acreditar, y el caption es un
     /// lugar aceptado para hacerlo.
+    ///
+    /// Llega con valor SOLO en los reels de slideshow, donde esa pista es el
+    /// audio de la pieza. Los reels de tráiler suenan con el audio del video y
+    /// pasan null, así que su caption no lleva ninguna línea de música.
     /// </summary>
     private string BuildCaption(NewsContent content, string? musicCredit = null)
     {
