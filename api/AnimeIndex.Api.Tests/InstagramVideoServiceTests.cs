@@ -339,6 +339,53 @@ public class FullBleedTrailerTests
 /// se derivan las primeras palabras del titular — el titular ENTERO no sirve,
 /// porque ~80 caracteres se rompen en 3-5 líneas chicas.
 /// </summary>
+/// <summary>
+/// La frase del pie del reel entra COMPLETA o no se pone. Antes usaba el Lede,
+/// que está escrito para el caption (~110 caracteres) y sobre el video no
+/// entraba: salía "…está en producción temprana, con una ventana de…" y ahí
+/// terminaba, que se lee como un error y no como un recorte.
+/// </summary>
+public class FooterTextTests
+{
+    private static AnimeIndex.Scraper.Infrastructure.AiRewrite.NewsContent With(
+        string? resumen, string? lede) =>
+        new("Titular cualquiera", lede, [], "cuerpo", [], FromAi: true, Resumen: resumen);
+
+    [Fact]
+    public void PrefersTheResumen_WrittenForTheVideo()
+        => Assert.Equal("MAPPA confirmó la cuarta temporada para 2027.",
+            AnimeNewsImageService.FooterTextFor(
+                With("MAPPA confirmó la cuarta temporada para 2027.", "un lede cualquiera")));
+
+    [Fact]
+    public void FallsBackToTheLede_OnlyIfItAlreadyFits()
+    {
+        // Corto: sirve
+        Assert.Equal("El estudio lo confirmó hoy.",
+            AnimeNewsImageService.FooterTextFor(With(null, "El estudio lo confirmó hoy.")));
+
+        // Largo: NO se recorta, se descarta — mejor el hueco que el "…"
+        var largo = new string('a', 120);
+        Assert.Null(AnimeNewsImageService.FooterTextFor(With(null, largo)));
+    }
+
+    [Theory]
+    // Nada usable → nada dibujado
+    [InlineData(null, null)]
+    [InlineData("", "")]
+    public void ReturnsNullWhenThereIsNothingThatFits(string? resumen, string? lede)
+        => Assert.Null(AnimeNewsImageService.FooterTextFor(With(resumen, lede)));
+
+    [Fact]
+    public void RejectsTextThatAlreadyCameTruncated()
+    {
+        // Si el candidato YA viene con puntos suspensivos, ponerlo sobre el video
+        // reintroduce exactamente el problema que este campo vino a resolver.
+        Assert.Null(AnimeNewsImageService.FooterTextFor(
+            With(null, "El estudio confirmó que la película está en producción temprana, con una ventana de…")));
+    }
+}
+
 public class HookTextTests
 {
     private static AnimeIndex.Scraper.Infrastructure.AiRewrite.NewsContent With(
@@ -577,8 +624,13 @@ public class InstagramSafeAreaTests
         // y≈1198 — escrita sobre el tráiler. Solo se vio renderizando un reel
         // completo con video real.
         var (hook, overlay) = NewService().GenerateVideoReelLayers(
-            Content() with { Hook = "Jujutsu Kaisen vuelve", Cuando = "1 de julio 2026", Donde = "Crunchyroll" },
-            musicCredit: "Música: Hyperfun — Kevin MacLeod · CC BY 4.0");
+            Content() with
+            {
+                Hook = "Jujutsu Kaisen vuelve",
+                Cuando = "1 de julio 2026",
+                Donde = "Crunchyroll",
+                Resumen = "MAPPA confirmó la cuarta temporada para el invierno de 2027.",
+            });
 
         foreach (var (capa, rows) in new[]
                  {
@@ -593,20 +645,17 @@ public class InstagramSafeAreaTests
     }
 
     [Fact]
-    public void VideoReelLayers_MusicCreditNeverLandsOnTheHeadline()
+    public void VideoReelLayers_NeverDrawTheMusicCreditOnTheVideo()
     {
-        // En vertical SafeBottom devuelve lo mismo para cualquier margen, así
-        // que el crédito CC y la última línea del titular caían en la MISMA
-        // línea de base. En el reel de tráiler musicCredit es siempre null,
-        // pero el defecto estaba y la atribución es obligatoria.
-        var (_, overlay) = NewService().GenerateVideoReelLayers(
-            Content(), musicCredit: "Música: Hyperfun — Kevin MacLeod · CC BY 4.0");
+        // "Música: Hyperfun — Kevin MacLeod · CC BY 4.0" ocupaba un renglón del
+        // reel con algo que al espectador no le dice nada. La atribución sigue
+        // saliendo —CC BY obliga— pero como última línea del caption.
+        var (hook, overlay) = NewService().GenerateVideoReelLayers(Content());
 
+        // El pie ahora termina en la marca de agua: nada entre ella y el borde.
         var rows = TextPixelsPerRow(overlay);
-        // Tiene que haber una franja SIN texto entre el titular y el crédito
-        var gap = rows.Skip(1400).Take(100).Count(n => n == 0);
-        Assert.True(gap > 10, "el crédito CC quedó encimado con el titular");
-        Assert.True(rows.Skip(1500).Sum() == 0, "el crédito cae bajo la botonera de IG");
+        Assert.True(rows.Skip(1500).Sum() == 0, "algo cae bajo la botonera de IG");
+        Assert.True(TextPixelsPerRow(hook).Skip(1500).Sum() == 0, "el gancho invade la botonera");
     }
 
     [Fact]

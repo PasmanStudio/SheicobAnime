@@ -107,12 +107,13 @@ public class AnimeNewsImageService(
     /// hasta <paramref name="maxKeyPoints"/> puntos clave + CTA de cierre —
     /// el mismo contenido editorial del carrusel pero en formato vertical.
     /// ffmpeg las encadena con Ken Burns alternado y crossfades.
-    /// <paramref name="musicCredit"/> (tracks CC) va como texto chico en la
-    /// slide de cierre — la atribución vive en el video, no en el caption.
+    /// La atribución CC de la música NO se dibuja acá: ensuciaba el reel con una
+    /// línea que al espectador no le dice nada. Cuando el track la exige va al
+    /// final del caption (ver <c>BuildCaption</c>).
     /// </summary>
     public async Task<List<byte[]>> GenerateReelSlidesAsync(
         AnimeNewsItem item, NewsContent content, IReadOnlyList<string> imageUrls,
-        int maxKeyPoints = 3, string? musicCredit = null, CancellationToken ct = default)
+        int maxKeyPoints = 3, CancellationToken ct = default)
     {
         const int width = 1080, height = 1920;
         var urls   = BuildImageList(item, imageUrls);
@@ -134,7 +135,7 @@ public class AnimeNewsImageService(
                 slides.Add(RenderKeyPoint(keyPoints[i], photo, focus, width, height));
             }
 
-            slides.Add(RenderCta(width, height, musicCredit));
+            slides.Add(RenderCta(width, height));
             return slides;
         }
         finally { foreach (var p in photos) p.Dispose(); }
@@ -156,7 +157,7 @@ public class AnimeNewsImageService(
     /// fondo muerto — se leía como "una tarjeta con un video adentro".
     /// </summary>
     public (byte[] HookPng, byte[] OverlayPng) GenerateVideoReelLayers(
-        NewsContent content, string? musicCredit = null)
+        NewsContent content)
     {
         const int width = 1080, height = 1920;
         float scale = width / 1080f;
@@ -182,17 +183,14 @@ public class AnimeNewsImageService(
         // fade no importa para una atribución que dura todo el video.
         DrawWatermark(ov, width, height);
 
-        // El pie se apila de abajo hacia arriba y CADA elemento reserva su lugar:
+        // El pie se apila de abajo hacia arriba y cada elemento reserva su lugar:
         // en vertical SafeBottom devuelve lo mismo para cualquier margen, así que
-        // sin esto la marca de agua, el crédito y el texto caen todos en la MISMA
-        // línea de base. Orden: marca de agua (capa del gancho) → crédito CC →
-        // bloque editorial.
+        // sin esto la marca de agua y el texto caerían en la MISMA línea de base.
+        //
+        // El crédito CC de la música ya NO se dibuja acá: ensuciaba el reel con
+        // una línea que al espectador no le dice nada. La atribución, cuando el
+        // track la exige, va al final del caption (ver BuildCaption).
         float pie = SafeBottom(width, height, 0.07f) - WatermarkHeight * scale;
-        if (musicCredit is not null)
-        {
-            DrawMusicCredit(ov, musicCredit, width, pie);
-            pie -= 46 * scale;
-        }
         DrawVideoReelFooter(ov, content, width, height, pie, MetaLineFor(content));
 
         return (EncodePng(hookSurface), EncodePng(ovSurface));
@@ -349,6 +347,33 @@ public class AnimeNewsImageService(
     /// Acá acompaña al gancho y al video, no es el protagonista, y tiene que
     /// caber debajo de la banda sin comerse media pantalla.
     /// </summary>
+    /// Presupuesto de la frase del pie: lo que entra en 2 líneas sobre el video.
+    private const int MaxFooterChars = 90;
+
+    /// <summary>
+    /// La frase que acompaña al video. Devuelve null —y no se dibuja nada— antes
+    /// que devolver algo que vaya a salir cortado.
+    ///
+    /// Usa <see cref="NewsContent.Resumen"/>, que la IA escribe con el
+    /// presupuesto de caracteres puesto. Antes usaba el Lede, que está escrito
+    /// para el CAPTION (~110 caracteres) y sobre el video no entraba: salía
+    /// *"…está en producción temprana, con una ventana de…"* y ahí terminaba, que
+    /// se lee como un error y no como un recorte.
+    ///
+    /// El Lede queda como respaldo SOLO si ya entra completo. Público estático
+    /// para tests.
+    /// </summary>
+    public static string? FooterTextFor(NewsContent content)
+    {
+        foreach (var candidato in new[] { content.Resumen, content.Lede })
+        {
+            var t = candidato?.Trim();
+            if (!string.IsNullOrWhiteSpace(t) && t!.Length <= MaxFooterChars && !t.EndsWith('…'))
+                return t;
+        }
+        return null;
+    }
+
     /// <summary>
     /// El pie del reel de tráiler: la línea de cuándo/dónde y una frase de apoyo.
     ///
@@ -366,9 +391,7 @@ public class AnimeNewsImageService(
         float scale = width / 1080f;
         float x     = width * 0.07f;
 
-        var texto = string.IsNullOrWhiteSpace(content.Lede)
-            ? content.Headline?.Trim()
-            : content.Lede!.Trim();
+        var texto = FooterTextFor(content);
 
         float top = baseline;
         if (!string.IsNullOrWhiteSpace(texto))
@@ -423,7 +446,7 @@ public class AnimeNewsImageService(
     /// </summary>
     public async Task<(byte[] Background, byte[] OverlayPng)> GenerateStoryLayersAsync(
         AnimeNewsItem item, NewsContent content, IReadOnlyList<string> imageUrls,
-        string? musicCredit = null, CancellationToken ct = default)
+        CancellationToken ct = default)
     {
         const int width = 1080, height = 1920;
         using var photo = await TryDownloadFirstUsableAsync(BuildImageList(item, imageUrls), ct);
@@ -442,8 +465,6 @@ public class AnimeNewsImageService(
         var ov = ovSurface.Canvas;
         ov.Clear(SKColors.Transparent);
         DrawCoverText(ov, content, width, height, swipeHint: false);
-        if (musicCredit is not null)
-            DrawMusicCredit(ov, musicCredit, width, SafeBottom(width, height, 0.024f));
 
         return (Encode(bgSurface), EncodePng(ovSurface));
     }
@@ -637,7 +658,7 @@ public class AnimeNewsImageService(
 
     // ── Closing CTA slide ────────────────────────────────────────────────────────
 
-    private static byte[] RenderCta(int width = 1080, int height = 1080, string? musicCredit = null)
+    private static byte[] RenderCta(int width = 1080, int height = 1080)
     {
         using var surface = SKSurface.Create(new SKImageInfo(width, height));
         var canvas = surface.Canvas;
@@ -664,34 +685,16 @@ public class AnimeNewsImageService(
 
         // El logo se sube a la zona segura, y deja lugar arriba del crédito CC
         // cuando hay uno (que ahora también vive dentro de la zona segura).
-        float mark = SafeBottom(width, height, 0.07f) - (musicCredit is null ? 0 : 46 * scale);
+        float mark = SafeBottom(width, height, 0.07f);
         DrawBrandingMark(canvas, width, mark, scale);
-        if (musicCredit is not null)
-            DrawMusicCredit(canvas, musicCredit, width, SafeBottom(width, height, 0.024f));
         return Encode(surface);
     }
 
-    /// <summary>
-    /// Crédito de la música como texto chico y discreto al pie de la zona segura
-    /// — la atribución CC BY es obligatoria, así que tiene que quedar VISIBLE:
-    /// pegado al borde del canvas (donde estaba) lo tapaba el caption de IG en
-    /// los reels. Vive EN el video (estilo créditos de cierre), nunca en el caption.
-    /// </summary>
-    private static void DrawMusicCredit(SKCanvas canvas, string credit, int width, float baseline)
-    {
-        float scale    = width / 1080f;
-        float x        = width * 0.08f;
-        float maxWidth = width * 0.84f;
-        float size     = 20 * scale;
-
-        using (var probe = CreateMonoFont(size, bold: false))
-        {
-            var w = probe.MeasureText(credit);
-            if (w > maxWidth) size *= maxWidth / w;   // que nunca se salga del canvas
-        }
-
-        DrawMono(canvas, credit, x, baseline, size, TextGray.WithAlpha(0xB4), bold: false);
-    }
+    // El crédito de la música dejó de dibujarse en las piezas (10-sep-2026):
+    // "Música: Hyperfun — Kevin MacLeod · CC BY 4.0" ocupaba un renglón del reel
+    // con información que al espectador no le dice nada. La atribución sigue
+    // saliendo —es obligación de la licencia, no una decisión de estilo— pero
+    // ahora como última línea del caption (ver BuildCaption).
 
     // ── Shared chrome ────────────────────────────────────────────────────────────
 

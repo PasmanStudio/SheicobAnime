@@ -1,4 +1,4 @@
-﻿using System.Text;
+using System.Text;
 using AnimeIndex.Api.Data;
 using AnimeIndex.Api.Data.Entities;
 using AnimeIndex.Scraper.Infrastructure;
@@ -518,6 +518,9 @@ public class AnimeNewsPublisherService(
             //   3. Motion-card de capas (tarjeta única, con música)
             RenderedReel? render = null;
             byte[] coverJpeg;
+            // Atribución CC del track, cuando el slideshow usa uno que la exige.
+            // Viaja hasta el caption: dejó de dibujarse sobre el video.
+            string? musicCredit = null;
 
             if (igSettings.TrailerReelEnabled)
             {
@@ -634,7 +637,7 @@ public class AnimeNewsPublisherService(
                         // va quemado sobre el video y el cuerpo entero, en el
                         // caption. Sin crédito de música: suena el audio del tráiler.
                         var allSlides = await imageService.GenerateReelSlidesAsync(
-                            item, content, images, maxKeyPoints: 0, musicCredit: null, ct: ct);
+                            item, content, images, maxKeyPoints: 0, ct: ct);
                         var infoSlides = allSlides.Skip(1).ToList();
 
                         var (hook, overlay) = imageService.GenerateVideoReelLayers(content);
@@ -664,16 +667,15 @@ public class AnimeNewsPublisherService(
             if (render is null)
             {
                 // La música CC/propia es SOLO para el slideshow — el reel de
-                // tráiler usa el audio original del video. El crédito CC BY va
-                // como texto chico dentro del video (nunca en el caption).
+                // tráiler usa el audio original del video.
                 var music = await musicService.SelectAndDownloadForNewsAsync(
                     content.Headline, content.Lede, item.RssGuid, ct);
-                var musicCredit = music?.Track.Attribution;
+                musicCredit = music?.Track.Attribution;
 
                 try
                 {
                     var slides = await imageService.GenerateReelSlidesAsync(
-                        item, content, images, maxKeyPoints: 3, musicCredit: musicCredit, ct: ct);
+                        item, content, images, maxKeyPoints: 3, ct: ct);
                     coverJpeg  = slides[0];
                     render     = await videoService.GenerateSlideshowAsync(
                         slides, music?.Mp3, music?.Track.StartSeconds ?? 0, ct);
@@ -682,7 +684,7 @@ public class AnimeNewsPublisherService(
                 {
                     logger.LogWarning(ex, "Slideshow render failed — falling back to single motion card");
                     var (background, overlay) = await imageService.GenerateStoryLayersAsync(
-                        item, content, images, musicCredit: musicCredit, ct: ct);
+                        item, content, images, ct: ct);
                     coverJpeg  = await imageService.GenerateStoryAsync(item, content, images, ct);
                     render     = await videoService.GenerateMotionCardAsync(
                         background, overlay, music?.Mp3, music?.Track.StartSeconds ?? 0, ct);
@@ -705,7 +707,7 @@ public class AnimeNewsPublisherService(
                 logger.LogWarning(ex, "Reel cover upload failed — publishing without cover_url");
             }
 
-            var caption = BuildCaption(content);
+            var caption = BuildCaption(content, musicCredit);
             // Crear + esperar + publicar CON reintento: el 6-sep-2026 dos reels
             // ya renderizados murieron en "Container ... terminal status: ERROR"
             // mientras el video seguía sirviéndose bien desde Cloudinary. El
@@ -1210,10 +1212,16 @@ public class AnimeNewsPublisherService(
     /// de compartir, the original editorial body (the rewrite — never the source
     /// text; ahora más largo/profundo que las slides), a CTA, smart hashtags and
     /// the handle. El cuerpo se presupuesta para que los hashtags y el @ nunca
-    /// queden fuera del límite de IG (2200). La música no lleva línea en el
-    /// caption: el crédito CC va como texto chico dentro del video.
+    /// queden fuera del límite de IG (2200).
+    ///
+    /// <paramref name="musicCredit"/>: la atribución CC del track, cuando el
+    /// slideshow usó uno que la exige. Va como ÚLTIMA línea, después del @. Se
+    /// dibujaba sobre el video hasta sep-2026 y se sacó de ahí — ocupaba un
+    /// renglón del reel con algo que al espectador no le dice nada. Pero no se
+    /// puede simplemente omitir: CC BY obliga a acreditar, y el caption es un
+    /// lugar aceptado para hacerlo.
     /// </summary>
-    private string BuildCaption(NewsContent content)
+    private string BuildCaption(NewsContent content, string? musicCredit = null)
     {
         var header = $"{PickShareHook(content.Headline)}\n\n";
 
@@ -1226,6 +1234,8 @@ public class AnimeNewsPublisherService(
         tail.Append(BuildHashtags(content.Hashtags));
         if (!string.IsNullOrWhiteSpace(igSettings.Handle))
             tail.Append("\n\n@").Append(igSettings.Handle);
+        if (!string.IsNullOrWhiteSpace(musicCredit))
+            tail.Append("\n\n").Append(musicCredit);
 
         var bodyBudget = IgCaptionMaxChars - header.Length - tail.Length;
 

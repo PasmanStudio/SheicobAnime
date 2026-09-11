@@ -95,6 +95,7 @@ public class NewsRewriteService(
               "hook": "3 a 6 PALABRAS para el primer frame del video, en tipografía gigante. Máx 30 caracteres. Nombrá la obra o el hecho concreto — nada de ganchos vacíos tipo 'no vas a creer esto'. Sin punto final. Escribilo normal: el renderer lo pasa a mayúsculas. Ej: 'Jujutsu Kaisen vuelve', 'Free Fire x anime', 'Murió el creador de Berserk'.",
               "cuando": "CUÁNDO pasa lo que anuncia la noticia, corto y en español: '1 de julio 2026', 'enero 2027', 'otoño 2026', 'ya disponible', '20 de noviembre'. SOLO si la fecha aparece en el material de referencia. Si no aparece, null. NO la deduzcas, NO la estimes, NO uses tu conocimiento previo para completarla: una fecha equivocada es peor que ninguna.",
               "donde": "DÓNDE se va a poder ver, corto: 'Crunchyroll', 'Netflix', 'cines de Japón', 'Disney+'. Misma regla que cuando: SOLO si está en el material de referencia, si no null.",
+              "resumen": "UNA frase COMPLETA de máximo 90 caracteres que se muestra sobre el video, debajo de la fecha. Tiene que entenderse sola, sin haber leído nada más, y cerrar con punto. Contá QUÉ pasó, no repitas el hook. Si no te entra en 90 caracteres, acortá la idea — NO la cortes por la mitad. Ej: 'MAPPA confirmó la cuarta temporada para el invierno de 2027.'",
               "headline": "titular original, atractivo, máx ~80 caracteres. Frase completa, SIN puntos suspensivos.",
               "lede": "una sola frase que amplíe el titular, máx ~110 caracteres. Completa, SIN puntos suspensivos.",
               "key_points": ["3 a 5 ideas cortas, autoconclusivas y bien distintas entre sí, máx ~95 caracteres cada una. Cada una es una frase COMPLETA, sin '...' ni recortes. Van en las slides."],
@@ -158,7 +159,12 @@ public class NewsRewriteService(
             // Se capan cortos: son una línea sobre el video, no una frase. Un
             // modelo que devuelve "a partir del 1 de julio de 2026 en exclusiva
             // por Crunchyroll" en `cuando` se descarta en vez de romper el layout.
-            Cuando: ShortMeta(dto.Cuando, 24), Donde: ShortMeta(dto.Donde, 22));
+            Cuando: ShortMeta(dto.Cuando, 24), Donde: ShortMeta(dto.Donde, 22),
+            // 90 es el presupuesto real del renderer: más que eso no entra en 2
+            // líneas sobre el video. Si el modelo se pasa se descarta entero —
+            // recortarlo acá nos devolvería el mismo texto cortado que este
+            // campo vino a evitar.
+            Resumen: ShortMeta(dto.Resumen, 90));
     }
 
     // ── Heuristic fallback (clean, but not a true rewrite) ───────────────────────
@@ -214,7 +220,17 @@ public class NewsRewriteService(
         // sí podemos cumplir y además es señal de ranking.
         caption.Append("\n\n¿Qué opinás? Contanos en los comentarios 👇");
 
-        return new NewsContent(item.Title.Trim(), lede, keyPoints, caption.ToString(), [], FromAi: false);
+        // El resumen del video tiene que entrar COMPLETO o no ir. Sin IA no hay
+        // quien redacte una frase de 90 caracteres, así que se busca la primera
+        // oración del artículo que YA entre en el presupuesto; si ninguna entra,
+        // queda null y el renderer no dibuja nada. Recortar acá reintroduciría
+        // el "…" que este campo vino a sacar.
+        var resumen = paragraphs
+            .Select(p => FirstSentence(p, 400))
+            .FirstOrDefault(s => s is { Length: >= 25 and <= 90 } && !s.EndsWith('…'));
+
+        return new NewsContent(item.Title.Trim(), lede, keyPoints, caption.ToString(), [],
+            FromAi: false, Resumen: resumen);
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -284,6 +300,7 @@ public class NewsRewriteService(
         [property: JsonPropertyName("hook")]       string? Hook,
         [property: JsonPropertyName("cuando")]     string? Cuando,
         [property: JsonPropertyName("donde")]      string? Donde,
+        [property: JsonPropertyName("resumen")]    string? Resumen,
         [property: JsonPropertyName("headline")]   string? Headline,
         [property: JsonPropertyName("lede")]       string? Lede,
         [property: JsonPropertyName("key_points")] List<string>? KeyPoints,

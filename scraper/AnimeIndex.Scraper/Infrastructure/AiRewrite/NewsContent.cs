@@ -38,7 +38,14 @@ public sealed record NewsContent(
     // ninguna, así que el prompt exige que salgan del artículo y que queden en
     // null si no están.
     string? Cuando = null,
-    string? Donde = null)
+    string? Donde = null,
+
+    // La frase que acompaña al video, bajo la línea de cuándo/dónde. Existe
+    // aparte del Lede porque el Lede está escrito para el CAPTION (hasta ~110
+    // caracteres) y sobre el video no entra: se cortaba a mitad de frase, que se
+    // lee como un error. Esta viene con presupuesto: máx. 90 caracteres y frase
+    // COMPLETA. Si no entra, no se muestra nada — mejor el hueco que el recorte.
+    string? Resumen = null)
 {
     public static NewsContent Empty(string headline) =>
         new(headline, null, [], string.Empty, [], FromAi: false);
