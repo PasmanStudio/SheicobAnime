@@ -636,16 +636,28 @@ public class InstagramSafeAreaTests
                 Resumen = "MAPPA confirmó la cuarta temporada para el invierno de 2027.",
             });
 
-        foreach (var (capa, rows) in new[]
-                 {
-                     ("gancho", TextPixelsPerRow(hook)),
-                     ("pie", TextPixelsPerRow(overlay)),
-                 })
+        // "Limpio" es SIN NADA, no "sin texto". La primera versión de este test
+        // solo contaba píxeles CLAROS y por eso no vio el problema real: los dos
+        // scrims —oscuros y semitransparentes— se pintaban encima de la banda y
+        // el tráiler se veía lavado, "como con una capa arriba". Acá se mide
+        // ALPHA: cualquier cosa opaca sobre el video, clara u oscura, falla.
+        foreach (var (capa, png) in new[] { ("gancho", hook), ("pie", overlay) })
         {
-            var invaden = rows.Skip(610).Take(600).Sum();
-            Assert.True(invaden == 0,
-                $"la capa de {capa} escribe {invaden} píxeles sobre la banda de video (y 610-1210)");
+            var maxAlpha = MaxAlphaInBand(png, 610, 1210);
+            Assert.True(maxAlpha <= 8,
+                $"la capa de {capa} tapa la banda de video (alpha máx {maxAlpha} entre y 610-1210)");
         }
+    }
+
+    /// <summary>Alpha máximo de una franja — 0 significa completamente limpia.</summary>
+    private static int MaxAlphaInBand(byte[] png, int fromY, int toY)
+    {
+        using var bmp = SkiaSharp.SKBitmap.Decode(png);
+        var max = 0;
+        for (var y = fromY; y < Math.Min(toY, bmp.Height); y++)
+            for (var x = 0; x < bmp.Width; x++)
+                max = Math.Max(max, bmp.GetPixel(x, y).Alpha);
+        return max;
     }
 
     [Fact]
