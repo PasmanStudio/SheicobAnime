@@ -151,9 +151,13 @@ public class InstagramVideoService(
     // de la fuente. Un 16:9 a 1080 de ancho da 1066×600 —prácticamente ancho
     // completo— y un clip vertical entra angosto pero entero, sin recortarle
     // medio cuadro como hacía el crop anterior. El desenfoque llena los lados.
+    // Públicas porque las CAPAS tienen que respetarlas: los scrims de
+    // AnimeNewsImageService se cortan justo en el borde de la banda para no
+    // velar el video (ver DrawTopScrim / DrawFooterScrim).
     private const int BandBoxWidth = 1080;
-    private const int BandBoxHeight = 600;
-    private const int BandTop = 610;
+    public const int BandBoxHeight = 600;
+    public const int BandTop = 610;
+    public const int BandBottom = BandTop + BandBoxHeight;
 
     /// <summary>
     /// Cuánto tráiler saltear al arranque. Era la constante 1,5 s, pero los PV
