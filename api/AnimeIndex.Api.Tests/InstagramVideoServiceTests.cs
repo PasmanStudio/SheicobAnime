@@ -600,8 +600,12 @@ public class InstagramSafeAreaTests
         var hook    = TextPixelsPerRow(hookPng);
         var overlay = TextPixelsPerRow(overlayPng);
 
-        // Gancho: arriba, dentro de la zona segura, y nada por debajo del medio
-        Assert.True(hook.Take(288).Sum() == 0, "el gancho invade el header de IG");
+        // Gancho: arriba, despejando el header del reel, y nada por debajo del
+        // medio. El techo acá es 250 y no 288: los 288 los impone el recorte 4:5
+        // de la grilla, que aplica a la PORTADA y no a los frames del video, así
+        // que sobre el reel el logo puede subir hasta el header. Con 288 caía en
+        // la misma franja que el kicker y la primera línea del gancho.
+        Assert.True(hook.Take(250).Sum() == 0, "el gancho invade el header de IG");
         Assert.True(hook.Sum() > 3000, "no se rindió el gancho");
         Assert.True(hook.Skip(900).Sum() == 0, "el gancho baja hasta la banda del tráiler");
 

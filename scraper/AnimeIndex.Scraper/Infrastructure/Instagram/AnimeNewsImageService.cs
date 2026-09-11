@@ -69,6 +69,17 @@ public class AnimeNewsImageService(
     private const float PortraitSafeTop    = 0.15f;   // ≈288/1920 (recorte 4:5 > header)
     private const float PortraitSafeBottom = 0.23f;   // ≈442/1920 (420 de UI + descendentes)
 
+    /// <summary>
+    /// Techo para el logo del REEL, en px de un lienzo de 1080 de ancho.
+    ///
+    /// Es más alto que <see cref="PortraitSafeTop"/> a propósito: esos 288 px los
+    /// impone el recorte 4:5 de la grilla del perfil, que aplica a la PORTADA
+    /// —la miniatura— pero no a los frames del video. Sobre el video la única
+    /// restricción real es el header del reel, y con 288 el logo caía en la misma
+    /// franja que el kicker y la primera línea del gancho (y≈326).
+    /// </summary>
+    private const float ReelHeaderClearance = 250f;
+
     /// <summary>Última línea de base utilizable: la zona segura en vertical,
     /// <paramref name="squareMargin"/> en cuadrado (donde no hay UI encima).</summary>
     private static float SafeBottom(int width, int height, float squareMargin) =>
@@ -167,7 +178,12 @@ public class AnimeNewsImageService(
         var hk = hookSurface.Canvas;
         hk.Clear(SKColors.Transparent);
         DrawTopScrim(hk, width, height);
-        DrawLogoTop(hk, width, height, scale);
+        // El logo del REEL va más arriba que el de la portada. SafeTop (288) lo
+        // fija el recorte 4:5 de la grilla, que aplica a la PORTADA pero no al
+        // video — y ahí el logo quedaba en la misma franja que el kicker y la
+        // primera línea del gancho (y≈326), encimados. Acá alcanza con despejar
+        // el header del reel.
+        DrawLogoTop(hk, width, height, scale, ReelHeaderClearance * scale);
         DrawHook(hk, HookTextFor(content), width, height);
 
         using var ovSurface = SKSurface.Create(
@@ -796,10 +812,11 @@ public class AnimeNewsImageService(
     /// el chrome de IG vive justo ahí arriba a la derecha — el ícono de cámara en
     /// Reels, el avatar y el "..." en stories — y a 150 px el logo quedaba
     /// tapado. Se usa en el cover, donde el texto se ancla abajo.</summary>
-    private static void DrawLogoTop(SKCanvas canvas, int width, int height, float scale)
+    private static void DrawLogoTop(
+        SKCanvas canvas, int width, int height, float scale, float? topOverride = null)
     {
         bool isStory = height > width;
-        float topY   = isStory ? SafeTop(width, height) : 52f * scale;
+        float topY   = topOverride ?? (isStory ? SafeTop(width, height) : 52f * scale);
         var logo = Logo.Value;
         if (logo is not null)
         {
