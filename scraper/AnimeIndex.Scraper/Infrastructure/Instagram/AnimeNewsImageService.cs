@@ -190,7 +190,9 @@ public class AnimeNewsImageService(
             new SKImageInfo(width, height, SKColorType.Rgba8888, SKAlphaType.Premul));
         var ov = ovSurface.Canvas;
         ov.Clear(SKColors.Transparent);
-        DrawBottomScrim(ov, width, height);
+        // El scrim del pie, NO el de la portada: ese arranca en el 24 % de la
+        // altura y le habría pintado un velo a toda la banda de video.
+        DrawFooterScrim(ov, width, height);
 
         // La marca de agua va DESPUÉS del scrim y en ESTA capa, no en la del
         // gancho: el overlay se compone encima, así que un scrim de alpha 0xFC
@@ -440,18 +442,43 @@ public class AnimeNewsImageService(
     /// </summary>
     private static void DrawTopScrim(SKCanvas canvas, int width, int height)
     {
-        // La banda llega hasta el 46 % y el punto medio se corre al 0.55 para
-        // que el gancho (y≈400-560) caiga en la parte todavía densa: con el
-        // reparto anterior ahí quedaba un alpha de ~0x45, que sobre una escena
-        // clara del tráiler no alcanzaba para texto blanco.
-        float band = height * 0.46f;
+        // Se corta JUSTO en el borde superior de la banda de video. Antes llegaba
+        // al 46 % de la altura (y≈883) y, como la banda arranca en 610, le
+        // pintaba un velo oscuro a los primeros 273 px del tráiler: el video se
+        // veía lavado, "como con una capa encima".
+        //
+        // El punto medio en 0.62 mantiene denso el tramo donde cae el gancho
+        // (y≈400-600) — con el reparto anterior ahí quedaba un alpha de ~0x45,
+        // insuficiente para texto blanco sobre una escena clara.
+        float band = Math.Min(InstagramVideoService.BandTop * (height / 1920f), height);
         using var paint  = new SKPaint();
         using var shader = SKShader.CreateLinearGradient(
             new SKPoint(0, 0), new SKPoint(0, band),
             [Scrim.WithAlpha(0xF0), Scrim.WithAlpha(0xA6), SKColors.Transparent],
-            [0f, 0.55f, 1f], SKShaderTileMode.Clamp);
+            [0f, 0.62f, 1f], SKShaderTileMode.Clamp);
         paint.Shader = shader;
         canvas.DrawRect(0, 0, width, band, paint);
+    }
+
+    /// <summary>
+    /// Scrim del pie del reel: arranca en el borde INFERIOR de la banda de video
+    /// y baja hasta el borde del lienzo. A diferencia de
+    /// <see cref="DrawBottomScrim"/> —que vela la pieza entera porque ahí el
+    /// fondo es una foto nuestra— este no puede tocar el video: la banda tiene
+    /// que verse limpia.
+    /// </summary>
+    private static void DrawFooterScrim(SKCanvas canvas, int width, int height)
+    {
+        float top = InstagramVideoService.BandBottom * (height / 1920f);
+        if (top >= height) return;
+
+        using var paint  = new SKPaint();
+        using var shader = SKShader.CreateLinearGradient(
+            new SKPoint(0, top), new SKPoint(0, height),
+            [SKColors.Transparent, Scrim.WithAlpha(0xD2), Scrim.WithAlpha(0xF2)],
+            [0f, 0.35f, 1f], SKShaderTileMode.Clamp);
+        paint.Shader = shader;
+        canvas.DrawRect(0, top, width, height, paint);
     }
 
     /// <summary>
