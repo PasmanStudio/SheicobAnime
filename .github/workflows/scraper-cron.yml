@@ -66,7 +66,7 @@ jobs:
           WARP_WIREGUARD_CONFIG: ${{ secrets.WARP_WIREGUARD_CONFIG }}
         run: |
           probe() { curl -s -o /dev/null -m 20 -w '%{http_code}' -A 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36' "$@" 'https://jkanime.net/directorio?p=1' || true; }
-          echo "jkanime directo: HTTP $(probe)"
+          echo "::notice title=jkanime directo::HTTP $(probe)"
           if [ -z "$WARP_WIREGUARD_CONFIG" ]; then
             echo "sin secret WARP_WIREGUARD_CONFIG — el scraper corre directo"
             exit 0
@@ -94,7 +94,7 @@ jobs:
           for attempt in 1 2 3; do
             if start_warp "$attempt"; then
               echo "WARP arriba en el intento $attempt (IP de salida: $WARP_IP)"
-              echo "jkanime vía WARP: HTTP $(probe --proxy socks5h://127.0.0.1:1080)"
+              echo "::notice title=jkanime vía WARP::HTTP $(probe --proxy socks5h://127.0.0.1:1080) (IP $WARP_IP)"
               # .NET acepta socks5:// y resuelve el DNS del lado del proxy
               echo "Source2__Proxy=socks5://127.0.0.1:1080" >> "$GITHUB_ENV"
               exit 0
@@ -102,7 +102,7 @@ jobs:
             echo "intento $attempt: WARP no respondió"
             tail -3 "wireproxy-$attempt.log" || true
           done
-          echo "WARP no levantó tras 3 intentos — el scraper corre directo (403 probable)"
+          echo "::warning title=WARP::no levantó tras 3 intentos — el scraper corre directo (403 probable)"
 
       - name: Run scraper (up to 6h)
         run: dotnet run --project scraper/AnimeIndex.Scraper/AnimeIndex.Scraper.csproj --no-build -c Release
