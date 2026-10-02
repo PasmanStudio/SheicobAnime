@@ -53,6 +53,57 @@ jobs:
       - name: Build
         run: dotnet build scraper/AnimeIndex.Scraper/AnimeIndex.Scraper.csproj --no-restore -c Release
 
+      # Cloudflare WARP como salida HACIA JKANIME: desde el 30-sep-2026 el
+      # Cloudflare de jkanime devuelve 403 a todo lo que sale de los runners
+      # (IPs de datacenter de Azure) — 3 corridas con 0 episodios. Mismo esquema
+      # que news-cron.yml: el perfil WireGuard vive en WARP_WIREGUARD_CONFIG y
+      # wireproxy lo expone como SOCKS5 local. Solo JkAnimeHttpClient lo usa
+      # (Source2__Proxy); las descargas/subidas de video siguen directas porque
+      # las URLs resueltas quedan atadas a la IP que las pidió.
+      # Best-effort: si el túnel no levanta, el scraper corre directo.
+      - name: Start Cloudflare WARP proxy (wireproxy)
+        env:
+          WARP_WIREGUARD_CONFIG: ${{ secrets.WARP_WIREGUARD_CONFIG }}
+        run: |
+          probe() { curl -s -o /dev/null -m 20 -w '%{http_code}' -A 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36' "$@" 'https://jkanime.net/directorio?p=1' || true; }
+          echo "jkanime directo: HTTP $(probe)"
+          if [ -z "$WARP_WIREGUARD_CONFIG" ]; then
+            echo "sin secret WARP_WIREGUARD_CONFIG — el scraper corre directo"
+            exit 0
+          fi
+          cd "$RUNNER_TEMP"
+          curl -sL -o wireproxy.tar.gz \
+            "https://github.com/whyvl/wireproxy/releases/download/v1.1.2/wireproxy_linux_amd64.tar.gz"
+          tar -xzf wireproxy.tar.gz
+          printf '%s\n\n[Socks5]\nBindAddress = 127.0.0.1:1080\n' "$WARP_WIREGUARD_CONFIG" > wp.conf
+
+          # El handshake a veces se pierde: sondear 30 s por intento y reiniciar
+          # el túnel hasta 3 veces (ver news-cron.yml, incidente 22-ago-2026).
+          start_warp() {
+            pkill -f '[w]ireproxy' 2>/dev/null || true
+            nohup ./wireproxy -c wp.conf > "wireproxy-$1.log" 2>&1 &
+            local deadline=$((SECONDS + 30))
+            while [ "$SECONDS" -lt "$deadline" ]; do
+              WARP_IP=$(curl -s -m 5 --proxy socks5h://127.0.0.1:1080 ifconfig.me || true)
+              if [ -n "$WARP_IP" ]; then return 0; fi
+              sleep 1
+            done
+            return 1
+          }
+
+          for attempt in 1 2 3; do
+            if start_warp "$attempt"; then
+              echo "WARP arriba en el intento $attempt (IP de salida: $WARP_IP)"
+              echo "jkanime vía WARP: HTTP $(probe --proxy socks5h://127.0.0.1:1080)"
+              # .NET acepta socks5:// y resuelve el DNS del lado del proxy
+              echo "Source2__Proxy=socks5://127.0.0.1:1080" >> "$GITHUB_ENV"
+              exit 0
+            fi
+            echo "intento $attempt: WARP no respondió"
+            tail -3 "wireproxy-$attempt.log" || true
+          done
+          echo "WARP no levantó tras 3 intentos — el scraper corre directo (403 probable)"
+
       - name: Run scraper (up to 6h)
         run: dotnet run --project scraper/AnimeIndex.Scraper/AnimeIndex.Scraper.csproj --no-build -c Release
         env:

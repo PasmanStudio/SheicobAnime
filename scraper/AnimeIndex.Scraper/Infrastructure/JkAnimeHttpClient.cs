@@ -2,6 +2,7 @@ using System.Net;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
 namespace AnimeIndex.Scraper.Infrastructure;
@@ -34,7 +35,8 @@ public sealed partial class JkAnimeHttpClient
     /// <summary>How long to pause when circuit breaker trips (ms).</summary>
     public int CircuitBreakerPauseMs { get; set; } = 600_000; // 10 minutes
 
-    public JkAnimeHttpClient(IHttpClientFactory httpClientFactory, ILogger<JkAnimeHttpClient> logger)
+    public JkAnimeHttpClient(
+        IHttpClientFactory httpClientFactory, IConfiguration config, ILogger<JkAnimeHttpClient> logger)
     {
         _logger = logger;
 
@@ -44,6 +46,18 @@ public sealed partial class JkAnimeHttpClient
             UseCookies = true,
             AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate,
         };
+
+        // Desde el 30-sep-2026 el Cloudflare de jkanime devuelve 403 a las IPs de
+        // datacenter de GitHub Actions. El workflow levanta Cloudflare WARP como
+        // SOCKS5 local (wireproxy) y lo pasa en Source2:Proxy. Solo este cliente
+        // sale por ahí: los resolvers y las descargas de video siguen directos.
+        var proxy = config["Source2:Proxy"];
+        if (!string.IsNullOrWhiteSpace(proxy))
+        {
+            handler.Proxy = new WebProxy(proxy);
+            handler.UseProxy = true;
+            _logger.LogInformation("JkAnimeHttpClient: saliendo por proxy {Proxy}", proxy);
+        }
 
         _http = new HttpClient(handler)
         {
