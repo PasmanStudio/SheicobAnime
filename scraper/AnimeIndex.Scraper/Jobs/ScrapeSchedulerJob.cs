@@ -15,20 +15,48 @@ namespace AnimeIndex.Scraper.Jobs;
 public class ScrapeSchedulerJob(
     AppDbContext db,
     IBackgroundJobClient jobClient,
+    IConfiguration config,
     ILogger<ScrapeSchedulerJob> logger)
 {
-    // Sources that should always have a recurring scrape cycle
-    private static readonly string[] _autoSources = ["source2"];
-
     // Minimum hours between auto-created scrape cycles per source
     private const int AutoRescheduleHours = 24;
 
+    /// <summary>
+    /// Sources that always have a recurring scrape cycle (Scraper:AutoSources, coma-separado).
+    /// Default source2 (jkanime); el workflow lo pisa con source3 (animeav1) mientras jkanime
+    /// bloquee los runners. Ojo: el host se apaga al terminar el PRIMER job, así que conviene
+    /// una sola fuente por corrida.
+    /// </summary>
+    public static string[] GetAutoSources(IConfiguration config) =>
+        SplitList(config["Scraper:AutoSources"] ?? "source2");
+
+    private static string[] SplitList(string? value) =>
+        (value ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
     public async Task RunAsync(CancellationToken ct = default)
     {
+        // ── Fuentes deshabilitadas (Scraper:DisabledSources): sus jobs pendientes se
+        //    cierran como failed en vez de correr. Ej. source2 cuando jkanime devuelve
+        //    403 a todo: correrlo solo quema ~3,5 h en pausas del circuit breaker.
+        var disabledTypes = SplitList(config["Scraper:DisabledSources"]).Select(s => "scrape:" + s).ToList();
+        if (disabledTypes.Count > 0)
+        {
+            var disabledJobs = await db.ScrapeJobs
+                .Where(j => j.Status == "pending" && disabledTypes.Contains(j.JobType))
+                .ToListAsync(ct);
+            foreach (var job in disabledJobs)
+            {
+                job.Status = "failed";
+                job.ErrorMessage = "Fuente deshabilitada por Scraper:DisabledSources";
+                logger.LogWarning("ScrapeSchedulerJob: job {JobId} ({JobType}) cerrado — fuente deshabilitada",
+                    job.Id, job.JobType);
+            }
+        }
+
         // ── Auto-reschedule: if a source has no pending/running job and its
         //    last completed job is older than AutoRescheduleHours, create one.
         var now = DateTime.UtcNow;
-        foreach (var source in _autoSources)
+        foreach (var source in GetAutoSources(config))
         {
             var jobType = $"scrape:{source}";
             var hasPendingOrRunning = await db.ScrapeJobs
