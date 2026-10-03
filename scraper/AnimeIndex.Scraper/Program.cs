@@ -895,6 +895,17 @@ try
     // Source1 (AnimeFlv) removed — consistently blocked by Cloudflare, 0 data indexed.
     // Note: Playwright removed — all scraping now uses pure HTTP (10-50x faster).
     builder.Services.AddScoped<IScrapeStrategy, Source2Strategy>();
+    // Source3 (animeav1): reemplazo de jkanime desde oct-2026 (su Cloudflare bloquea
+    // los runners). Cuál corre lo decide Scraper:AutoSources — ver ScrapeSchedulerJob.
+    builder.Services.AddHttpClient("animeav1", c =>
+    {
+        c.Timeout = TimeSpan.FromSeconds(30);
+        c.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36");
+        c.DefaultRequestHeaders.TryAddWithoutValidation("Accept-Language", "es-419,es;q=0.9,en;q=0.5");
+    });
+    builder.Services.AddScoped<AnimeAv1Importer>();
+    builder.Services.AddScoped<IScrapeStrategy, Source3Strategy>();
 
     // ─── Hangfire job classes ─────────────────────────────
     builder.Services.AddScoped<ScrapeOrchestratorJob>();
@@ -959,13 +970,16 @@ try
         await db.Database.MigrateAsync();
 
         // Auto-create initial scrape jobs if none exist (first deployment bootstrap)
-        var hasJobs = await db.ScrapeJobs.AnyAsync(j => j.Status == "pending" || j.Status == "running");
-        if (!hasJobs)
+        var autoSources = ScrapeSchedulerJob.GetAutoSources(builder.Configuration);
+        var autoJobTypes = autoSources.Select(s => "scrape:" + s).ToList();
+        var hasJobs = await db.ScrapeJobs.AnyAsync(j =>
+            (j.Status == "pending" || j.Status == "running") && autoJobTypes.Contains(j.JobType));
+        if (!hasJobs && autoSources.Length > 0)
         {
-            Log.Information("No pending/running scrape jobs found — creating initial job for source2");
+            Log.Information("No pending/running scrape jobs found — creating initial job for {Source}", autoSources[0]);
             db.ScrapeJobs.Add(new AnimeIndex.Api.Data.Entities.ScrapeJob
             {
-                JobType = "scrape:source2",
+                JobType = "scrape:" + autoSources[0],
                 Status = "pending",
                 ScheduledAt = DateTime.UtcNow
             });

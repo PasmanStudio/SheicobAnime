@@ -123,6 +123,33 @@ public sealed partial class AnimeAv1Importer(
         return list;
     }
 
+    // ── Latest episodes (home) ───────────────────────────────
+
+    /// <summary>
+    /// Episodios recién publicados que lista la home (~20, más nuevo primero).
+    /// Lo usa <c>Source3Strategy</c> para descubrir series que todavía no están en la DB.
+    /// </summary>
+    public async Task<IReadOnlyList<(string Slug, short Number)>> FetchLatestEpisodesAsync(
+        CancellationToken ct = default)
+    {
+        var html = await GetAsync($"{BaseUrl}/", ct);
+        return html is null ? [] : ParseLatestEpisodes(html);
+    }
+
+    /// <summary>Extrae los pares (slug, episodio) de los links /media/{slug}/{n}. Público para test.</summary>
+    public static IReadOnlyList<(string Slug, short Number)> ParseLatestEpisodes(string html)
+    {
+        var seen = new HashSet<(string, short)>();
+        var list = new List<(string Slug, short Number)>();
+        foreach (Match m in EpisodeLinkRegex().Matches(html))
+        {
+            if (!short.TryParse(m.Groups[2].Value, out var n) || n <= 0) continue;
+            var key = (m.Groups[1].Value, n);
+            if (seen.Add(key)) list.Add(key);
+        }
+        return list;
+    }
+
     // ── Parsing helpers ──────────────────────────────────────
 
     /// <summary>
@@ -260,4 +287,7 @@ public sealed partial class AnimeAv1Importer(
 
     [GeneratedRegex("server:\"([^\"]+)\",url:\"([^\"]+)\"")]
     private static partial Regex EmbedPairRegex();
+
+    [GeneratedRegex(@"href=""/media/([a-z0-9][a-z0-9-]*)/(\d+)""")]
+    private static partial Regex EpisodeLinkRegex();
 }

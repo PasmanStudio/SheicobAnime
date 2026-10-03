@@ -41,7 +41,7 @@ public sealed class SeriesImportService(
     // source's own server label (canonical key), with URL markers as a safety net.
     private static readonly HashSet<string> SkipProviders =
         new(StringComparer.OrdinalIgnoreCase)
-        { "hls", "upnshare", "mega", "terabox", "1fichier", "desu" };
+        { "hls", "upnshare", "mega", "terabox", "1fichier", "desu", "transferit" };
 
     private static readonly string[] SkipUrlMarkers =
         ["zilla-networks", "uns.bio", "animeav1", ".m3u8"];
@@ -120,18 +120,14 @@ public sealed class SeriesImportService(
 
             foreach (var embed in embeds)
             {
-                // Prefer the source's own server label (e.g. "VidHide") over parsing the
-                // URL host: animeav1 serves some hosts via rotating CDN domains (ryderjet.com)
-                // that a host-based parser would misname.
-                var provider = MapServer(embed.Server);
-                if (SkipProviders.Contains(provider) || ShouldSkip(embed.Url)) continue;
+                if (ClassifyEmbed(embed) is not { } c) continue;
 
                 await upsert.UpsertMirrorAsync(new MirrorScrapedData(
                     EpisodeId: episodeId,
-                    ProviderName: provider,
+                    ProviderName: c.Provider,
                     EmbedUrl: embed.Url,
                     QualityLabel: 720,
-                    Priority: ProviderPriorities.GetValueOrDefault(provider, (short)50)), ct);
+                    Priority: c.Priority), ct);
                 mirrorCount++;
                 uploadUrls.Add(embed.Url);
             }
@@ -219,6 +215,26 @@ public sealed class SeriesImportService(
 
         await Task.WhenAll(tasks);
         return uploaded;
+    }
+
+    /// <summary>
+    /// Provider canónico + prioridad de un embed de la fuente, o null si no se guarda
+    /// como mirror. Compartido con <c>Source3Strategy</c> (cron diario de animeav1).
+    /// Prefiere la etiqueta del server (ej. "VidHide") antes que el host de la URL:
+    /// animeav1 sirve algunos hosts por dominios CDN rotativos (ryderjet.com) que un
+    /// parser por host nombraría mal. Público para test.
+    /// </summary>
+    public static (string Provider, short Priority)? ClassifyEmbed(SourceEmbed embed)
+    {
+        var provider = MapServer(embed.Server);
+        if (SkipProviders.Contains(provider) || ShouldSkip(embed.Url)) return null;
+
+        // animeav1 lista mp4upload dos veces: el embed y la página de descarga
+        // (mp4upload.com/{id}), que no es embebible.
+        if (provider == "mp4upload" && !embed.Url.Contains("/embed-", StringComparison.OrdinalIgnoreCase))
+            return null;
+
+        return (provider, ProviderPriorities.GetValueOrDefault(provider, (short)50));
     }
 
     private static bool ShouldSkip(string url) =>
