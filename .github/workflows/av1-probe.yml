@@ -1,0 +1,17 @@
+name: Diag — animeav1 desde GitHub Actions (temporal)
+on:
+  push:
+    branches: [feat/scraper-animeav1-source]
+    paths: [.github/workflows/av1-probe.yml]
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - run: |
+          UA='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+          for u in https://animeav1.com/ https://animeav1.com/media/dogulwang https://animeav1.com/media/dogulwang/12 https://jkanime.net/; do
+            r=$(curl -s -o body.html -m 20 -w '%{http_code} %{size_download}' -A "$UA" "$u" || true)
+            echo "::notice title=$u::HTTP $r embeds=$(grep -c 'embeds:{' body.html || true)"
+            sleep 2
+          done
