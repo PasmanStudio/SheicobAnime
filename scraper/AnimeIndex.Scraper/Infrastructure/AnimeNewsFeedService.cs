@@ -525,14 +525,44 @@ public partial class AnimeNewsFeedService(
     /// publican para difusión y las noticias de anime los embeben casi siempre).
     /// Devuelve la URL watch canónica o null. Público para tests.
     /// </summary>
-    public static string? ExtractArticleVideoUrl(string html)
-    {
-        var m = YouTubeVideoRegex().Match(html);
-        if (!m.Success) return null;
+    public static string? ExtractArticleVideoUrl(string html) =>
+        ExtractArticleVideoUrls(html, max: 1).FirstOrDefault();
 
-        var id = m.Groups.Cast<System.Text.RegularExpressions.Group>()
-            .Skip(1).FirstOrDefault(g => g.Success)?.Value;
-        return id is null ? null : $"https://www.youtube.com/watch?v={id}";
+    /// <summary>
+    /// TODOS los videos de YouTube embebidos (sin repetir, en orden de
+    /// aparición, hasta <paramref name="max"/>). Las notas de Crunchyroll de
+    /// "opening y ending sin créditos" embeben los dos videos.
+    /// Público para tests.
+    /// </summary>
+    public static IReadOnlyList<string> ExtractArticleVideoUrls(string html, int max = 3) =>
+        [.. YouTubeVideoRegex().Matches(html)
+            .Select(m => m.Groups.Cast<System.Text.RegularExpressions.Group>()
+                .Skip(1).FirstOrDefault(g => g.Success)?.Value)
+            .OfType<string>()
+            .Distinct(StringComparer.Ordinal)
+            .Take(max)
+            .Select(id => $"https://www.youtube.com/watch?v={id}")];
+
+    // crunchyroll.com/es/news/latest/2026/10/5/<slug> (con o sin idioma y www)
+    [GeneratedRegex(@"^https?://(?:www\.)?crunchyroll\.com/(?:[a-z]{2}(?:-[a-z0-9]{2,3})?/)?news/([^?#]+?)/?(?:[?#].*)?$", RegexOptions.IgnoreCase)]
+    private static partial Regex CrunchyrollNewsUrlRegex();
+
+    /// <summary>
+    /// Endpoint JSON de la nota de Crunchyroll. La página es una SPA y el fetch
+    /// server-side solo devuelve el shell, pero la SPA pide el cuerpo a esta API
+    /// pública, y ahí SÍ vienen los embeds de YouTube y X. Medido el 5-oct-2026:
+    /// 48 de las 50 notas del feed traían el video (o el post de X) de la
+    /// noticia, y sin esto el pipeline lo buscaba a ciegas en YouTube —
+    /// publicando, por ejemplo, el tráiler de 2022 de Spice and Wolf cuando la
+    /// nota embebía el teaser oficial de TOHO de la temporada 2. Devuelve null
+    /// si la URL no es una nota de Crunchyroll. Público para tests.
+    /// </summary>
+    public static string? CrunchyrollStoryApiUrl(string articleUrl)
+    {
+        var m = CrunchyrollNewsUrlRegex().Match(articleUrl.Trim());
+        return m.Success
+            ? $"https://cr-news-api-service.prd.crunchyrollsvc.com/v1/es-419/stories?slug={m.Groups[1].Value}"
+            : null;
     }
 
     // Post de X/Twitter embebido o linkeado (blockquote twitter-tweet de

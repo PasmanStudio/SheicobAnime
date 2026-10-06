@@ -30,7 +30,10 @@ on:
       format:
         description: 'Formato a publicar (auto = máx. 1 reel por 24 h, como antes)'
         type: choice
-        options: [auto, reel, post]
+        # probe = NO publica: prueba bajar y renderizar el video embebido de
+        # las últimas notas de Crunchyroll desde el runner (con WARP y cookies,
+        # como prod) y sube los MP4 como artifact. Ver VideoProbe.cs.
+        options: [auto, reel, post, probe]
         default: auto
 
 env:
@@ -200,7 +203,28 @@ jobs:
       - name: Build
         run: dotnet build scraper/AnimeIndex.Scraper/AnimeIndex.Scraper.csproj --no-restore -c Release
 
+      # Sin secrets de Instagram ni de la DB a propósito: esta corrida no
+      # puede publicar nada aunque el código cambie.
+      - name: Video probe (no publica)
+        if: env.NEWS_FORMAT == 'probe'
+        run: dotnet run --project scraper/AnimeIndex.Scraper --no-build -c Release -- --video-probe 15 video-probe
+        env:
+          Instagram__YtDlpProxy:       ${{ env.YTDLP_PROXY }}
+          Instagram__YtDlpJsRuntimes:  "node"
+          Instagram__YtDlpCookiesPath: ${{ env.YTDLP_COOKIES }}
+          Instagram__FfmpegTimeoutMinutes: "5"
+
+      - name: Subir los reels de prueba
+        if: env.NEWS_FORMAT == 'probe' && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: video-probe
+          path: video-probe/
+          retention-days: 3
+          if-no-files-found: warn
+
       - name: Run news pipeline
+        if: env.NEWS_FORMAT != 'probe'
         run: dotnet run --project scraper/AnimeIndex.Scraper --no-build -c Release -- --news
         env:
           ASPNETCORE_ENVIRONMENT: Production
@@ -246,7 +270,15 @@ jobs:
           # daba 429 sin cupo free para la key (22-jul-2026, verificado en vivo →
           # caía a Gemma). Si agota cuota (429), GeminiClient cae al FallbackModel.
           Ai__Model:               "gemini-3.1-flash-lite"
+          # Las llamadas CON grounding (google_search) van a otro modelo: ningún
+          # Gemini 3.x tiene grounding gratis y daban 429 el 100 % de las veces,
+          # lo que dejaba muerta la búsqueda del video en X. 2.5-flash lo
+          # incluye gratis (500/día). Mismo valor que el default del código.
+          Ai__GroundingModel:      "gemini-2.5-flash"
           # Ai__UseWebSearch:      "true"               # grounding con Google Search
+          # Video obligatorio: sin video no se publica nada (default true).
+          # Instagram__NewsRequireVideo: "true"
+          # AnimeNews__MaxVideoAttempts: "4"   # noticias probadas por corrida
           # ── News settings (optional overrides) ────────────────────────────
           # AnimeNews__MaxPerRun: "1"          # default: 1
           # AnimeNews__MaxAgeHours: "48"       # default: 48

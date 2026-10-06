@@ -671,7 +671,7 @@ public class InstagramVideoService(
             process.BeginOutputReadLine();
 
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            timeoutCts.CancelAfter(TimeSpan.FromMinutes(3));
+            timeoutCts.CancelAfter(TimeSpan.FromMinutes(settings.FfmpegTimeoutMinutes));
 
             try
             {
@@ -682,7 +682,8 @@ public class InstagramVideoService(
                 try { process.Kill(entireProcessTree: true); }
                 catch (InvalidOperationException) { /* ya salió solo */ }
                 catch (System.ComponentModel.Win32Exception) { /* falló el kill nativo — best-effort */ }
-                throw new InvalidOperationException("ffmpeg no terminó dentro de los 3 minutos");
+                throw new InvalidOperationException(
+                    $"ffmpeg no terminó dentro de los {settings.FfmpegTimeoutMinutes} minutos");
             }
 
             if (process.ExitCode != 0)

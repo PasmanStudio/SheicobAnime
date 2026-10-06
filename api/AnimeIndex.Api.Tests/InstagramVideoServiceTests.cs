@@ -2146,3 +2146,119 @@ public class CjkWordBoundaryTests
         => Assert.Null(TrailerDownloadService.PickBestSearchResult(
             [Line("【感想】my honest reaction【神回】")], requireSpanish: false));
 }
+
+/// <summary>
+/// Auditoría del 1 al 5-oct-2026: de 17 reels con video, 7 eran resubidas de
+/// canales no verificados ("Official Trailer" en el título lo pone cualquiera)
+/// y varios eran el tráiler VIEJO de la obra (Spice and Wolf 2022, Aoashi
+/// 2022). Las búsquedas de YouTube ahora traen channel_is_verified como 6to
+/// campo y la confianza la da el canal. Líneas reales de esas búsquedas.
+/// </summary>
+public class VerifiedChannelSearchTests
+{
+    private static readonly string[] SpiceAndWolfResults =
+    [
+        "e8Heas5oYOw|~|66|~|[Teaser Trailer] TV Anime \"Spice and Wolf: MERCHANT MEETS THE WISE WOLF\" Season 2/On Air in 2027|~|TOHO animation |~|https://www.youtube.com/watch?v=e8Heas5oYOw|~|True",
+        "HeMhOVEMWOE|~|66|~|\"Spice and Wolf: MERCHANT MEETS THE WISE WOLF\" - Season 2 - Teaser Trailer|~|Geek Realm Hub|~|https://www.youtube.com/watch?v=HeMhOVEMWOE|~|NA",
+        "GBia4BjDAhU|~|66|~|Spice and Wolf: Merchant Meets the Wise Wolf - Season 2 Trailer (With Eng Subtitles)|~|MiracuStream|~|https://www.youtube.com/watch?v=GBia4BjDAhU|~|NA",
+        "GLjlkchizng|~|66|~|pice and Wolf: MERCHANT MEETS THE WISE WOLF Season 2 - Teaser Trailer|~|Anime Officials Trailer|~|https://www.youtube.com/watch?v=GLjlkchizng|~|NA",
+        "kLT5FWYHOew|~|80|~|Spice and Wolf Season 2 Official Teaser Is HERE!  | Holo Returns in 2027|~|AnimeVibe Official|~|https://www.youtube.com/watch?v=kLT5FWYHOew|~|NA",
+    ];
+
+    [Fact]
+    public void OnlyTheVerifiedChannelSurvives_RealCase()
+    {
+        var ranked = TrailerDownloadService.PickRankedSearchResults(
+            SpiceAndWolfResults, requireSpanish: false, subject: "Spice and Wolf MERCHANT MEETS THE WISE WOLF");
+
+        Assert.Equal(["e8Heas5oYOw"], ranked.Select(r => r.Id));
+    }
+
+    [Fact]
+    public void ForeignSubtitlesAreRejected_EvenFromAVerifiedChannel_RealCase()
+    {
+        // Búsqueda de Aoashi T2 filtrada al último mes: el único verificado era
+        // Crunchyroll FR con subtítulos en francés.
+        string[] aoashi =
+        [
+            "4KN2SmTHMDM|~|84|~|Aoashi Season 2 | Official Trailer |~|A-Ronin|~|https://www.youtube.com/watch?v=4KN2SmTHMDM|~|NA",
+            "cStL-YeJ2SQ|~|69|~|Ao Ashi S2 | Trailer Officiel - VOSTFR|~|Crunchyroll FR|~|https://www.youtube.com/watch?v=cStL-YeJ2SQ|~|True",
+            "HG-IeDOLIks|~|91|~|Aoashi Season 2 Official Main Trailer |~|Trailer_Theater|~|https://www.youtube.com/watch?v=HG-IeDOLIks|~|NA",
+        ];
+
+        Assert.Empty(TrailerDownloadService.PickRankedSearchResults(
+            aoashi, requireSpanish: false, subject: "Aoashi"));
+    }
+
+    [Fact]
+    public void VerifiedSpanishChannel_PassesTheSpanishPass()
+    {
+        string[] lines =
+        [
+            "kACrcUBQY3Y|~|67|~|PSYREN | TRÁILER OFICIAL|~|Crunchyroll en Español|~|https://www.youtube.com/watch?v=kACrcUBQY3Y|~|True",
+            "zzzzzzzzzzz|~|60|~|PSYREN tráiler oficial español latino|~|Anime-Pro Fansub|~|https://www.youtube.com/watch?v=zzzzzzzzzzz|~|NA",
+        ];
+
+        Assert.Equal(["kACrcUBQY3Y"], TrailerDownloadService.PickRankedSearchResults(
+            lines, requireSpanish: true, subject: "PSYREN").Select(r => r.Id));
+    }
+
+    [Fact]
+    public void WithoutTheVerifiedField_TheOldRulesStillApply()
+    {
+        // Los resultados de bilibili y la validación de un video puntual no
+        // traen el campo: una resubida con palabra del tipo y obra verificada
+        // sigue pasando como antes.
+        string[] lines = ["abc123xyz|~|100|~|Spice and Wolf Season 2 Teaser Trailer|~|RandomUploader"];
+
+        Assert.NotEmpty(TrailerDownloadService.PickRankedSearchResults(
+            lines, requireSpanish: false, subject: "Spice and Wolf"));
+    }
+
+    [Fact]
+    public void RecentSearchUrl_EncodesTheQueryAndFiltersThisMonth()
+    {
+        var url = TrailerDownloadService.YouTubeRecentSearchUrl("Kagurabachi tráiler & PV");
+
+        Assert.StartsWith("https://www.youtube.com/results?search_query=Kagurabachi%20tr%C3%A1iler%20%26%20PV", url);
+        Assert.EndsWith("&sp=EgIIBA%253D%253D", url);
+    }
+}
+
+/// <summary>
+/// Las notas de Crunchyroll (3 de cada 4 reels) son una SPA: el HTML no trae
+/// los embeds, pero su API de noticias sí. Medido el 5-oct-2026: 48 de 50
+/// notas traían el video o el post de X de la noticia.
+/// </summary>
+public class CrunchyrollStoryApiTests
+{
+    [Theory]
+    [InlineData("https://crunchyroll.com/es/news/latest/2026/10/5/the-record-of-a-fallen-vampire-anime-anuncio-2027")]
+    [InlineData("https://www.crunchyroll.com/es/news/latest/2026/10/5/the-record-of-a-fallen-vampire-anime-anuncio-2027/")]
+    [InlineData("https://www.crunchyroll.com/es-419/news/latest/2026/10/5/the-record-of-a-fallen-vampire-anime-anuncio-2027?utm_source=rss")]
+    public void BuildsTheStoryApiUrl(string articleUrl)
+        => Assert.Equal(
+            "https://cr-news-api-service.prd.crunchyrollsvc.com/v1/es-419/stories?slug=latest/2026/10/5/the-record-of-a-fallen-vampire-anime-anuncio-2027",
+            AnimeNewsFeedService.CrunchyrollStoryApiUrl(articleUrl));
+
+    [Theory]
+    [InlineData("https://somoskudasai.com/noticias/anime/algo/")]
+    [InlineData("https://www.crunchyroll.com/es/series/GRDV0019R/jujutsu-kaisen")]
+    public void NotACrunchyrollNewsUrl_ReturnsNull(string url)
+        => Assert.Null(AnimeNewsFeedService.CrunchyrollStoryApiUrl(url));
+
+    [Fact]
+    public void ExtractsEveryEmbeddedVideo_InOrder_WithoutRepeats()
+    {
+        // Fragmento con la forma real del JSON: opening + ending, y el primero repetido
+        const string json =
+            "{\"body\":\"<iframe src=\\\"https://www.youtube-nocookie.com/embed/GSJ9psUwJXQ?si=x\\\"></iframe>" +
+            "<iframe src=\\\"https://www.youtube.com/embed/gWpNlTAhjP0\\\"></iframe>" +
+            "<a href=\\\"https://youtu.be/GSJ9psUwJXQ\\\">op</a>\"}";
+
+        Assert.Equal(
+            ["https://www.youtube.com/watch?v=GSJ9psUwJXQ", "https://www.youtube.com/watch?v=gWpNlTAhjP0"],
+            AnimeNewsFeedService.ExtractArticleVideoUrls(json));
+        Assert.Single(AnimeNewsFeedService.ExtractArticleVideoUrls(json, max: 1));
+    }
+}

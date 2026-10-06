@@ -44,6 +44,17 @@ public class AiSettings
     /// </summary>
     public bool UseWebSearch { get; set; } = true;
 
+    /// <summary>
+    /// Modelo para las llamadas CON grounding (google_search). Va aparte del
+    /// <see cref="Model"/> porque ningún Gemini 3.x tiene grounding en el free
+    /// tier ("Not available" en la tabla de precios, confirmado oct-2026): con
+    /// gemini-3.1-flash-lite, el 100 % de las llamadas con grounding daban 429, y
+    /// eso dejaba muerta la búsqueda del video en X. Los 2.5 sí lo incluyen
+    /// gratis (500 req/día, compartidas entre Flash y Flash-Lite). Vacío = usar
+    /// <see cref="Model"/> también para grounding.
+    /// </summary>
+    public string GroundingModel { get; set; } = "gemini-2.5-flash";
+
     /// <summary>Creativity. 0.7 reads natural without drifting from the facts.</summary>
     public float Temperature { get; set; } = 0.7f;
 
