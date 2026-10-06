@@ -207,7 +207,7 @@ jobs:
       # puede publicar nada aunque el código cambie.
       - name: Video probe (no publica)
         if: env.NEWS_FORMAT == 'probe'
-        run: dotnet run --project scraper/AnimeIndex.Scraper --no-build -c Release -- --video-probe 15 video-probe
+        run: dotnet run --project scraper/AnimeIndex.Scraper --no-build -c Release -- --video-probe 15 "$RUNNER_TEMP/video-probe"
         env:
           Instagram__YtDlpProxy:       ${{ env.YTDLP_PROXY }}
           Instagram__YtDlpJsRuntimes:  "node"
@@ -219,7 +219,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: video-probe
-          path: video-probe/
+          path: ${{ runner.temp }}/video-probe/
           retention-days: 3
           if-no-files-found: warn
 
