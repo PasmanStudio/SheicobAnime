@@ -21,6 +21,10 @@ namespace AnimeIndex.Scraper.Infrastructure.Instagram;
 ///   • A single feed post / carousel (1080×1080) para el resto.
 ///   • A story (1080×1920) siempre.
 ///
+/// Con Instagram__NewsRequireVideo (default desde oct-2026) nada de lo
+/// anterior sale sin video: se publica reel con video + story, o nada — ver
+/// PublishVideoOnlyAsync.
+///
 /// Errors are caught per-item so a failure on one doesn't block the rest.
 /// </summary>
 public class AnimeNewsPublisherService(
@@ -54,6 +58,12 @@ public class AnimeNewsPublisherService(
         }
         if (items.Count == 0) return;
 
+        if (RequiresVideo)
+        {
+            await PublishVideoOnlyAsync(items, ct);
+            return;
+        }
+
         var batch = await SelectBatchAsync(items, ct);
         logger.LogInformation("AnimeNews: publishing {Count} news item(s) to Instagram ({Pool} candidatas)",
             batch.Count, items.Count);
@@ -62,6 +72,192 @@ public class AnimeNewsPublisherService(
         {
             if (ct.IsCancellationRequested) break;
             await PublishItemAsync(item, ct);
+        }
+    }
+
+    // ── Corridas con video obligatorio ────────────────────────────────────────
+
+    private bool RequiresVideo =>
+        igSettings.NewsRequireVideo && igSettings.NewsReelEnabled && igSettings.TrailerReelEnabled
+        && !newsSettings.IsPostRun;
+
+    /// <summary>
+    /// Publica SOLO noticias con video. Recorre el pool de la más relevante a
+    /// la menos relevante y se queda con la primera que consiga video; si
+    /// ninguna de las <see cref="AnimeNewsSettings.MaxVideoAttempts"/> lo
+    /// consigue, la corrida no publica nada. Pedido del usuario (oct-2026): del
+    /// 1 al 5-oct, 15 de 32 reels salieron como slideshow sin video, y una
+    /// publicación sin video "no tiene sentido" para la cuenta.
+    /// </summary>
+    private async Task PublishVideoOnlyAsync(IReadOnlyList<AnimeNewsItem> items, CancellationToken ct)
+    {
+        // Corridas manuales sin formato: el dedup de máx. 1 reel por 24 h sigue
+        // valiendo (las del cron vienen con RunFormat=reel y no lo usan).
+        if (!newsSettings.IsReelRun)
+        {
+            try
+            {
+                if (await db.AnimeNewsItems.AnyAsync(
+                        n => n.IgReelMediaId != null && n.IgPostedAt >= DateTime.UtcNow.AddHours(-24), ct))
+                {
+                    logger.LogInformation("AnimeNews: ya hubo reel en las últimas 24 h — no se publica nada");
+                    return;
+                }
+            }
+            catch (Exception ex) when (!ct.IsCancellationRequested)
+            {
+                logger.LogWarning(ex, "AnimeNews: dedup query falló — asumo reel ya publicado hoy");
+                return;
+            }
+        }
+
+        var ordered = await OrderForVideoRunAsync(items, ct);
+        var attempts = Math.Min(ordered.Count, Math.Max(1, newsSettings.MaxVideoAttempts));        logger.LogInformation(
+            "AnimeNews: corrida con video obligatorio — hasta {Attempts} de {Pool} candidatas",
+            attempts, items.Count);
+
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        var budget = TimeSpan.FromMinutes(newsSettings.VideoSearchBudgetMinutes);
+        var (published, tried, outOfTime) = await RunVideoAttemptsAsync(
+            ordered, attempts, newsSettings.MaxPerRun, budget, () => clock.Elapsed,
+            item => TryPublishWithVideoAsync(item, ct), ct);
+
+        if (outOfTime)
+            logger.LogWarning(
+                "AnimeNews: se agotó el presupuesto de búsqueda ({Minutes} min) tras {Tried} noticia(s) — no se prueban más",
+                newsSettings.VideoSearchBudgetMinutes, tried);
+
+        // Todo es best-effort y la corrida termina verde igual: este warning es
+        // la única señal de que hoy no salió nada.
+        if (published == 0)
+            logger.LogWarning(
+                "AnimeNews: CORRIDA SIN PUBLICACIÓN — ninguna de las {Attempts} noticias probadas tuvo video usable",
+                tried);
+    }
+
+    /// <summary>
+    /// El bucle de intentos de una corrida con video obligatorio: prueba las
+    /// noticias en orden hasta publicar <paramref name="maxPerRun"/>, agotar
+    /// <paramref name="maxAttempts"/> o pasarse del <paramref name="budget"/>
+    /// (que solo frena ANTES de arrancar otra noticia: la primera siempre se
+    /// prueba). Público estático para tests.
+    /// </summary>
+    public static async Task<(int Published, int Tried, bool OutOfTime)> RunVideoAttemptsAsync<T>(
+        IReadOnlyList<T> ordered, int maxAttempts, int maxPerRun, TimeSpan budget,
+        Func<TimeSpan> elapsed, Func<T, Task<bool>> tryPublish, CancellationToken ct = default)
+    {
+        var published = 0;
+        var tried = 0;
+        for (var i = 0; i < Math.Min(maxAttempts, ordered.Count) && published < maxPerRun; i++)
+        {
+            if (ct.IsCancellationRequested) break;
+            if (i > 0 && elapsed() > budget) return (published, tried, true);
+            tried++;
+            if (await tryPublish(ordered[i])) published++;
+        }
+        return (published, tried, false);
+    }
+
+    /// <summary>
+    /// Estado de una noticia que no consiguió video. Si había videos y no se
+    /// pudieron BAJAR (bot-check, 403), el video existe: queda "pending" para
+    /// que la próxima corrida la reintente. Si no había ninguno, "skipped".
+    /// Público estático para tests.
+    /// </summary>
+    public static (string Status, string Message) NoVideoOutcome(int candidatesFound) =>
+        candidatesFound > 0
+            ? ("pending", "Video encontrado pero no se pudo bajar — se reintenta en la próxima corrida")
+            : ("skipped", "Sin video");
+
+    /// <summary>
+    /// La más relevante (IA/heurística) primero; después las que anuncian
+    /// material audiovisual, que son las que más chances tienen de traer video;
+    /// el resto, de la más nueva a la más vieja.
+    /// </summary>
+    private async Task<IReadOnlyList<AnimeNewsItem>> OrderForVideoRunAsync(
+        IReadOnlyList<AnimeNewsItem> items, CancellationToken ct)
+    {
+        var best = items.Count > 1 ? await PickMostRelevantAsync(items, ct) : items[0];
+        logger.LogInformation("AnimeNews: noticia del día para el reel → \"{Title}\"", Truncate(best.Title, 80));
+
+        return items
+            .OrderByDescending(i => ReferenceEquals(i, best) ? 1 : 0)
+            .ThenByDescending(i => HasAudiovisualSignal(i.Title) ? 1 : 0)
+            .ThenByDescending(i => i.PublishedAt)
+            .ToList();
+    }
+
+    /// <summary>
+    /// Consigue el video de la noticia y, solo si lo consiguió, la reescribe y
+    /// publica reel + story. Devuelve true si el reel salió.
+    /// Sin video la noticia queda "skipped" — salvo que haya habido candidatos
+    /// que no se pudieron BAJAR (bot-check, 403): esa queda "pending" para que
+    /// la próxima corrida la reintente, porque el video existe.
+    /// </summary>
+    private async Task<bool> TryPublishWithVideoAsync(AnimeNewsItem item, CancellationToken ct)
+    {
+        VideoAcquisition? video = null;
+        try
+        {
+            var media = await GatherMediaAsync(item, ct);
+
+            if (!await imageService.HasDecodableImageAsync(media.Images, ct))
+            {
+                item.IgPostStatus = "skipped";
+                item.ErrorMessage = "No decodable image";
+                logger.LogWarning("AnimeNews: skipping \"{Title}\" — no usable image could be downloaded",
+                    Truncate(item.Title, 60));
+                return false;
+            }
+
+            video = await AcquireVideoAsync(item, media.VideoUrls, media.TweetUrl, ct);
+            if (video.ClipPath is null)
+            {
+                (item.IgPostStatus, item.ErrorMessage) = NoVideoOutcome(video.CandidatesFound);
+                if (video.CandidatesFound > 0)
+                    logger.LogWarning(
+                        "AnimeNews: \"{Title}\" tiene {Count} video(s) pero ninguno bajó — queda pendiente",
+                        Truncate(item.Title, 60), video.CandidatesFound);
+                else
+                    logger.LogInformation("AnimeNews: \"{Title}\" sin video — se prueba la siguiente noticia",
+                        Truncate(item.Title, 60));
+                return false;
+            }
+
+            // La reescritura (una llamada a Gemini) va DESPUÉS de tener el video:
+            // las noticias sin video ya no gastan cuota.
+            var content = await rewriter.RewriteAsync(item, ct);
+            var reelMediaId = await PublishReelAsync(item, content, media.Images, video, allowSlideshow: false, ct);
+            if (reelMediaId is null)
+            {
+                item.IgPostStatus = "failed";
+                return false;
+            }
+
+            var storyMediaId = await PublishStoryAsync(item, content, media.Images, ct);
+
+            item.IgPostStatus   = "published";
+            item.ErrorMessage   = null;
+            item.IgReelMediaId  = reelMediaId;
+            item.IgStoryMediaId = storyMediaId;
+            item.IgPostedAt     = DateTime.UtcNow;
+            return true;
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            item.IgPostStatus = "failed";
+            item.ErrorMessage = ex.Message[..Math.Min(ex.Message.Length, 500)];
+            logger.LogError(ex, "AnimeNews: unexpected error publishing {Title}", Truncate(item.Title, 60));
+            return false;
+        }
+        finally
+        {
+            // PublishReelAsync ya los borra; esto cubre las salidas por excepción
+            // antes de llegar ahí. CleanUp sobre una ruta ya borrada no hace nada.
+            if (video?.ClipPath is not null) TrailerDownloadService.CleanUp(video.ClipPath);
+            if (video?.Candidate?.SubtitlesPath is not null)
+                TrailerDownloadService.CleanUp(video.Candidate.SubtitlesPath);
+            await db.SaveChangesAsync(CancellationToken.None);
         }
     }
 
@@ -362,7 +558,7 @@ public class AnimeNewsPublisherService(
         try
         {
             // Gather all usable article media (cover + in-body images + trailer).
-            var (images, trailerUrl, tweetUrl) = await GatherMediaAsync(item, ct);
+            var (images, videoUrls, tweetUrl) = await GatherMediaAsync(item, ct);
 
             // Guarantee every post has a real image — never publish a text-only/flat poster.
             // Checked BEFORE the rewrite so we don't spend a Gemini call on an unpostable item.
@@ -390,7 +586,7 @@ public class AnimeNewsPublisherService(
             {
                 if (newsSettings.IsReelRun)
                 {
-                    reelMediaId = await PublishReelAsync(item, content, images, trailerUrl, tweetUrl, ct);
+                    reelMediaId = await PublishReelWithAnyVideoAsync(item, content, images, videoUrls, tweetUrl, ct);
                 }
                 else
                 {
@@ -399,7 +595,7 @@ public class AnimeNewsPublisherService(
                         var reelRecently = await db.AnimeNewsItems.AnyAsync(
                             n => n.IgReelMediaId != null && n.IgPostedAt >= DateTime.UtcNow.AddHours(-24), ct);
                         if (!reelRecently)
-                            reelMediaId = await PublishReelAsync(item, content, images, trailerUrl, tweetUrl, ct);
+                            reelMediaId = await PublishReelWithAnyVideoAsync(item, content, images, videoUrls, tweetUrl, ct);
                     }
                     catch (Exception ex) when (!ct.IsCancellationRequested)
                     {
@@ -454,26 +650,7 @@ public class AnimeNewsPublisherService(
             }
 
             // ── Story ─────────────────────────────────────────────────────
-            string? storyMediaId = null;
-            try
-            {
-                var storyBytes = await imageService.GenerateStoryAsync(item, content, images, ct);
-                var storyFile  = $"news-{item.SourceKey}-{item.Id.ToString("N")[..8]}-story.jpg";
-                var storyUrl    = await api.UploadImageAsync(storyBytes, storyFile, ct);
-                // Link sticker points to OUR site (not the source article) — drives traffic to us.
-                var storyContainerId = await api.CreateStoryContainerAsync(storyUrl, igSettings.SiteUrl, ct);
-                await api.WaitForContainerReadyAsync(storyContainerId, ct);
-                storyMediaId = await api.PublishContainerAsync(storyContainerId, ct);
-
-                logger.LogInformation(
-                    "AnimeNews: published story for [{Source}] {Title} → {MediaId}",
-                    item.SourceKey, Truncate(item.Title, 60), storyMediaId);
-            }
-            catch (Exception ex) when (!ct.IsCancellationRequested)
-            {
-                logger.LogWarning(ex,
-                    "AnimeNews: failed to publish story for {Title}", Truncate(item.Title, 60));
-            }
+            var storyMediaId = await PublishStoryAsync(item, content, images, ct);
 
             // Mark as published (even if only one of the formats succeeded)
             var anyPublished = feedMediaId is not null || storyMediaId is not null || reelMediaId is not null;
@@ -495,6 +672,171 @@ public class AnimeNewsPublisherService(
         }
     }
 
+    /// <summary>Story con link al sitio. Best-effort: null si falla.</summary>
+    private async Task<string?> PublishStoryAsync(
+        AnimeNewsItem item, NewsContent content, IReadOnlyList<string> images, CancellationToken ct)
+    {
+        try
+        {
+            var storyBytes = await imageService.GenerateStoryAsync(item, content, images, ct);
+            var storyFile  = $"news-{item.SourceKey}-{item.Id.ToString("N")[..8]}-story.jpg";
+            var storyUrl    = await api.UploadImageAsync(storyBytes, storyFile, ct);
+            // Link sticker points to OUR site (not the source article) — drives traffic to us.
+            var storyContainerId = await api.CreateStoryContainerAsync(storyUrl, igSettings.SiteUrl, ct);
+            await api.WaitForContainerReadyAsync(storyContainerId, ct);
+            var storyMediaId = await api.PublishContainerAsync(storyContainerId, ct);
+
+            logger.LogInformation(
+                "AnimeNews: published story for [{Source}] {Title} → {MediaId}",
+                item.SourceKey, Truncate(item.Title, 60), storyMediaId);
+            return storyMediaId;
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            logger.LogWarning(ex,
+                "AnimeNews: failed to publish story for {Title}", Truncate(item.Title, 60));
+            return null;
+        }
+    }
+
+    // ── Video de la noticia ───────────────────────────────────────────────────
+
+    /// <summary>
+    /// Clip bajado listo para el render (o nada). <see cref="CandidatesFound"/>
+    /// cuenta los videos que existían aunque no se hayan podido bajar: distingue
+    /// "esta noticia no tiene video" de "YouTube nos bloqueó la descarga".
+    /// </summary>
+    private sealed record VideoAcquisition(TrailerCandidate? Candidate, string? ClipPath, int CandidatesFound);
+
+    /// <summary>
+    /// Escalera del video de la noticia, de más a menos confiable:
+    ///   1. Lo EMBEBIDO en el artículo (YouTube y post de X): lo eligió la
+    ///      redacción de la fuente para ESA noticia, así que la relevancia ya
+    ///      está dada y no se le exige idioma. En Crunchyroll —la fuente de 3
+    ///      de cada 4 reels— viene en 48 de cada 50 notas.
+    ///   2. Búsqueda en YouTube (la IA decide si la noticia amerita video y de
+    ///      qué tipo): solo videos del último mes, de canales verificados u
+    ///      oficiales.
+    ///   3. El post oficial de X que encuentre la IA con grounding.
+    /// Devuelve el primer clip que se pudo bajar.
+    /// </summary>
+    private async Task<VideoAcquisition> AcquireVideoAsync(
+        AnimeNewsItem item, IReadOnlyList<string> embeddedVideoUrls, string? articleTweetUrl, CancellationToken ct)
+    {
+        var found = 0;
+
+        // ── 1. Embebidos del artículo ─────────────────────────────────────
+        var embedded = new List<TrailerCandidate>();
+        foreach (var url in embeddedVideoUrls)
+        {
+            var c = await trailerService.ValidateAsync(url, requireSpanish: false, trustProvenance: true, ct: ct);
+            if (c is not null) embedded.Add(c);
+        }
+        // Subtítulos es manuales, si el PV los tiene: solo para el primero
+        // (cada consulta es una llamada más a YouTube).
+        if (embedded.Count > 0 && TrailerDownloadService.IsYouTube(embedded[0].Url))
+        {
+            var subs = await trailerService.DownloadSpanishSubtitlesAsync(embedded[0].Url, ct);
+            if (subs is not null) embedded[0] = embedded[0] with { SubtitlesPath = subs };
+        }
+        if (articleTweetUrl is not null && igSettings.TweetVideoFallback)
+        {
+            var tweet = await trailerService.ValidateOfficialPostAsync(
+                articleTweetUrl, TrailerDownloadService.SubjectFromTitle(item.Title),
+                requireTrustSignal: false, ct);
+            if (tweet is not null) embedded.Add(tweet);
+        }
+        if (embedded.Count > 0)
+        {
+            found += embedded.Count;
+            logger.LogInformation("AnimeNews: {Count} video(s) embebido(s) en el artículo → {Urls}",
+                embedded.Count, string.Join(", ", embedded.Select(c => c.Url)));
+            var got = await DownloadFirstAsync(embedded, ct);
+            if (got is not null)
+                return new VideoAcquisition(got.Value.Candidate, got.Value.ClipPath, found);
+        }
+
+        // ── 2. Búsqueda en YouTube ────────────────────────────────────────
+        var plan = igSettings.TrailerSearchEnabled ? await FindNewsVideoAsync(item, ct) : NewsVideoPlan.None;
+        if (plan.Candidates.Count > 0)
+        {
+            found += plan.Candidates.Count;
+            var got = await DownloadFirstAsync(plan.Candidates.Take(igSettings.MaxVideoCandidates).ToList(), ct);
+            if (got is not null)
+                return new VideoAcquisition(got.Value.Candidate, got.Value.ClipPath, found);
+        }
+
+        // ── 3. Post oficial de X buscado por la IA ────────────────────────
+        // Corre siempre que la noticia AMERITE video, aunque YouTube no haya
+        // dado candidato (hueco real 18-jul: el opening de Suis/Yorushika
+        // existía y los respaldos ni corrieron).
+        if (plan.WantsVideo && igSettings.TweetVideoFallback)
+        {
+            var tweet = await FindTweetVideoAsync(item, ct);
+            if (tweet is not null)
+            {
+                found++;
+                var got = await DownloadFirstAsync([tweet], ct);
+                if (got is not null)
+                {
+                    logger.LogInformation("AnimeNews: video del post oficial de X → {Url}", tweet.Url);
+                    return new VideoAcquisition(got.Value.Candidate, got.Value.ClipPath, found);
+                }
+            }
+        }
+
+        // La noticia AMERITABA video (o traía uno embebido) y no se consiguió
+        // nada. Va como Warning porque la corrida termina verde igual — sin esta
+        // línea, "no salió video" no deja ninguna señal en los logs.
+        if (plan.WantsVideo || found > 0)
+            logger.LogWarning(
+                "AnimeNews: REEL SIN VIDEO — {Kind} (query \"{Query}\"): {Found} video(s) encontrado(s), " +
+                "ninguno bajó: \"{Title}\"",
+                plan.Kind, plan.Query, found, Truncate(item.Title, 60));
+
+        return new VideoAcquisition(null, null, found);
+    }
+
+    /// <summary>
+    /// Baja por la lista hasta que un candidato entre. Antes se probaba uno
+    /// solo y si ese moría el reel salía sin video aunque hubiera alternativas
+    /// buenas: el 24-ago-2026 la búsqueda de Tokyo Revengers devolvió 6
+    /// tráilers válidos, el elegido comió el bot-check en sus dos intentos y
+    /// los otros 5 ni se tocaron. Borra los subtítulos de los que no se usan.
+    /// </summary>
+    private async Task<(TrailerCandidate Candidate, string ClipPath)?> DownloadFirstAsync(
+        IReadOnlyList<TrailerCandidate> candidates, CancellationToken ct)
+    {
+        (TrailerCandidate, string)? chosen = null;
+        foreach (var option in candidates)
+        {
+            if (chosen is not null) break;
+            var clip = await trailerService.DownloadAsync(option.Url, ct);
+            if (clip is not null) chosen = (option, clip);
+            else logger.LogInformation("AnimeNews: no se pudo bajar {Url} — probando el próximo candidato", option.Url);
+        }
+
+        foreach (var c in candidates)
+            if (c.SubtitlesPath is not null && !ReferenceEquals(c, chosen?.Item1))
+                TrailerDownloadService.CleanUp(c.SubtitlesPath);
+        return chosen;
+    }
+
+    /// <summary>
+    /// Camino SIN video obligatorio (Instagram__NewsRequireVideo=false o
+    /// corridas manuales): busca el video y, si no hay, el reel sale como
+    /// slideshow.
+    /// </summary>
+    private async Task<string?> PublishReelWithAnyVideoAsync(
+        AnimeNewsItem item, NewsContent content, IReadOnlyList<string> images,
+        IReadOnlyList<string> videoUrls, string? tweetUrl, CancellationToken ct)
+    {
+        var video = igSettings.TrailerReelEnabled
+            ? await AcquireVideoAsync(item, videoUrls, tweetUrl, ct)
+            : null;
+        return await PublishReelAsync(item, content, images, video, allowSlideshow: true, ct);
+    }
+
     // ── Reel de noticias (slideshow + música por IA) ─────────────────────────
 
     /// <summary>
@@ -503,17 +845,19 @@ public class AnimeNewsPublisherService(
     /// crossfades y track según el mood. El cover 9:16 va como cover_url del
     /// reel — sin él, IG usaba el primer frame (negro por el fade-in) como
     /// miniatura del feed. Best-effort — un fallo acá degrada al carrusel.
+    /// <paramref name="video"/>: el clip ya bajado (AcquireVideoAsync), o null.
+    /// Con <paramref name="allowSlideshow"/>=false, sin tráiler renderizado no
+    /// se publica nada (video obligatorio).
     /// </summary>
     private async Task<string?> PublishReelAsync(
         AnimeNewsItem item, NewsContent content, IReadOnlyList<string> images,
-        string? trailerUrl, string? articleTweetUrl, CancellationToken ct)
+        VideoAcquisition? video, bool allowSlideshow, CancellationToken ct)
     {
         try
         {
             // Cadena de formatos, de mejor a más simple:
             //   1. Tráiler CON SU AUDIO ORIGINAL + titular + slides informativas
-            //      (el embebido del artículo si pasa la validación de español,
-            //      o el ENCONTRADO por búsqueda IA en YouTube)
+            //      (el embebido del artículo, o el ENCONTRADO por búsqueda)
             //   2. Slideshow de escenas (cover + puntos clave + CTA, con música)
             //   3. Motion-card de capas (tarjeta única, con música)
             RenderedReel? render = null;
@@ -525,146 +869,49 @@ public class AnimeNewsPublisherService(
             // nadie escucha no tiene sentido.
             string? musicCredit = null;
 
-            if (igSettings.TrailerReelEnabled)
+            if (video is { Candidate: { } candidate, ClipPath: { } clipPath })
             {
-                // El embebido del artículo se valida (kudasai suele embeber el PV
-                // japonés — el requisito es español latino); si no pasa, la
-                // búsqueda por IA decide el TIPO de video (tráiler/opening/corto)
-                // y puede rescatar ese mismo embebido cuando el idioma no aplica.
-                var embedded = trailerUrl is null
-                    ? null
-                    : await trailerService.ValidateAsync(trailerUrl, ct: ct);
-                var plan = embedded is not null
-                    ? new NewsVideoPlan([embedded], true,
-                        HeuristicVideoQuery(item.Title)?.Query ?? "", null,
-                        HeuristicVideoQuery(item.Title)?.Kind ?? NewsVideoKind.Trailer)
-                    : igSettings.TrailerSearchEnabled
-                        ? await FindNewsVideoAsync(item, content, trailerUrl, ct)
-                        : NewsVideoPlan.None;
-
-                // Se BAJA POR LA LISTA hasta que uno entre. Antes se probaba un
-                // solo candidato y si ese moría el reel salía sin video aunque
-                // hubiera alternativas buenas: el 24-ago-2026 la búsqueda de
-                // Tokyo Revengers devolvió 6 tráilers válidos, el elegido comió
-                // el bot-check en sus dos intentos y los otros 5 ni se tocaron.
-                TrailerCandidate? candidate = null;
-                string? clipPath = null;
-                foreach (var option in plan.Candidates.Take(igSettings.MaxVideoCandidates))
+                try
                 {
-                    clipPath = await trailerService.DownloadAsync(option.Url, ct);
-                    if (clipPath is not null) { candidate = option; break; }
-                    logger.LogInformation(
-                        "AnimeNews: no se pudo bajar {Url} — probando el próximo candidato", option.Url);
-                }
+                    // Slides informativas para DESPUÉS del tráiler: desde
+                    // sep-2026, SOLO el CTA de cierre (maxKeyPoints: 0 →
+                    // cover + CTA, y el cover se descarta porque el tráiler
+                    // es la apertura). Los puntos clave que iban acá vivían
+                    // en los últimos 10,5 s de un reel con 12 % de retención
+                    // mediana: no los veía nadie, y estirar el video hundía
+                    // la finalización. El contenido no se pierde — el titular
+                    // va quemado sobre el video y el cuerpo entero, en el
+                    // caption. Sin crédito de música: suena el audio del tráiler.
+                    var allSlides = await imageService.GenerateReelSlidesAsync(
+                        item, content, images, maxKeyPoints: 0, ct: ct);
+                    var infoSlides = allSlides.Skip(1).ToList();
 
-                // Respaldo X/Twitter (18-jul-2026): la descarga de YouTube está
-                // bloqueada desde CI (34 combos FAIL) pero X no bloquea a los
-                // runners y los tráilers oficiales también se publican ahí.
-                // Corre siempre que la noticia AMERITE video — aunque la búsqueda
-                // de YouTube no haya dado candidato (hueco real 18-jul: el
-                // opening de Suis/Yorushika existía y los respaldos ni corrieron).
-                if (clipPath is null && plan.WantsVideo && igSettings.TweetVideoFallback)
+                    var (hook, overlay) = imageService.GenerateVideoReelLayers(content);
+                    render = await videoService.GenerateTrailerReelAsync(
+                        clipPath, hook, overlay, infoSlides, candidate.DurationSeconds,
+                        candidate.SubtitlesPath, ct);
+                    logger.LogInformation("AnimeNews: reel con TRÁILER para \"{Title}\" ({Url}{Subs})",
+                        Truncate(item.Title, 60), candidate.Url,
+                        candidate.SubtitlesPath is null ? "" : ", subs es quemados");
+                }
+                catch (Exception ex) when (!ct.IsCancellationRequested && ex is not FfmpegNotAvailableException)
                 {
-                    // 1) El tweet EMBEBIDO en el artículo (kudasai/anmosugoi lo
-                    //    traen en los anuncios): procedencia = relevancia, mismo
-                    //    trato que el YouTube embebido — solo se exige que tenga
-                    //    un VIDEO de duración de clip (muchos embeds son tweets
-                    //    de texto). 2) Sin embebido usable, la IA con grounding.
-                    var tweet = articleTweetUrl is null
-                        ? null
-                        : await trailerService.ValidateOfficialPostAsync(
-                              articleTweetUrl, TrailerDownloadService.SubjectFromTitle(item.Title),
-                              requireTrustSignal: false, ct);
-                    tweet ??= await FindTweetVideoAsync(item, content, ct);
-                    var tweetClip = tweet is null ? null : await trailerService.DownloadAsync(tweet.Url, ct);
-                    if (tweetClip is not null)
-                    {
-                        logger.LogInformation("AnimeNews: video del post oficial de X como respaldo → {Url}", tweet!.Url);
-                        if (candidate?.SubtitlesPath is not null)
-                            TrailerDownloadService.CleanUp(candidate.SubtitlesPath);
-                        candidate = tweet;
-                        clipPath = tweetClip;
-                    }
+                    logger.LogWarning(ex, "Trailer reel render failed");
                 }
-
-                // Última red: bilibili (verificado 18-jul: búsqueda y descarga
-                // pasan desde los runners; los PV/openings de anime están casi
-                // todos ahí). Query limpia: obra + "PV" para tráilers, la del
-                // plan (artista+canción) para temas.
-                if (clipPath is null && plan.WantsVideo && igSettings.TweetVideoFallback)
+                finally
                 {
-                    var obra = TrailerDownloadService.SubjectFromTitle(item.Title);
-                    var biliSubject = $"{plan.Subject} {obra}".Trim();
-                    var biliQuery = plan.Kind == NewsVideoKind.Trailer ? $"{obra} PV" : plan.Query;
-                    if (biliQuery.Trim().Length > 0)
-                    {
-                        logger.LogInformation("AnimeNews: última red — buscando en bilibili → \"{Query}\"", biliQuery);
-                        var bili = await trailerService.SearchAsync(
-                            biliQuery, requireSpanish: false, plan.Kind, biliSubject,
-                            searchPrefix: "bilisearch", ct: ct);
-                        var biliClip = bili is null ? null : await trailerService.DownloadAsync(bili.Url, ct);
-                        if (biliClip is not null)
-                        {
-                            logger.LogInformation("AnimeNews: video de bilibili como última red → {Url}", bili!.Url);
-                            if (candidate?.SubtitlesPath is not null)
-                                TrailerDownloadService.CleanUp(candidate.SubtitlesPath);
-                            candidate = bili;
-                            clipPath = biliClip;
-                        }
-                    }
+                    TrailerDownloadService.CleanUp(clipPath);
+                    if (candidate.SubtitlesPath is not null)
+                        TrailerDownloadService.CleanUp(candidate.SubtitlesPath);
                 }
+            }
 
-                // La noticia AMERITABA video y la escalera entera (YouTube → X →
-                // bilibili) se quedó sin nada: es una FALLA, no el camino normal.
-                // Va como Warning porque todo acá es best-effort y la corrida
-                // termina verde igual — sin esta línea, "el reel salió sin video"
-                // no deja ninguna señal y el post-mortem arranca bajando los logs
-                // de 40 corridas a mano (semana del 31-ago-2026).
-                if (clipPath is null && plan.WantsVideo)
-                    logger.LogWarning(
-                        "AnimeNews: REEL SIN VIDEO — la noticia amerita {Kind} pero ningún candidato bajó " +
-                        "(query \"{Query}\", {Count} candidato(s) de YouTube, respaldos X y bilibili sin suerte): \"{Title}\"",
-                        plan.Kind, plan.Query, plan.Candidates.Count, Truncate(item.Title, 60));
-
-                if (clipPath is not null)
-                {
-                    try
-                    {
-                        // Slides informativas para DESPUÉS del tráiler: desde
-                        // sep-2026, SOLO el CTA de cierre (maxKeyPoints: 0 →
-                        // cover + CTA, y el cover se descarta porque el tráiler
-                        // es la apertura). Los puntos clave que iban acá vivían
-                        // en los últimos 10,5 s de un reel con 12 % de retención
-                        // mediana: no los veía nadie, y estirar el video hundía
-                        // la finalización. El contenido no se pierde — el titular
-                        // va quemado sobre el video y el cuerpo entero, en el
-                        // caption. Sin crédito de música: suena el audio del tráiler.
-                        var allSlides = await imageService.GenerateReelSlidesAsync(
-                            item, content, images, maxKeyPoints: 0, ct: ct);
-                        var infoSlides = allSlides.Skip(1).ToList();
-
-                        var (hook, overlay) = imageService.GenerateVideoReelLayers(content);
-                        render = await videoService.GenerateTrailerReelAsync(
-                            clipPath, hook, overlay, infoSlides, candidate!.DurationSeconds,
-                            candidate.SubtitlesPath, ct);
-                        logger.LogInformation("AnimeNews: reel con TRÁILER para \"{Title}\" ({Url}{Subs})",
-                            Truncate(item.Title, 60), candidate.Url,
-                            candidate.SubtitlesPath is null ? "" : ", subs es quemados");
-                    }
-                    catch (Exception ex) when (!ct.IsCancellationRequested && ex is not FfmpegNotAvailableException)
-                    {
-                        logger.LogWarning(ex, "Trailer reel render failed — falling back to slideshow");
-                    }
-                    finally
-                    {
-                        TrailerDownloadService.CleanUp(clipPath);
-                        // candidate no puede ser null acá: clipPath solo se obtiene de
-                        // candidate.Url (línea 321). El compilador no extiende esa
-                        // garantía al bloque finally, de ahí el null-forgiving.
-                        if (candidate!.SubtitlesPath is not null)
-                            TrailerDownloadService.CleanUp(candidate.SubtitlesPath);
-                    }
-                }
+            if (render is null && !allowSlideshow)
+            {
+                logger.LogWarning(
+                    "AnimeNews: sin reel con video para \"{Title}\" y la corrida exige video — no se publica",
+                    Truncate(item.Title, 60));
+                return null;
             }
 
             if (render is null)
@@ -751,17 +998,16 @@ public class AnimeNewsPublisherService(
     // ── Búsqueda del video de la noticia por IA ─────────────────────────────
 
     /// <summary>
-    /// Cuando el artículo no embebe un video usable (el caso típico), lo BUSCA
-    /// en YouTube: Gemini decide si la noticia amerita video y de QUÉ TIPO —
-    /// tráiler, tema musical (opening/ending/MV) o corto/video especial — y
-    /// arma la query; sin IA cae a la heurística por keywords. Para temas y
-    /// cortos el requisito de español no aplica (el video ES la noticia: una
-    /// canción japonesa o una animación) y el embebido del artículo se rescata
-    /// si es un upload oficial. Best-effort → null (slideshow).
+    /// Cuando el artículo no embebe un video usable, lo BUSCA en YouTube:
+    /// Gemini decide si la noticia amerita video y de QUÉ TIPO — tráiler, tema
+    /// musical (opening/ending/MV) o corto/video especial — y arma la query;
+    /// sin IA cae a la heurística por keywords. Para temas y cortos el
+    /// requisito de español no aplica (el video ES la noticia: una canción
+    /// japonesa o una animación). Best-effort → plan sin candidatos.
     /// </summary>
-    private async Task<NewsVideoPlan> FindNewsVideoAsync(
-        AnimeNewsItem item, NewsContent content, string? embeddedUrl, CancellationToken ct)
+    private async Task<NewsVideoPlan> FindNewsVideoAsync(AnimeNewsItem item, CancellationToken ct)
     {
+        var recent = igSettings.TrailerSearchRecentOnly;
         string? query = null;
         string? subject = null;
         var kind = NewsVideoKind.Trailer;
@@ -794,7 +1040,7 @@ public class AnimeNewsPublisherService(
                     "titularía el upload oficial (ej.: \"Mob Psycho 100 anniversary special movie\"). " +
                     "Respondé SOLO un JSON: {\"buscar\": true|false, \"tipo\": \"trailer\"|\"tema\"|\"corto\", " +
                     "\"obra\": \"...\", \"query\": \"...\"}",
-                    $"Titular: {item.Title}\nResumen: {Truncate(item.Summary ?? content.Lede ?? string.Empty, 400)}",
+                    $"Titular: {item.Title}\nResumen: {Truncate(item.Summary ?? string.Empty, 400)}",
                     useWebSearch: false, ct);
 
                 // ExtractJsonObject: Gemma (fallback de cuota) envuelve el JSON en
@@ -855,33 +1101,18 @@ public class AnimeNewsPublisherService(
         }
 
         // La noticia AMERITA video: pase lo que pase con YouTube, el plan viaja
-        // al caller para que la escalera de respaldos (tweet del artículo → X
-        // vía IA → bilibili) corra igual — la garantía "si el video existe, el
-        // reel sale con video" depende de esto (hueco real 18-jul: la búsqueda
-        // no dio candidato y los respaldos ni corrieron).
+        // al caller para que el respaldo de X vía IA corra igual — la garantía
+        // "si el video existe, el reel sale con video" depende de esto (hueco
+        // real 18-jul: la búsqueda no dio candidato y los respaldos ni corrieron).
         var plan = new NewsVideoPlan([], true, query!, subject, kind);
 
         // ── Temas (opening/ending/MV) y cortos: el video ES la noticia ──────
         // El idioma no aplica (canción japonesa / animación) pero el upload
-        // tiene que ser oficial. El embebido del artículo es el candidato
-        // exacto — se prueba antes que la búsqueda.
+        // tiene que ser oficial.
         if (kind is NewsVideoKind.ThemeSong or NewsVideoKind.Short)
         {
             var candidates = new List<TrailerCandidate>();
 
-            var embedded = embeddedUrl is null
-                ? null
-                : await trailerService.ValidateAsync(embeddedUrl, requireSpanish: false, kind,
-                      trustProvenance: true, ct);
-            if (embedded is not null)
-            {
-                logger.LogInformation("AnimeNews: video {Kind} embebido del articulo aceptado (upload oficial)", kind);
-                candidates.Add(embedded);
-            }
-
-            // La busqueda corre IGUAL con embebido aceptado: cuesta ~2 s y deja
-            // suplentes por si el embebido no se puede bajar (bot-check, borrado,
-            // region-lock). Con video obligatorio, tener red vale mas que el ahorro.
             // Subject COMBINADO artista+obra: los MV oficiales titulan por el
             // artista (Tanya/MYTH & ROID, 17-jul) y los creditless por el ANIME
             // (Cat and Dragon, 18-jul) - con el subject solo artista, el
@@ -891,7 +1122,7 @@ public class AnimeNewsPublisherService(
             logger.LogInformation("AnimeNews: buscando {Kind} en YouTube -> \"{Query}\" (obra: {Subject})",
                 kind, query, themeSubject);
             candidates.AddRange(await trailerService.SearchManyAsync(
-                query, requireSpanish: false, kind, themeSubject, ct: ct));
+                query, requireSpanish: false, kind, themeSubject, recentOnly: recent, ct: ct));
 
             // Escalera: si la query de la IA no encontro nada, probar la
             // heuristica (obra + palabra de tipo). Una query recargada de
@@ -903,7 +1134,7 @@ public class AnimeNewsPublisherService(
             {
                 logger.LogInformation("AnimeNews: reintento con query heuristica -> \"{Query}\"", heur.Value.Query);
                 candidates.AddRange(await trailerService.SearchManyAsync(
-                    heur.Value.Query, requireSpanish: false, kind, themeSubject, ct: ct));
+                    heur.Value.Query, requireSpanish: false, kind, themeSubject, recentOnly: recent, ct: ct));
             }
 
             // Los cortos tienen dialogo: si hay subs es manuales, se queman. Solo
@@ -925,15 +1156,16 @@ public class AnimeNewsPublisherService(
         // Los en espanol van primero en la lista: son los preferidos. Los de
         // otro idioma quedan detras como suplentes.
         var spanish = new List<TrailerCandidate>(
-            await trailerService.SearchManyAsync(query, requireSpanish: true, subject: subject, ct: ct));
+            await trailerService.SearchManyAsync(
+                query, requireSpanish: true, subject: subject, recentOnly: recent, ct: ct));
 
         // 2do intento: sin versión latina, el tráiler oficial en cualquier
         // idioma — con subtítulos es manuales quemados si existen, y si no, en
-        // su idioma original (último recurso, toggle abajo). El PV embebido en
-        // el artículo (rechazado antes por idioma) también entra acá.
+        // su idioma original (último recurso, toggle abajo).
         var anyQuery = StripSpanishSuffix(query);
         var any = new List<TrailerCandidate>(
-            await trailerService.SearchManyAsync(anyQuery, requireSpanish: false, subject: subject, ct: ct));
+            await trailerService.SearchManyAsync(
+                anyQuery, requireSpanish: false, subject: subject, recentOnly: recent, ct: ct));
 
         // Escalera: misma red de seguridad que en temas — si la query de la IA
         // no dio candidato en ninguno de los dos pasos, se prueba la heurística.
@@ -944,17 +1176,11 @@ public class AnimeNewsPublisherService(
             {
                 logger.LogInformation("AnimeNews: reintento con query heurística → \"{Query}\"", heur.Value.Query);
                 spanish.AddRange(await trailerService.SearchManyAsync(
-                    heur.Value.Query, requireSpanish: true, subject: subject, ct: ct));
+                    heur.Value.Query, requireSpanish: true, subject: subject, recentOnly: recent, ct: ct));
                 any.AddRange(await trailerService.SearchManyAsync(
                     StripSpanishSuffix(heur.Value.Query),
-                    requireSpanish: false, subject: subject, ct: ct));
+                    requireSpanish: false, subject: subject, recentOnly: recent, ct: ct));
             }
-        }
-        if (any.Count == 0 && embeddedUrl is not null)
-        {
-            var embedded = await trailerService.ValidateAsync(
-                embeddedUrl, requireSpanish: false, trustProvenance: true, ct: ct);
-            if (embedded is not null) any.Add(embedded);
         }
 
         // Los que no estan en espanol llevan subtitulos es quemados si existen.
@@ -999,8 +1225,7 @@ public class AnimeNewsPublisherService(
     /// <summary>
     /// Resultado de la decisión de video: si la noticia AMERITA video
     /// (<see cref="WantsVideo"/>), la query/obra/tipo viajan al caller para que
-    /// la escalera de respaldos (tweet del artículo → X vía IA → bilibili)
-    /// corra aunque YouTube no haya dado candidato.
+    /// el respaldo de X vía IA corra aunque YouTube no haya dado candidato.
     /// </summary>
     private sealed record NewsVideoPlan(
         IReadOnlyList<TrailerCandidate> Candidates, bool WantsVideo, string Query, string? Subject, NewsVideoKind Kind)
@@ -1030,8 +1255,7 @@ public class AnimeNewsPublisherService(
     /// valida contra su metadata real en ValidateOfficialPostAsync antes de
     /// usarse. Devuelve el candidato o null (→ slideshow).
     /// </summary>
-    private async Task<TrailerCandidate?> FindTweetVideoAsync(
-        AnimeNewsItem item, NewsContent content, CancellationToken ct)
+    private async Task<TrailerCandidate?> FindTweetVideoAsync(AnimeNewsItem item, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(aiSettings.ApiKey)) return null;
 
@@ -1050,7 +1274,7 @@ public class AnimeNewsPublisherService(
                 "búsqueda muestra la URL x.com/... o twitter.com/... del post, devolvé esa URL exacta. " +
                 "Respondé SOLO un JSON: {\"url\": \"https://x.com/<cuenta>/status/<id>\"} " +
                 "o {\"url\": null} si no encontrás ninguno.",
-                $"Titular: {item.Title}\nResumen: {Truncate(item.Summary ?? content.Lede ?? string.Empty, 300)}",
+                $"Titular: {item.Title}\nResumen: {Truncate(item.Summary ?? string.Empty, 300)}",
                 // groundingEssential: sin google_search esta llamada no busca
                 // nada, inventa una URL de X. Con esto un 429 de grounding no
                 // baja a Gemma (8 de 8 corridas de sep-2026 terminaban en "la IA
@@ -1275,29 +1499,43 @@ public class AnimeNewsPublisherService(
 
     /// <summary>
     /// Collects every usable media for the item: the stored cover plus any in-body
-    /// images from the article page (best-effort re-fetch), AND the first embedded
-    /// YouTube trailer if any — el reel lo usa de fondo cuando existe.
+    /// images from the article page (best-effort re-fetch), AND the videos
+    /// embedded in the article (YouTube + post de X) — el reel los usa antes que
+    /// cualquier búsqueda.
     /// </summary>
-    private async Task<(IReadOnlyList<string> Images, string? TrailerUrl, string? TweetUrl)> GatherMediaAsync(
+    private async Task<(IReadOnlyList<string> Images, IReadOnlyList<string> VideoUrls, string? TweetUrl)> GatherMediaAsync(
         AnimeNewsItem item, CancellationToken ct)
     {
         var images = new List<string>();
-        string? trailerUrl = null;
+        IReadOnlyList<string> videoUrls = [];
         string? tweetUrl = null;
         if (!string.IsNullOrWhiteSpace(item.ImageUrl)) images.Add(item.ImageUrl!);
         if (string.IsNullOrWhiteSpace(item.ArticleUrl))
-            return (images, null, null);
+            return (images, videoUrls, null);
 
         try
         {
             var http = httpFactory.CreateClient("news-rss");
-            using var resp = await http.GetAsync(item.ArticleUrl, ct);
+            // Crunchyroll es una SPA: el cuerpo de la nota (y sus embeds) sale
+            // de su API de noticias, no del HTML.
+            var storyApi = AnimeNewsFeedService.CrunchyrollStoryApiUrl(item.ArticleUrl);
+            using var resp = await http.GetAsync(storyApi ?? item.ArticleUrl, ct);
             if (resp.IsSuccessStatusCode)
             {
-                var html = await resp.Content.ReadAsStringAsync(ct);
-                images.AddRange(AnimeNewsFeedService.ExtractArticleImages(html));
-                trailerUrl = AnimeNewsFeedService.ExtractArticleVideoUrl(html);
-                tweetUrl = AnimeNewsFeedService.ExtractArticleTweetUrl(html);
+                var body = await resp.Content.ReadAsStringAsync(ct);
+                if (storyApi is null)
+                {
+                    images.AddRange(AnimeNewsFeedService.ExtractArticleImages(body));
+                    // De un HTML solo el PRIMERO: los widgets de "notas
+                    // relacionadas" traen miniaturas de YouTube de otras noticias.
+                    videoUrls = AnimeNewsFeedService.ExtractArticleVideoUrls(body, max: 1);
+                }
+                else
+                {
+                    // El JSON es solo la nota: openings y endings vienen de a dos.
+                    videoUrls = AnimeNewsFeedService.ExtractArticleVideoUrls(body);
+                }
+                tweetUrl = AnimeNewsFeedService.ExtractArticleTweetUrl(body);
             }
         }
         catch (Exception ex) when (!ct.IsCancellationRequested)
@@ -1305,7 +1543,7 @@ public class AnimeNewsPublisherService(
             logger.LogDebug(ex, "AnimeNews: could not gather extra media for {Title}", Truncate(item.Title, 50));
         }
 
-        return (images.Distinct().Take(6).ToList(), trailerUrl, tweetUrl);
+        return (images.Distinct().Take(6).ToList(), videoUrls, tweetUrl);
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

@@ -176,10 +176,19 @@ public partial class TrailerDownloadService(
     public async Task<TrailerCandidate?> SearchAsync(
         string query, bool requireSpanish = true,
         NewsVideoKind kind = NewsVideoKind.Trailer, string? subject = null,
-        string searchPrefix = "ytsearch",
+        string searchPrefix = "ytsearch", bool recentOnly = false,
         CancellationToken ct = default)
-        => (await SearchManyAsync(query, requireSpanish, kind, subject, searchPrefix, ct))
+        => (await SearchManyAsync(query, requireSpanish, kind, subject, searchPrefix, recentOnly, ct))
             .FirstOrDefault();
+
+    /// <summary>
+    /// URL de resultados de YouTube con el filtro "subido este mes" (el
+    /// parámetro <c>sp</c> que arma la propia UI de YouTube). yt-dlp la recorre
+    /// igual que un <c>ytsearch</c>, con los mismos campos en modo plano.
+    /// Público estático para tests.
+    /// </summary>
+    public static string YouTubeRecentSearchUrl(string query) =>
+        $"https://www.youtube.com/results?search_query={Uri.EscapeDataString(query)}&sp=EgIIBA%253D%253D";
 
     /// <summary>
     /// Busca el video en YouTube (ytsearch de yt-dlp, sin descargar nada) y
@@ -200,29 +209,38 @@ public partial class TrailerDownloadService(
     /// buen match con tráilers populares de cine que pasan todos los otros
     /// filtros. Mismo best-effort que la descarga.
     /// </summary>
+    /// <param name="recentOnly">Solo videos subidos en el último mes (filtro
+    /// "este mes" de YouTube). Sin esto, la búsqueda de "Spice and Wolf
+    /// temporada 2 tráiler" publicó el tráiler de 2022 de la temporada 1, y la
+    /// de Aoashi T2 el de 2022 — la obra correcta pero no el video de la
+    /// noticia (oct-2026). Solo aplica a YouTube.</param>
     public async Task<IReadOnlyList<TrailerCandidate>> SearchManyAsync(
         string query, bool requireSpanish = true,
         NewsVideoKind kind = NewsVideoKind.Trailer, string? subject = null,
-        string searchPrefix = "ytsearch",
+        string searchPrefix = "ytsearch", bool recentOnly = false,
         CancellationToken ct = default)
     {
         // Las comillas romperían el parseo de argumentos del proceso
         var sanitized = query.Replace('"', ' ').Trim();
         if (sanitized.Length == 0) return [];
 
+        var target = recentOnly && IsYouTube(searchPrefix)
+            ? $"\"{YouTubeRecentSearchUrl(sanitized)}\" --playlist-end {SearchResults} "
+            : $"\"{searchPrefix}{SearchResults}:{sanitized}\" ";
+
         var psi = new ProcessStartInfo
         {
             FileName = string.IsNullOrWhiteSpace(settings.YtDlpPath) ? "yt-dlp" : settings.YtDlpPath,
             // --flat-playlist: solo metadata de los resultados (rápido, una
             // sola llamada); la selección del mejor candidato es nuestra. En
-            // YouTube el plano ya trae título/duración/canal; fuera de YouTube
-            // NO (ver ResolveFlatResultsAsync).
-            // searchPrefix "bilisearch" = búsqueda en bilibili (última red).
+            // YouTube el plano ya trae título/duración/canal y si el canal está
+            // VERIFICADO; fuera de YouTube NO (ver ResolveFlatResultsAsync).
+            // searchPrefix "bilisearch" = búsqueda en bilibili.
             // OJO: su API de búsqueda es inestable — responde HTTP 412 seguido,
             // siempre desde las IPs de WARP y a veces también directo (ago-2026).
             Arguments =
-                $"\"{searchPrefix}{SearchResults}:{sanitized}\" " +
-                $"--flat-playlist --print \"%(id)s{FieldSeparator}%(duration)s{FieldSeparator}%(title)s{FieldSeparator}%(channel)s{FieldSeparator}%(url)s\" " +
+                target +
+                $"--flat-playlist --print \"%(id)s{FieldSeparator}%(duration)s{FieldSeparator}%(title)s{FieldSeparator}%(channel)s{FieldSeparator}%(url)s{FieldSeparator}%(channel_is_verified)s\" " +
                 CommonArgs(searchPrefix) +
                 "--no-warnings --socket-timeout 20",
             RedirectStandardError = true,
@@ -389,6 +407,10 @@ public partial class TrailerDownloadService(
             var url = parts.Length > 4 && parts[4].Trim() is { Length: > 0 } u && u != "NA"
                 ? u
                 : null;
+            // 6to campo opcional (%(channel_is_verified)s): "True" o "NA". Solo
+            // las búsquedas de YouTube lo traen; sin el campo rigen las reglas
+            // de siempre.
+            bool? channelVerified = parts.Length > 5 ? parts[5].Trim() == "True" : null;
 
             // Relevancia: el video tiene que ser DE LA OBRA, no solo "un tráiler
             // oficial en español" — mejor slideshow que la película equivocada
@@ -397,7 +419,20 @@ public partial class TrailerDownloadService(
             if (subjectTokens.Count > 0 && !subjectVerified)
                 continue;
 
-            var official = OfficialChannelRegex().IsMatch(channel)
+            var officialChannel = OfficialChannelRegex().IsMatch(channel) || channelVerified == true;
+            // Con el dato de verificación disponible, la confianza la da el
+            // CANAL y no el título: "Official Trailer" en el título lo escriben
+            // igual las cuentas que resuben (x_anime_boy_x, MiracuStream, Geek
+            // Realm Hub, "AnimeVibe Official"…). De 17 reels con video del
+            // 1 al 5-oct-2026, 7 eran resubidas de canales no verificados, y una
+            // ya está borrada por copyright.
+            if (channelVerified is not null && !officialChannel) continue;
+            // Subtítulos o doblaje a OTRO idioma: un VOSTFR o un "Legendado"
+            // no le sirve a una audiencia LATAM (Crunchyroll FR, verificado,
+            // ganaba la búsqueda de Aoashi T2).
+            if (ForeignLanguageRegex().IsMatch($"{title} {channel}")) continue;
+
+            var official = officialChannel
                 || title.Contains("official") || title.Contains("oficial")
                 || channel.Contains("official") || title.Contains("公式") || channel.Contains("公式");
             var kindMatch = KindWordRegex(kind).IsMatch(title);
@@ -422,7 +457,7 @@ public partial class TrailerDownloadService(
             // El upload del distribuidor oficial gana aunque el título no diga
             // "trailer"; a igual puntaje, el orden de relevancia de YouTube
             // desempata (el primero se queda).
-            if (OfficialChannelRegex().IsMatch(channel)) score += 6;
+            if (officialChannel) score += 6;
             else if (official) score += 2;
             if (duration is >= 10 and <= 300) score += 2;  // teasers arrancan en ~15s
 
@@ -609,6 +644,12 @@ public partial class TrailerDownloadService(
     // real: reel publicado con un video de comentario en inglés, jul-2026).
     [GeneratedRegex(@"españ|espanol|spanish|castellano|latino|latam|doblaje|doblad|subtitulad|sub\.? esp|onegai", RegexOptions.IgnoreCase)]
     private static partial Regex SpanishRegex();
+
+    // Versiones para OTRO público: francés (VOSTFR/VF), portugués (legendado/
+    // dublado), vietnamita, indonesio, alemán, italiano, y los canales
+    // regionales de Crunchyroll que no son el latino.
+    [GeneratedRegex(WordStart + @"(vostfr|vf|legendado|dublado|vietsub|sub indo|deutsch|ger sub|german sub|sub ita|crunchyroll (fr|de|brasil|br|it|ru|ar))" + WordEnd, RegexOptions.IgnoreCase)]
+    private static partial Regex ForeignLanguageRegex();
 
     // Misma frontera CJK-segura: sin esto un "reaction" pegado a kanji se
     // colaba. Acá el efecto es puramente protector — solo rechaza MÁS.

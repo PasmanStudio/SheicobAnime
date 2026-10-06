@@ -12,6 +12,22 @@ public class AnimeNewsSettings
     public int MaxAgeHours { get; set; } = 48;
 
     /// <summary>
+    /// Con video obligatorio (Instagram__NewsRequireVideo): cuántas noticias del
+    /// pool se prueban por corrida hasta encontrar una con video. Cada intento
+    /// sin video cuesta ~30-60 s de búsqueda y validación, y el job tiene que
+    /// terminar dentro del timeout del workflow.
+    /// </summary>
+    public int MaxVideoAttempts { get; set; } = 4;
+
+    /// <summary>
+    /// Pasados estos minutos buscando video no se arranca otra noticia. El job
+    /// tiene timeout de 20 min y pasarse CANCELA a mitad de la publicación: hay
+    /// que dejar lugar al setup (~3), al render (hasta ~5) y a la espera de Meta
+    /// (hasta 6). Un día de bot-check puede comerse varios minutos por intento.
+    /// </summary>
+    public int VideoSearchBudgetMinutes { get; set; } = 6;
+
+    /// <summary>
     /// Formato forzado de la corrida — lo setea el workflow. Desde sep-2026 las 7
     /// corridas programadas son "reel"; "post" quedó solo para disparos manuales.
     ///   "reel" → siempre Reel (sin dedup de 24 h — el cron ya espacia los horarios).
@@ -58,8 +74,7 @@ public class AnimeNewsSettings
         // media:thumbnail y content:encoded completo; la página del artículo es
         // una SPA de 14KB sin contenido (og:image = favicon 96px, que el gate de
         // calidad de fotos descarta solo). Los tráilers NO vienen embebidos en el
-        // RSS — los encuentra la búsqueda de YouTube (el canal "Crunchyroll en
-        // Español" sube la versión latina de casi todo).
+        // RSS, pero sí en la API de la nota (AnimeNewsFeedService.CrunchyrollStoryApiUrl).
         new() { Key = "crunchyroll", Url = "https://cr-news-api-service.prd.crunchyrollsvc.com/v1/es-419/rss" },
     ];
 

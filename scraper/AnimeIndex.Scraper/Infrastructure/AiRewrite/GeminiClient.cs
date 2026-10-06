@@ -63,11 +63,18 @@ public class GeminiClient(
         bool groundingEssential = false,
         CancellationToken ct = default)
     {
+        // Las llamadas con grounding van al modelo que lo tiene en el free tier
+        // (ver AiSettings.GroundingModel); si ese también da 429, el resto de la
+        // cadena sigue igual que antes: sin grounding en el principal, o error
+        // si el grounding es esencial.
+        var model = useWebSearch && !string.IsNullOrWhiteSpace(settings.GroundingModel)
+            ? settings.GroundingModel
+            : settings.Model;
         try
         {
             return new GeminiResult(
-                await GenerateWithModelAsync(settings.Model, systemInstruction, userPrompt, useWebSearch, ct),
-                settings.Model, useWebSearch);
+                await GenerateWithModelAsync(model, systemInstruction, userPrompt, useWebSearch, ct),
+                model, useWebSearch);
         }
         catch (GeminiQuotaException) when (useWebSearch && !groundingEssential)
         {
@@ -79,7 +86,8 @@ public class GeminiClient(
             // sin la herramienta: el grounding es "contexto extra si el artículo
             // viene flaco", no un requisito.
             logger.LogWarning(
-                "Gemini {Model} sin cuota de grounding (429) — reintento SIN google_search", settings.Model);
+                "Gemini {Model} sin cuota de grounding (429) — reintento SIN google_search en {Main}",
+                model, settings.Model);
             try
             {
                 return new GeminiResult(
@@ -99,12 +107,22 @@ public class GeminiClient(
             // → "la IA no encontró post de X usable"). Mejor decir la verdad.
             logger.LogWarning(
                 "Gemini {Model} sin cuota de grounding (429) y esta llamada LO NECESITA — sin fallback",
-                settings.Model);
+                model);
             throw;
         }
         catch (GeminiQuotaException quota)
         {
             return await FallbackAsync(systemInstruction, userPrompt, useWebSearch, quota, ct);
+        }
+        catch (GeminiModelNotFoundException) when (model != settings.Model)
+        {
+            // Google retira modelos viejos: si el de grounding desaparece, la
+            // llamada no puede quedarse sin respuesta por eso.
+            logger.LogWarning("Gemini {Model} no existe (404) — sin grounding en {Main}", model, settings.Model);
+            if (groundingEssential) throw;
+            return new GeminiResult(
+                await GenerateWithModelAsync(settings.Model, systemInstruction, userPrompt, false, ct),
+                settings.Model, false);
         }
         catch (GeminiBlockedException blocked)
         {

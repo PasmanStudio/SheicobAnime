@@ -56,6 +56,14 @@ public class InstagramSettings
     // Apagar del todo con Instagram__NewsReelEnabled=false.
     public bool NewsReelEnabled { get; set; } = true;
 
+    // Video OBLIGATORIO (decisión del usuario, oct-2026): una noticia se
+    // publica solo si se consiguió su video — embebido en el artículo o
+    // encontrado por búsqueda. Sin video no sale nada (ni slideshow, ni
+    // carrusel, ni story): se prueba la siguiente noticia del pool, hasta
+    // AnimeNews__MaxVideoAttempts. No aplica a las corridas "post".
+    // false = comportamiento anterior (slideshow/carrusel de respaldo).
+    public bool NewsRequireVideo { get; set; } = true;
+
     // ── Reel "tráiler + titular" ────────────────────────────────────────
     // Si el artículo embebe un tráiler/PV de YouTube, el reel lo usa de fondo
     // (muteado, con nuestra música) en vez del slideshow de imágenes — el
@@ -69,6 +77,10 @@ public class InstagramSettings
     // (ytsearch) y se descarga el mejor candidato. Best-effort → slideshow.
     public bool TrailerSearchEnabled { get; set; } = true;
 
+    // La búsqueda solo considera videos subidos el último mes. El video
+    // embebido en el artículo no pasa por este filtro: lo eligió la fuente.
+    public bool TrailerSearchRecentOnly { get; set; } = true;
+
     // Último recurso de la cadena de tráiler (decisión del usuario, jul-2026):
     // sin versión en español ni subtítulos es manuales para quemar, el tráiler
     // OFICIAL va igual en su idioma original — el titular y las slides en
@@ -76,12 +88,12 @@ public class InstagramSettings
     // false = regla estricta anterior (PR #154): sin español → slideshow.
     public bool TrailerOriginalLanguageFallback { get; set; } = true;
 
-    // Respaldos cuando YouTube falla (18-jul-2026: la descarga está bloqueada
-    // desde CI — 34 combos cliente×cookies×WARP; X y bilibili NO bloquean a
-    // los runners). Gobierna la escalera completa: tweet embebido del artículo
-    // → post de X buscado por la IA con grounding (URL validada contra su
-    // metadata real) → búsqueda en bilibili como última red. Corre siempre que
-    // la noticia amerite video, aunque la búsqueda de YouTube no dé candidato.
+    // Videos de X/Twitter (18-jul-2026: X no bloquea a los runners). Gobierna
+    // el tweet embebido del artículo y el post de X buscado por la IA con
+    // grounding (URL validada contra su metadata real). bilibili se sacó de
+    // la escalera en oct-2026: su búsqueda devolvía 412 o resultados sin
+    // relación (las obras figuran con su título en chino) y no rescató un
+    // solo reel en 33 corridas.
     public bool TweetVideoFallback { get; set; } = true;
 
     // Binario de yt-dlp (el workflow lo instala con pipx; en dev local puede faltar).
@@ -111,6 +123,10 @@ public class InstagramSettings
     // Cada intento fallido cuesta ~3 s, así que 4 acota el peor caso a ~25 s
     // sin dejar de cubrir el caso real (6 tráilers válidos, el 1ro bloqueado).
     public int MaxVideoCandidates { get; set; } = 4;
+
+    // Tope de cada render de ffmpeg. En los runners un reel de tráiler tarda
+    // 45-90 s; se sube solo para correr --video-probe en máquinas lentas.
+    public int FfmpegTimeoutMinutes { get; set; } = 3;
 
     // Archivo de cookies de YouTube (formato Netscape) para yt-dlp. Es el
     // remedio documentado para el bot-check "Sign in to confirm you're not a
