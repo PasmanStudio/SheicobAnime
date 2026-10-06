@@ -12,7 +12,8 @@ namespace AnimeIndex.Scraper.Infrastructure.Instagram;
 /// toma las últimas N notas del feed de Crunchyroll, lee sus embeds de la API
 /// de stories, los valida y baja con el mismo TrailerDownloadService de prod y
 /// renderiza el reel con InstagramVideoService. Deja los MP4 en
-/// <c>outDir</c> y una tabla por consola. Corre desde la IP de quien lo
+/// <c>outDir</c> (por defecto el temp del sistema, nunca dentro del repo ni
+/// como artifact de CI: el repo es público) y una tabla por consola. Corre desde la IP de quien lo
 /// ejecuta — no reproduce el bot-check de los runners (eso es yt-diag.yml).
 ///
 /// Usage: dotnet run --project scraper/AnimeIndex.Scraper -- --video-probe [N] [outDir]

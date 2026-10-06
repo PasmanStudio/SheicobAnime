@@ -112,25 +112,62 @@ public class AnimeNewsPublisherService(
         }
 
         var ordered = await OrderForVideoRunAsync(items, ct);
-        var attempts = Math.Min(ordered.Count, Math.Max(1, newsSettings.MaxVideoAttempts));
-        logger.LogInformation(
+        var attempts = Math.Min(ordered.Count, Math.Max(1, newsSettings.MaxVideoAttempts));        logger.LogInformation(
             "AnimeNews: corrida con video obligatorio — hasta {Attempts} de {Pool} candidatas",
             attempts, items.Count);
 
-        var published = 0;
-        for (var i = 0; i < attempts && published < newsSettings.MaxPerRun; i++)
-        {
-            if (ct.IsCancellationRequested) break;
-            if (await TryPublishWithVideoAsync(ordered[i], ct)) published++;
-        }
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        var budget = TimeSpan.FromMinutes(newsSettings.VideoSearchBudgetMinutes);
+        var (published, tried, outOfTime) = await RunVideoAttemptsAsync(
+            ordered, attempts, newsSettings.MaxPerRun, budget, () => clock.Elapsed,
+            item => TryPublishWithVideoAsync(item, ct), ct);
+
+        if (outOfTime)
+            logger.LogWarning(
+                "AnimeNews: se agotó el presupuesto de búsqueda ({Minutes} min) tras {Tried} noticia(s) — no se prueban más",
+                newsSettings.VideoSearchBudgetMinutes, tried);
 
         // Todo es best-effort y la corrida termina verde igual: este warning es
         // la única señal de que hoy no salió nada.
         if (published == 0)
             logger.LogWarning(
                 "AnimeNews: CORRIDA SIN PUBLICACIÓN — ninguna de las {Attempts} noticias probadas tuvo video usable",
-                attempts);
+                tried);
     }
+
+    /// <summary>
+    /// El bucle de intentos de una corrida con video obligatorio: prueba las
+    /// noticias en orden hasta publicar <paramref name="maxPerRun"/>, agotar
+    /// <paramref name="maxAttempts"/> o pasarse del <paramref name="budget"/>
+    /// (que solo frena ANTES de arrancar otra noticia: la primera siempre se
+    /// prueba). Público estático para tests.
+    /// </summary>
+    public static async Task<(int Published, int Tried, bool OutOfTime)> RunVideoAttemptsAsync<T>(
+        IReadOnlyList<T> ordered, int maxAttempts, int maxPerRun, TimeSpan budget,
+        Func<TimeSpan> elapsed, Func<T, Task<bool>> tryPublish, CancellationToken ct = default)
+    {
+        var published = 0;
+        var tried = 0;
+        for (var i = 0; i < Math.Min(maxAttempts, ordered.Count) && published < maxPerRun; i++)
+        {
+            if (ct.IsCancellationRequested) break;
+            if (i > 0 && elapsed() > budget) return (published, tried, true);
+            tried++;
+            if (await tryPublish(ordered[i])) published++;
+        }
+        return (published, tried, false);
+    }
+
+    /// <summary>
+    /// Estado de una noticia que no consiguió video. Si había videos y no se
+    /// pudieron BAJAR (bot-check, 403), el video existe: queda "pending" para
+    /// que la próxima corrida la reintente. Si no había ninguno, "skipped".
+    /// Público estático para tests.
+    /// </summary>
+    public static (string Status, string Message) NoVideoOutcome(int candidatesFound) =>
+        candidatesFound > 0
+            ? ("pending", "Video encontrado pero no se pudo bajar — se reintenta en la próxima corrida")
+            : ("skipped", "Sin video");
 
     /// <summary>
     /// La más relevante (IA/heurística) primero; después las que anuncian
@@ -176,20 +213,14 @@ public class AnimeNewsPublisherService(
             video = await AcquireVideoAsync(item, media.VideoUrls, media.TweetUrl, ct);
             if (video.ClipPath is null)
             {
+                (item.IgPostStatus, item.ErrorMessage) = NoVideoOutcome(video.CandidatesFound);
                 if (video.CandidatesFound > 0)
-                {
-                    item.ErrorMessage = "Video encontrado pero no se pudo bajar — se reintenta en la próxima corrida";
                     logger.LogWarning(
                         "AnimeNews: \"{Title}\" tiene {Count} video(s) pero ninguno bajó — queda pendiente",
                         Truncate(item.Title, 60), video.CandidatesFound);
-                }
                 else
-                {
-                    item.IgPostStatus = "skipped";
-                    item.ErrorMessage = "Sin video";
                     logger.LogInformation("AnimeNews: \"{Title}\" sin video — se prueba la siguiente noticia",
                         Truncate(item.Title, 60));
-                }
                 return false;
             }
 

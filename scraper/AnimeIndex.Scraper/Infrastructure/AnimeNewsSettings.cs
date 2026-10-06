@@ -20,6 +20,14 @@ public class AnimeNewsSettings
     public int MaxVideoAttempts { get; set; } = 4;
 
     /// <summary>
+    /// Pasados estos minutos buscando video no se arranca otra noticia. El job
+    /// tiene timeout de 20 min y pasarse CANCELA a mitad de la publicación: hay
+    /// que dejar lugar al setup (~3), al render (hasta ~5) y a la espera de Meta
+    /// (hasta 6). Un día de bot-check puede comerse varios minutos por intento.
+    /// </summary>
+    public int VideoSearchBudgetMinutes { get; set; } = 6;
+
+    /// <summary>
     /// Formato forzado de la corrida — lo setea el workflow. Desde sep-2026 las 7
     /// corridas programadas son "reel"; "post" quedó solo para disparos manuales.
     ///   "reel" → siempre Reel (sin dedup de 24 h — el cron ya espacia los horarios).

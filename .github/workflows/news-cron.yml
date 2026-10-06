@@ -32,7 +32,8 @@ on:
         type: choice
         # probe = NO publica: prueba bajar y renderizar el video embebido de
         # las últimas notas de Crunchyroll desde el runner (con WARP y cookies,
-        # como prod) y sube los MP4 como artifact. Ver VideoProbe.cs.
+        # como prod). Deja solo la tabla en el log: los MP4 mueren con el
+        # runner — subirlos como artifact los publicaría (repo público).
         options: [auto, reel, post, probe]
         default: auto
 
@@ -204,7 +205,8 @@ jobs:
         run: dotnet build scraper/AnimeIndex.Scraper/AnimeIndex.Scraper.csproj --no-restore -c Release
 
       # Sin secrets de Instagram ni de la DB a propósito: esta corrida no
-      # puede publicar nada aunque el código cambie.
+      # puede publicar nada aunque el código cambie. Los MP4 quedan en
+      # RUNNER_TEMP y NO se suben: el repo es público y no distribuimos video.
       - name: Video probe (no publica)
         if: env.NEWS_FORMAT == 'probe'
         run: dotnet run --project scraper/AnimeIndex.Scraper --no-build -c Release -- --video-probe 15 "$RUNNER_TEMP/video-probe"
@@ -213,15 +215,6 @@ jobs:
           Instagram__YtDlpJsRuntimes:  "node"
           Instagram__YtDlpCookiesPath: ${{ env.YTDLP_COOKIES }}
           Instagram__FfmpegTimeoutMinutes: "5"
-
-      - name: Subir los reels de prueba
-        if: env.NEWS_FORMAT == 'probe' && always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: video-probe
-          path: ${{ runner.temp }}/video-probe/
-          retention-days: 3
-          if-no-files-found: warn
 
       - name: Run news pipeline
         if: env.NEWS_FORMAT != 'probe'

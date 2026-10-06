@@ -385,7 +385,8 @@ if (args.Contains("--video-probe"))
 {
     var idx = Array.IndexOf(args, "--video-probe");
     var count = args.Length > idx + 1 && int.TryParse(args[idx + 1], out var c) ? c : 10;
-    var outDir = args.Length > idx + 2 ? args[idx + 2] : "video-probe";
+    // Fuera del repo por defecto: un `git add -A` no puede subir tráilers al repo público
+    var outDir = args.Length > idx + 2 ? args[idx + 2] : Path.Combine(Path.GetTempPath(), "video-probe");
 
     await using var sp = new ServiceCollection()
         .AddLogging(b => b.AddSimpleConsole(o => { o.SingleLine = true; o.TimestampFormat = "HH:mm:ss "; }))

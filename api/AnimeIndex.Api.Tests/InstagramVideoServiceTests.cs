@@ -2262,3 +2262,63 @@ public class CrunchyrollStoryApiTests
         Assert.Single(AnimeNewsFeedService.ExtractArticleVideoUrls(json, max: 1));
     }
 }
+
+/// <summary>
+/// Video obligatorio (oct-2026): una corrida prueba noticias en orden hasta
+/// que una consigue video; sin video no publica nada. Se testea el bucle y
+/// la decisión pending/skipped — el resto del flujo depende de yt-dlp, Meta y
+/// la DB.
+/// </summary>
+public class VideoOnlyRunTests
+{
+    private static Task<(int Published, int Tried, bool OutOfTime)> Run(
+        bool[] hasVideo, int maxAttempts = 4, int maxPerRun = 1,
+        TimeSpan? budget = null, Func<TimeSpan>? elapsed = null, List<int>? seen = null)
+        => AnimeNewsPublisherService.RunVideoAttemptsAsync(
+            Enumerable.Range(0, hasVideo.Length).ToList(), maxAttempts, maxPerRun,
+            budget ?? TimeSpan.FromMinutes(6), elapsed ?? (() => TimeSpan.Zero),
+            i => { seen?.Add(i); return Task.FromResult(hasVideo[i]); });
+
+    [Fact]
+    public async Task WithoutVideo_TriesTheNextNews_AndStopsAtTheFirstPublished()
+    {
+        var seen = new List<int>();
+        var result = await Run([false, false, true, true], seen: seen);
+
+        Assert.Equal((1, 3, false), result);
+        Assert.Equal([0, 1, 2], seen);
+    }
+
+    [Fact]
+    public async Task NoVideoAnywhere_PublishesNothing_AndRespectsMaxAttempts()
+    {
+        var seen = new List<int>();
+        var result = await Run([false, false, false, false, false, false], maxAttempts: 4, seen: seen);
+
+        Assert.Equal((0, 4, false), result);
+        Assert.Equal(4, seen.Count);
+    }
+
+    [Fact]
+    public async Task BudgetStopsNewAttempts_ButTheFirstAlwaysRuns()
+    {
+        var seen = new List<int>();
+        var result = await Run([false, true, true], budget: TimeSpan.FromMinutes(6),
+            elapsed: () => TimeSpan.FromMinutes(7), seen: seen);
+
+        Assert.Equal((0, 1, true), result);
+        Assert.Equal([0], seen);
+    }
+
+    [Fact]
+    public async Task PoolSmallerThanMaxAttempts_DoesNotOverrun()
+        => Assert.Equal((0, 2, false), await Run([false, false], maxAttempts: 4));
+
+    [Fact]
+    public void VideoThatExistsButDidNotDownload_StaysPending()
+    {
+        // Bot-check o 403: el video existe, la próxima corrida lo reintenta
+        Assert.Equal("pending", AnimeNewsPublisherService.NoVideoOutcome(candidatesFound: 2).Status);
+        Assert.Equal("skipped", AnimeNewsPublisherService.NoVideoOutcome(candidatesFound: 0).Status);
+    }
+}
