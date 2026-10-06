@@ -72,6 +72,15 @@ jobs:
           # secrets el host se omite. Cargar en Settings → Secrets → Actions.
           Doodstream__ApiKey: ${{ secrets.DOODSTREAM_API_KEY }}
           Player4me__ApiKey: ${{ secrets.PLAYER4ME_API_KEY }}
+          # Fuente del cron: animeav1 (source3). Desde el 30-sep-2026 el Cloudflare de
+          # jkanime (source2) devuelve 403 a todo lo que sale de los runners — también
+          # vía WARP — y correrlo solo quemaba ~3,5 h en pausas del circuit breaker.
+          # Para volver a jkanime: AutoSources "source2" y vaciar DisabledSources.
+          # Una sola fuente por corrida: el host se apaga al terminar el primer job.
+          Scraper__AutoSources: "source3"
+          Scraper__DisabledSources: "source2"
+          AnimeAv1__DelayMs: "600"
+          AnimeAv1__MaxEpisodesPerSeries: "30"
           # Speed up scheduler: check every 30s (default is 15s but let's be explicit)
           Source2__DelayMs: "2000"
           # Force scheduler to fire immediately on startup (override 2am cron for GHA runs)
