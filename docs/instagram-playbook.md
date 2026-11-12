@@ -1,7 +1,7 @@
 # Playbook de Instagram — SheicobAnime
 
-**Última actualización:** 10-sep-2026 (Sprints 1, 2 y 3 implementados — ver §7, §8 y §9)
-**Base de datos del análisis:** 785 piezas publicadas (301 reels + 484 feed), 16-may → 9-sep-2026, exportadas de la Graph API de Meta.
+**Última actualización:** 12-nov-2026 (segundo corte con los sprints ya en producción — ver **§12**)
+**Base de datos del análisis:** 785 piezas publicadas (301 reels + 484 feed), 16-may → 9-sep-2026, exportadas de la Graph API de Meta. El segundo corte (§12) suma 606 piezas (462 reels + 144 feed), 14-ago → 8-nov-2026.
 
 Este documento existe para poder retomar el tema en otra conversación sin repetir la investigación. Tiene los números medidos, qué hacer con ellos, y qué todavía no sabemos.
 
@@ -881,3 +881,115 @@ para 1-2 reels "apuesta" por semana, no un cambio en el pipeline.
 
 **El número de arriba de todo** sigue siendo alcance de cuenta por día: 4.381 hoy,
 ~8.800 para duplicar el crecimiento a ~11 seguidores/día.
+
+> **Actualización 12-nov (§12):** la meta se pasó — ~16.500 de alcance/día y
+> 13,4 seguidores/día en el último mes. El cuello ya no es el alcance sino
+> **alcance → visita al perfil (0,25 %)**. El punto 2 de la lista de arriba
+> (bio, nombre, reels fijados, y además un llamado al perfil en el reel) pasa a
+> ser lo primero.
+
+---
+
+## 12. Segundo corte — los sprints en producción (12-nov-2026)
+
+Export de 90 días (`insights-export.yml`, `days=90`): 462 reels + 144 feed,
+14-ago → 8-nov. Cuenta diaria: 13-oct → 10-nov (29 días). Todo observacional;
+medianas y Spearman porque la distribución tiene cola muy pesada.
+
+### 12.1 Antes / después de los sprints (corte 10-sep)
+
+| | n | Views (med) | Watch (med) | Reels ≥1k | Reels ≥5k |
+|---|---|---|---|---|---|
+| Antes del 10-sep | 126 | 396 | 4,2 s | 29 % | 3 |
+| Desde el 10-sep | 336 | **684** | **5,4 s** | **41 %** | **16** |
+
++73 % de mediana, +29 % de watch time, 5× los reels de más de 5k. No es un
+experimento (no hay control y cambiaron varias cosas a la vez), pero va en la
+dirección que los sprints buscaban: más retención y más candidatos a explotar.
+
+Por mes (reels): mediana 451 (ago) → 405 (sep) → **738 (oct)** → **1.313 (nov,
+n=29)**. Watch time 4,2 → 4,8 → 5,6 → 5,9 s. Shares totales 834 → 1.630 →
+**13.309** → 2.453 (nov parcial).
+
+### 12.2 Los virales
+
+| Views | Fecha | Watch | Shares | Guardados | Tema |
+|---|---|---|---|---|---|
+| **240.543** | 18-oct | 24,6 s | 10.568 | 3.816 | Kyary Pamyu Pamyu |
+| **93.339** | 4-nov | 30,1 s | 1.238 | 1.822 | El pasado de Weak Kingsley y Avida |
+| **43.165** | 7-nov | 15,8 s | 366 | 494 | Rascal Does Not Dream |
+| 32.832 | 25-oct | 7,2 s | 880 | 385 | "chicas y terremotos" |
+| 18.547 | 8-oct | 4,6 s | 167 | 275 | — |
+| 17.865 | 12-sep | 21,0 s | 351 | 466 | Tras el cierre del manga de Horikoshi (MHA) |
+
+- **El #1 solo es el 24,5 % de todas las views de los 90 días** (antes el #1
+  era el 10 %). Top-5 = 44 %, top-10 = 50 %. La cola se estiró todavía más.
+- Kyary Pamyu Pamyu (ícono del J-pop) vuelve a confirmar el patrón de §1/§9.2:
+  **cruce con una audiencia masiva fuera del anime**. Vale sumar el mundo
+  J-pop / idols / músicos a la lista de crossovers de `HeuristicNewsScore`.
+- Los 3 más grandes tienen watch time de 15-30 s: el tráiler entero (§8.3) se
+  mira entero cuando la noticia engancha.
+- El CSV corta el caption a ~90 caracteres: para saber la noticia exacta, la
+  fuente y si tuvo tráiler, cruzar por `ig_reel_media_id` con
+  `anime_news_items` (no se hizo en este corte: no había acceso a la DB).
+
+### 12.3 Lo que se confirma
+
+| Señal | Spearman vs views (n=462) | Antes |
+|---|---|---|
+| likes | 0,96 | — |
+| **saved** | **0,91** | no medido |
+| shares | 0,88 | — |
+| watch time | 0,76 | 0,76 |
+| reposts | 0,76 | — |
+| skip rate | −0,76 (n=54) | — |
+
+- **Los guardados aparecen como señal tan fuerte como los shares.** El CTA
+  "Guardalo y mandáselo a tu grupo otaku" ya los pide; no hay evidencia de que
+  una apertura de caption le gane a otra (diferencias de mediana dentro del
+  ruido con n=5-38 por variante).
+- **Shares ≥10: 123 reels (27 %) concentran el 80 % de las views** (antes 16 % →
+  62 %). Reels con ≥1 repost: mediana 1.145 vs 259 sin repost.
+- Watch time por cuartil: Q1 3,0 s → 236 views · Q4 9,3 s → 2.167 views (9×).
+- `reels_skip_rate`: sigue apareciendo en pocos reels (54 de 462), mediana
+  60,5 %. La meta del §11 (55 % → 45 %) **no se puede evaluar** con esa
+  cobertura; la retención real desde `anime_news_items` es el reemplazo.
+- **14h ART sigue primera** (mediana 1.157, n=39), después 16h (904, n=62) y
+  20h (793, n=50). El viral de Kyary salió a las 13h.
+- **El feed sigue muerto:** 144 piezas, mediana 27 views. Todavía salen ~7 al
+  mes — revisar de dónde vienen si §7.4 los había pasado todos a reel.
+
+### 12.4 Cuenta: el cuello pasó a ser la visita al perfil
+
+| | 11-ago → 8-sep | 13-oct → 10-nov |
+|---|---|---|
+| Seguidores ganados | +154 (5,3/día) | **+390 (13,4/día)** |
+| Alcance de cuenta | 127.059 | **477.835 (~16.500/día)** |
+| Alcance por seguidor | ~825 | **~1.225** |
+| Visitas al perfil | — | 1.218 |
+
+- Solo el 18 y 19-oct (Kyary) aportaron 146 seguidores y 118k de alcance.
+- **El 99 % del alcance es de NO seguidores** (`reach_follower` ~90/día). La
+  distribución no es el problema.
+- El embudo se parte en dos (§9.3), y ahora se ve dónde está el cuello:
+  - **alcance → visita al perfil: 0,25 %** (1 de cada ~400)
+  - **visita → seguidor: 32 %** — está bien.
+- O sea: el perfil convierte; lo que falta es que la gente **entre** al perfil
+  desde el reel. Los virales traen alcance que no pasa al perfil, por eso el
+  alcance por seguidor empeoró de 825 a 1.225.
+- `profile_views` y `reach` por `follow_type` **funcionan contra la API real**
+  (lo que §9.4 dejaba pendiente). Bug menor: el CSV de cuenta trae además una
+  columna `reach_` que duplica el `reach` total (breakdown con clave vacía).
+
+### 12.5 Qué hacer con esto, en orden
+
+1. **Llevar gente al perfil:** un llamado explícito al perfil en el caption o
+   en el cierre del reel ("más noticias así en @…"), reels fijados y bio. Es la
+   palanca con más margen: duplicar 0,25 % → 0,5 % duplica el crecimiento sin
+   más alcance.
+2. **Sumar J-pop / idols / músicos a los crossovers** de `HeuristicNewsScore` y
+   del prompt del selector (con el gate `MentionsAnimeWorld` de §9.2).
+3. **Cruzar el top-20 con `anime_news_items`** (fuente, tráiler vs slideshow,
+   retención real) — queda pendiente de este corte.
+4. **Encontrar de dónde salen las ~7 piezas de feed por mes** y cortarlas.
+5. Arreglar la columna `reach_` duplicada del export de cuenta.
