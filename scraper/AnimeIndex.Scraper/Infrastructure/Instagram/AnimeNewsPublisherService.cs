@@ -172,20 +172,33 @@ public class AnimeNewsPublisherService(
     /// <summary>
     /// La más relevante (IA/heurística) primero; después las que anuncian
     /// material audiovisual, que son las que más chances tienen de traer video;
-    /// el resto, de la más nueva a la más vieja.
+    /// el resto, por score heurístico y a igual score de la más nueva a la más vieja.
     /// </summary>
     private async Task<IReadOnlyList<AnimeNewsItem>> OrderForVideoRunAsync(
         IReadOnlyList<AnimeNewsItem> items, CancellationToken ct)
     {
         var best = items.Count > 1 ? await PickMostRelevantAsync(items, ct) : items[0];
         logger.LogInformation("AnimeNews: noticia del día para el reel → \"{Title}\"", Truncate(best.Title, 80));
-
-        return items
-            .OrderByDescending(i => ReferenceEquals(i, best) ? 1 : 0)
-            .ThenByDescending(i => HasAudiovisualSignal(i.Title) ? 1 : 0)
-            .ThenByDescending(i => i.PublishedAt)
-            .ToList();
+        return OrderFallbacks(items, best, i => i.Title, i => i.Summary, i => i.PublishedAt);
     }
+
+    /// <summary>
+    /// Orden de prueba después de la elegida. Antes, después de las
+    /// audiovisuales venía la más NUEVA, y la más nueva del pool solía ser una
+    /// nota que ni es de anime: el 11-nov-2026 una corrida gastó 3 de sus 4
+    /// intentos en "LEGO Ideas rechaza…", "Las cartas de Star Trek para Magic…"
+    /// y "Un clip de GTA 6…" (run 43110886771). Con el score de por medio esas
+    /// quedan al fondo. Público estático para tests.
+    /// </summary>
+    public static IReadOnlyList<T> OrderFallbacks<T>(
+        IReadOnlyList<T> items, T best, Func<T, string> title, Func<T, string?> summary,
+        Func<T, DateTime> publishedAt) where T : class =>
+        items
+            .OrderByDescending(i => ReferenceEquals(i, best) ? 1 : 0)
+            .ThenByDescending(i => HasAudiovisualSignal(title(i)) ? 1 : 0)
+            .ThenByDescending(i => HeuristicNewsScore($"{title(i)} {summary(i)}"))
+            .ThenByDescending(publishedAt)
+            .ToList();
 
     /// <summary>
     /// Consigue el video de la noticia y, solo si lo consiguió, la reescribe y
@@ -327,41 +340,45 @@ public class AnimeNewsPublisherService(
                 var list = string.Join("\n", items.Select((n, i) =>
                     $"{i}: {n.Title}" + (string.IsNullOrWhiteSpace(n.Summary) ? "" : $" — {Truncate(n.Summary!, 120)}")));
                 var examples = await BuildPastPerformanceExamplesAsync(ct);
-                // El criterio de TECHO DE ALCANCE es lo que este prompt no tenía
-                // hasta sep-2026, y por eso seleccionaba mal: pedía "la más
-                // relevante/viral", que un editor de anime lee como relevancia
-                // DENTRO del nicho. Pero los picos medidos fueron otra cosa —
-                // Free Fire × anime (35.192 views), The Ninth Jedi de Star Wars
-                // (27.622), Chainsaw Man en teatro (18.125), los 70 años de Toei
-                // (11.315): todos cruces con audiencias que ya son masivas
-                // AFUERA del anime. Y como el top 10 se lleva el 39 % de todas
-                // las views, el negocio es producir candidatos a explotar, no
-                // subir la mediana.
+                // Las prioridades salen de lo MEDIDO, no de la intuición. En
+                // sep-2026 los picos eran cruces (Free Fire × anime, Star Wars) y
+                // este prompt los puso primeros. El corte de oct-nov-2026 (docs/
+                // instagram-playbook.md §12) los dio vuelta: los tres virales más
+                // grandes fueron VIDEOS MUSICALES — el MV del ending de Pan
+                // Dorobo con Kyary Pamyu Pamyu (240k views), el videoclip de
+                // Cyberpunk Edgerunners 2 (93k) y el de Rascal Does Not Dream
+                // (43k) —, mientras los cruces de ese período no levantaron
+                // (Edgerunners × Overwatch, Street Fighter × Precure). Y "nicho =
+                // techo bajo" tampoco se sostuvo: Date A Live (17k), Tensura (7k)
+                // o Returner's Magic (8k) le ganaron a "El anime de ONE PIECE
+                // regresará en 2027" (17 views) y a Pokémon o JoJo (<30).
                 var response = await gemini.GenerateAsync(
                     "Sos el editor jefe de un medio de anime en español para LATAM. De la lista, elegí LA noticia " +
-                    "con más potencial de EXPLOTAR (no la más correcta editorialmente). " +
+                    "con más potencial de EXPLOTAR en un reel de Instagram (no la más correcta editorialmente). " +
                     "REGLA DURA, antes que cualquier otra cosa: la noticia TIENE que ser de ANIME o MANGA. " +
-                    "Un análisis o reseña de videojuego, una nota de cine occidental o cualquier cosa que solo " +
-                    "MENCIONE una marca grande NO sirve, por más masiva que sea la marca — descartala aunque sea " +
-                    "lo único del pool con una franquicia conocida. " +
-                    "Después de ese filtro, el criterio que más pesa es el TECHO DE AUDIENCIA: ¿esto le interesa " +
-                    "a alguien que NO sigue anime? Priorizá en este orden: " +
-                    "1) CRUCES: una obra de ANIME/MANGA que se une a una audiencia masiva de afuera — " +
-                    "videojuegos (Free Fire, Fortnite, Roblox, Genshin, League of Legends, Minecraft), " +
-                    "franquicias occidentales (Star Wars, Marvel, DC, LEGO), música pop global, deportes o " +
-                    "marcas grandes. El cruce es que la obra de anime SE UNA a eso, no que la marca exista. " +
-                    "2) ANUNCIOS DE PESO de las franquicias más masivas (One Piece, Dragon Ball, Naruto, Jujutsu " +
-                    "Kaisen, Demon Slayer, Attack on Titan, Chainsaw Man, Solo Leveling, My Hero Academia, " +
-                    "Pokémon, Ghibli, Evangelion): estreno confirmado, nueva temporada, película, live-action. " +
-                    "3) Noticias de peso real: fallecimientos de figuras grandes, polémicas fuertes, hitos " +
-                    "históricos de estudios. " +
+                    "Un análisis o reseña de videojuego, una nota de cine o series occidentales, juegos de mesa, " +
+                    "LEGO, Star Trek, GTA o cualquier cosa que solo MENCIONE una marca grande NO sirve — " +
+                    "descartala aunque sea lo único del pool con una marca conocida. " +
+                    "Después de ese filtro, priorizá en este orden: " +
+                    "1) MÚSICA con video oficial: video musical / videoclip / MV del opening o ending, tema " +
+                    "musical con video, opening o ending sin créditos, artista conocido cantando para un anime. " +
+                    "Es lo que más explotó en esta cuenta, por lejos: la gente lo mira entero y lo comparte. " +
+                    "2) ANUNCIOS CON FECHA O MATERIAL de obras con fandom: fecha de estreno confirmada, nueva " +
+                    "temporada, película, spinoff, tráiler nuevo. Vale para obras medianas con fans fieles (Date A " +
+                    "Live, Tensura, Los diarios de la boticaria, Fate, Rascal Does Not Dream) tanto como para las " +
+                    "gigantes: ser One Piece o Pokémon NO alcanza si la noticia no trae fecha ni material. " +
+                    "3) CRUCES: una obra de anime que SE UNE a una audiencia masiva de afuera (Free Fire, Fortnite, " +
+                    "Star Wars, música pop global). El cruce es que la obra de anime se una a eso, no que la marca " +
+                    "exista. " +
+                    "4) Noticias de peso real: fallecimientos de figuras grandes, polémicas fuertes, aniversarios " +
+                    "o hitos de franquicias y estudios grandes. " +
+                    "Techo bajo, elegilas solo si no hay nada de lo anterior: una imagen promocional suelta sin " +
+                    "fecha, lanzamientos o reservas de videojuegos, taquilla japonesa, merchandising, cartas o " +
+                    "colecciones, eventos locales. " +
                     "La audiencia es LATAM: una noticia marcada como de otra región (ej. un titular que " +
-                    "arranca con \"[España]\") o un evento local de un solo país tiene techo casi nulo — " +
-                    "elegila solo si no hay nada mejor en el pool. " +
-                    "Un estreno de nicho, por bueno que sea, tiene techo bajo — no lo elijas por sobre lo anterior. " +
-                    "A igual peso, preferí noticias con material audiovisual oficial (anuncio de tráiler, " +
-                    "teaser, nueva temporada o película, opening/ending o video musical, corto o video " +
-                    "especial): el video destacado puede incrustar ese material. " +
+                    "arranca con \"[España]\") o un evento local de un solo país tiene techo casi nulo. " +
+                    "A igual peso, preferí la que tenga material audiovisual oficial (tráiler, teaser, PV, " +
+                    "opening/ending, video musical, corto): el reel incrusta ese video y sin video no se publica. " +
                     examples +
                     "Respondé SOLO un JSON: {\"index\": <número de la lista>}",
                     list, useWebSearch: false, ct);
@@ -409,7 +426,30 @@ public class AnimeNewsPublisherService(
         // el 10-sep-2026 (run 34493207860) — una nota de un juego, sin nada de
         // anime. El cruce que nos interesa es "una obra de anime SE UNE a esa
         // franquicia", no "esa franquicia existe".
-        var score = MentionsAnimeWorld(t) ? CrossoverWords.Count(t.Contains) * 8 : 0;
+        //
+        // Suma una sola vez (Any, no Count): con Count, "Free Fire anuncia una
+        // colaboración con…" juntaba 16 por dos palabras de la lista y le ganaba
+        // a un video musical, que en oct-nov-2026 fue lo que más rindió (§12).
+        var score = MentionsAnimeWorld(t) && CrossoverWords.Any(t.Contains) ? 8 : 0;
+
+        // VIDEOS MUSICALES: el peso más alto de la tabla. Los tres virales más
+        // grandes de la cuenta (oct-nov-2026) fueron MV o videoclips — el ending
+        // de Pan Dorobo con Kyary Pamyu Pamyu (240k views), Cyberpunk
+        // Edgerunners 2 (93k) y Rascal Does Not Dream (43k) — con 15-30 s de
+        // watch time: se miran enteros. Vale 12 para ganarle a un cruce (8) con
+        // anuncio y franquicia encima.
+        //
+        // Con el mismo gate que los cruces, pero ampliado: "Kyary Pamyu Pamyu
+        // comparte el video musical del ending de Pan Dorobo" no dice anime ni
+        // nombra una franquicia de la lista — lo que la ancla al anime es el
+        // "ending". Sin gate, un videoclip de pop o de GTA se llevaría el peso
+        // más alto de la tabla (el mismo agujero que "Marvel's Wolverine").
+        var musicIsAnime = MentionsAnimeWorld(t) || OpeningEndingWords.Any(t.Contains);
+        if (musicIsAnime && MusicVideoWords.Any(t.Contains)) score += 12;
+        // Opening/ending sin créditos o corto: también video oficial que el reel
+        // incrusta entero, pero rindió menos parejo que el MV (Bleach Mirrors
+        // High 4.342, Firefly Wedding 2.655; el MV de Returner's Magic, 1).
+        else if (OpeningEndingWords.Any(t.Contains)) score += 4;
 
         // Reseñas y análisis: techo de audiencia bajísimo y, en el feed de
         // Crunchyroll, casi siempre de videojuegos. Penalización explícita para
@@ -435,9 +475,11 @@ public class AnimeNewsPublisherService(
             .Count(t.Contains) * 3;
         // Franquicias enormes / títulos top del momento: empujón extra
         score += BigFranchises.Count(t.Contains) * 2;
-        // Material audiovisual que el reel puede incrustar (opening/corto/MV)
-        score += new[] { "opening", "ending", "video musical", "corto animado" }
-            .Count(t.Contains) * 2;
+        // Techo bajo medido (§12): lanzamientos de videojuegos, taquilla,
+        // merchandising. "JCC Pokémon Pocket…" (169 views), "Taquilla japonesa:
+        // Chiikawa…" (177), "Hoy se estrenó ONE PIECE: Grand Gourmet en Switch"
+        // (177) — franquicia grande, techo chico.
+        if (LowCeilingWords.Any(t.Contains)) score -= 4;
         // Menores
         score += new[] { "colaboracion", "evento", "figura", "manga" }
             .Count(t.Contains);
@@ -497,7 +539,25 @@ public class AnimeNewsPublisherService(
         "dandadan", "blue lock", "my hero", "boku no hero", "bleach", "re:zero",
         "mushoku tensei", "witch hat", "sword art", "tokyo revengers", "oshi no ko",
         "pokemon", "sailor moon", "death note", "hunter x hunter", "fullmetal",
+        // Obras medianas con fandom fiel que YA probaron rendir en esta cuenta
+        // (§12): ninguna estaba en la lista y varias le ganaron a One Piece.
+        "date a live", "tensura", "reincarnated as a slime", "rascal does not dream",
+        "made in abyss", "edgerunners", "apothecary", "boticaria", "fate/",
     ];
+
+    // Video musical oficial: lo que más explotó en oct-nov-2026 (§12). Texto
+    // normalizado, así que "vídeo musical" ya llega como "video musical".
+    private static readonly string[] MusicVideoWords =
+        ["video musical", "videoclip", "video clip", "music video", "tema musical"];
+
+    private static readonly string[] OpeningEndingWords =
+        ["opening", "ending", "corto animado"];
+
+    // Techo bajo medido aunque la franquicia sea enorme. Sin plataformas de
+    // juego ("switch", "steam"): "Attack on Titan 3 abre sus reservas en
+    // Nintendo Switch 2" hizo 2.522, así que la plataforma sola no predice nada.
+    private static readonly string[] LowCeilingWords =
+        ["taquilla", "jcc", "tcg", "juego de cartas", "merchandising", "tapas de alcantarilla"];
 
     // Reseñas/análisis: techo bajo, y en el feed de Crunchyroll casi siempre de
     // videojuegos, no de anime.
@@ -518,31 +578,64 @@ public class AnimeNewsPublisherService(
     /// Sin datos todavía (o si la query falla) devuelve string vacío y el prompt
     /// sigue funcionando igual — nunca puede tumbar la selección del día.
     /// </summary>
+    private const int MinFewShotAgeDays = 7;
+    private const int FewShotWindowDays = 60;
+    private const int MinFewShotViews = 50;
+    private const int FewShotExamples = 6;
+
     private async Task<string> BuildPastPerformanceExamplesAsync(CancellationToken ct)
     {
         try
         {
+            // Tres filtros que faltaban, todos vistos en el corte de nov-2026 (§12):
+            // - MADUROS (≥7 días): un reel de ayer todavía está sumando views y
+            //   se colaba entre "los que no levantaron".
+            // - VENTANA de 60 días: sin ella el top era el mismo para siempre y
+            //   el modelo nunca veía qué está funcionando AHORA.
+            // - PISO de 50 views: los reels con 1-30 views son fallos de
+            //   distribución o de sync, no noticias flojas. Como "peores", le
+            //   enseñaban al modelo que "Kingdom Hearts llegó a Fortnite" (8) o
+            //   "El anime de ONE PIECE regresará en 2027" (17) eran temas
+            //   muertos, por razones que no tenían nada que ver con el tema.
+            var now = DateTime.UtcNow;
+            var maturedBefore = now.AddDays(-MinFewShotAgeDays);
+            var windowStart = now.AddDays(-FewShotWindowDays);
             var measured = db.AnimeNewsItems
-                .Where(n => n.IgReelViews != null && n.IgReelViews > 0)
-                .Select(n => new { n.Title, Views = n.IgReelViews!.Value });
+                .Where(n => n.IgReelViews != null && n.IgReelViews >= MinFewShotViews
+                            && n.IgPostedAt != null
+                            && n.IgPostedAt <= maturedBefore && n.IgPostedAt >= windowStart)
+                .Select(n => new
+                {
+                    n.Title,
+                    Views = n.IgReelViews!.Value,
+                    // Shares + guardados: lo que reparte el reel. En el export de
+                    // nov-2026, Spearman contra views 0,88 y 0,91 — más que el
+                    // watch time (0,76). Ordenar por esto premia lo que la gente
+                    // pasa y guarda, no lo que el algoritmo empujó una vez.
+                    Spread = (n.IgReelShares ?? 0) + (n.IgReelSaved ?? 0),
+                });
 
-            // Con menos de 10 reels medidos los extremos son ruido, no señal.
-            if (await measured.CountAsync(ct) < 10) return string.Empty;
+            // Con pocos reels medidos los extremos son ruido, no señal — y con
+            // menos de 2×N el mismo reel saldría como "mejor" y como "peor".
+            if (await measured.CountAsync(ct) < Math.Max(10, 2 * FewShotExamples)) return string.Empty;
 
             // Dos queries y no una: recortar a los 60 mejores y después dar
             // vuelta la lista NO da los peores, da el fondo del top-60. Con ~7
             // reels/día eso se rompe a los ~9 días y el prompt le empieza a
             // mostrar al modelo cinco posts decentes rotulados como fracasos.
             var best = await measured
-                .OrderByDescending(x => x.Views).Take(5).ToListAsync(ct);
+                .OrderByDescending(x => x.Spread).ThenByDescending(x => x.Views)
+                .Take(FewShotExamples).ToListAsync(ct);
             var worst = await measured
-                .OrderBy(x => x.Views).Take(5).ToListAsync(ct);
+                .OrderBy(x => x.Spread).ThenBy(x => x.Views)
+                .Take(FewShotExamples).ToListAsync(ct);
 
             var sb = new StringBuilder();
-            sb.Append("\nPara calibrar, estos son resultados REALES de esta cuenta. Los que explotaron:\n");
-            foreach (var b in best) sb.Append($"- {Truncate(b.Title, 90)} ({b.Views} views)\n");
+            sb.Append($"\nPara calibrar, estos son resultados REALES de esta cuenta (últimos {FewShotWindowDays} días). ");
+            sb.Append("Los que la gente más compartió y guardó:\n");
+            foreach (var b in best) sb.Append($"- {Truncate(b.Title, 90)} ({b.Views} views, {b.Spread} shares+guardados)\n");
             sb.Append("Los que no levantaron:\n");
-            foreach (var w in worst) sb.Append($"- {Truncate(w.Title, 90)} ({w.Views} views)\n");
+            foreach (var w in worst) sb.Append($"- {Truncate(w.Title, 90)} ({w.Views} views, {w.Spread} shares+guardados)\n");
             sb.Append("Elegí en la dirección de los primeros.\n");
             return sb.ToString();
         }
@@ -1366,7 +1459,7 @@ public class AnimeNewsPublisherService(
     // acentuados que había ("tráiler", "película", "adaptación") no matcheaban
     // nunca y solo sobrevivían por sus duplicados sin tilde.
     private static readonly string[] ThemeWords =
-        Normalized("opening", "ending", "video musical", "tema musical");
+        Normalized("opening", "ending", "video musical", "tema musical", "videoclip", "video clip", "music video");
 
     private static readonly string[] ShortFilmWords =
         Normalized("corto animado", "cortometraje", "video especial", "aniversario");

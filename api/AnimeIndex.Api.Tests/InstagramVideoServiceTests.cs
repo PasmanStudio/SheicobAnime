@@ -1019,6 +1019,92 @@ public class NewsRelevanceTests
             AnimeNewsPublisherService.HeuristicNewsScore("La película estrena una colaboración"),
             AnimeNewsPublisherService.HeuristicNewsScore("La pelicula estrena una colaboracion"));
     }
+
+    [Fact]
+    public void HeuristicNewsScore_PutsMusicVideosOnTop_RealPeaksOfNov2026()
+    {
+        // Casos REALES del corte oct-nov-2026 (playbook §12): el MV de Kyary hizo
+        // 240k views; el cruce Edgerunners × Overwatch, 13; "El anime de ONE
+        // PIECE regresará en 2027", 17. La heurística tiene que ordenarlos igual.
+        var mv = AnimeNewsPublisherService.HeuristicNewsScore(
+            "Kyary Pamyu Pamyu comparte el video musical del ending de Pan Dorobo");
+        var cruce = AnimeNewsPublisherService.HeuristicNewsScore(
+            "Cyberpunk: Edgerunners tendrá una colaboración con Overwatch");
+        var franquicia = AnimeNewsPublisherService.HeuristicNewsScore(
+            "El anime de ONE PIECE regresará en 2027");
+
+        Assert.True(mv > cruce, $"video musical ({mv}) vs cruce ({cruce})");
+        Assert.True(mv > franquicia, $"video musical ({mv}) vs franquicia sin material ({franquicia})");
+    }
+
+    [Fact]
+    public void HeuristicNewsScore_CrossoverCountsOnce()
+    {
+        // Con Count, dos palabras de la lista ("free fire" + "colaboracion con")
+        // sumaban 16 y un cruce le ganaba a cualquier video musical.
+        var dosPalabras = AnimeNewsPublisherService.HeuristicNewsScore(
+            "Free Fire anuncia una colaboración con Attack on Titan");
+        var mv = AnimeNewsPublisherService.HeuristicNewsScore(
+            "Rascal Does Not Dream of a Dear Friend estrena videoclip de Kaede");
+
+        Assert.True(mv >= dosPalabras, $"videoclip ({mv}) vs cruce con dos palabras ({dosPalabras})");
+    }
+
+    [Fact]
+    public void HeuristicNewsScore_DemotesLowCeilingNews_RealCase()
+    {
+        // "Taquilla japonesa: Chiikawa…" hizo 177 views; "Date A Live F Last
+        // Date se estrenará…", 17.030.
+        var taquilla = AnimeNewsPublisherService.HeuristicNewsScore(
+            "Taquilla japonesa: Chiikawa the Movie se mantiene en el primer lugar en su novena semana");
+        var estreno = AnimeNewsPublisherService.HeuristicNewsScore(
+            "Date A Live F Last Date se estrenará el 26 de marzo de 2027");
+
+        Assert.True(estreno > taquilla, $"estreno con fecha ({estreno}) vs taquilla ({taquilla})");
+    }
+
+    [Fact]
+    public void HeuristicNewsScore_MusicVideoBonusNeedsAnimeContext()
+    {
+        // El +12 del video musical no puede llevárselo un videoclip ajeno al
+        // anime: mismo agujero que "Marvel's Wolverine" con los cruces.
+        var ajeno = AnimeNewsPublisherService.HeuristicNewsScore(
+            "Bad Bunny estrena el video clip de su nueva canción");
+        var anime = AnimeNewsPublisherService.HeuristicNewsScore(
+            "Date A Live F Last Date se estrenará el 26 de marzo de 2027");
+
+        Assert.True(anime > ajeno, $"anuncio de anime ({anime}) vs videoclip ajeno ({ajeno})");
+    }
+
+    [Fact]
+    public void HeuristicVideoQuery_TreatsVideoclipsAsThemeSongs()
+    {
+        var q = AnimeNewsPublisherService.HeuristicVideoQuery(
+            "Rascal Does Not Dream of a Dear Friend estrena videoclip de Kaede");
+
+        Assert.NotNull(q);
+        Assert.Equal(NewsVideoKind.ThemeSong, q.Value.Kind);
+    }
+
+    private sealed record PoolItem(string Title, DateTime At);
+
+    [Fact]
+    public void OrderFallbacks_PutsAnimeNewsBeforeNewerOffTopicNotes_RealRun()
+    {
+        // Run 43110886771 (11-nov-2026): después de la elegida se probaron las
+        // más NUEVAS — LEGO, Star Trek y GTA 6 — y la corrida no publicó nada.
+        var t0 = new DateTime(2026, 11, 11, 20, 0, 0, DateTimeKind.Utc);
+        var elegida = new PoolItem("Gundam Seed FREEDOM Zero tendrá novela", t0);
+        var lego    = new PoolItem("LEGO Ideas rechaza de nuevo dos propuestas", t0.AddMinutes(30));
+        var gta     = new PoolItem("Un clip de GTA 6 aparece en Instagram", t0.AddMinutes(20));
+        var anime   = new PoolItem("Date A Live F Last Date se estrenará el 26 de marzo de 2027", t0.AddMinutes(-90));
+
+        var ordered = AnimeNewsPublisherService.OrderFallbacks(
+            [elegida, lego, gta, anime], elegida, i => i.Title, _ => null, i => i.At);
+
+        Assert.Same(elegida, ordered[0]);
+        Assert.Same(anime, ordered[1]);
+    }
 }
 
 /// <summary>
