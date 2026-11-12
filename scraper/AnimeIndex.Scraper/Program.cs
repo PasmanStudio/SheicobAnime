@@ -89,6 +89,28 @@ if (args.Contains("--news"))
         // Apply pending migrations (creates anime_news_items if it doesn't exist yet)
         var newsDb = newsScope.ServiceProvider.GetRequiredService<AppDbContext>();
         await newsDb.Database.MigrateAsync();
+
+        // Sin token válido no se publica nada, pero la corrida igual buscaba
+        // video, renderizaba y recién ahí Meta la rechazaba — y salía en verde.
+        // Nov-2026: tres días sin publicar sin que nadie se enterara. Cortar acá
+        // y en rojo: GitHub manda el mail de workflow fallido el mismo día.
+        if (!string.IsNullOrWhiteSpace(newsIgSettings.AccessToken))
+        {
+            var newsGraph = newsScope.ServiceProvider
+                .GetRequiredService<AnimeIndex.Scraper.Infrastructure.Instagram.MetaGraphApiClient>();
+            var tokenDays = await newsGraph.GetTokenExpiryDaysAsync();
+            if (tokenDays <= 0)
+            {
+                Log.Error("Instagram: Meta rechaza INSTAGRAM_ACCESS_TOKEN (vencido, revocado o inválido). " +
+                          "Corrida cortada antes de buscar videos: generar un token nuevo del System User " +
+                          "en Meta Business Suite y actualizar el secret.");
+                Environment.ExitCode = 1;
+                return;
+            }
+            if (tokenDays < 10)
+                Log.Warning("Instagram: INSTAGRAM_ACCESS_TOKEN vence en {Days:F1} días", tokenDays);
+        }
+
         var newsJob = newsScope.ServiceProvider.GetRequiredService<AnimeIndex.Scraper.Jobs.AnimeNewsJob>();
         using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(8)); // safety timeout
         await newsJob.RunAsync(cts.Token);

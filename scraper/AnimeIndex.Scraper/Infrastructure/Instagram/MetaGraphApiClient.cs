@@ -1,6 +1,7 @@
 using CloudinaryDotNet;
 using CloudinaryDotNet.Actions;
 using Microsoft.Extensions.Logging;
+using System.Net;
 using System.Text.Json;
 
 namespace AnimeIndex.Scraper.Infrastructure.Instagram;
@@ -541,7 +542,12 @@ public class MetaGraphApiClient(
         );
     }
 
-    /// <summary>Returns days remaining until the token expires (-1 if check fails).</summary>
+    /// <summary>
+    /// Días hasta que vence el token. <c>0</c> (o menos) = Meta lo rechaza
+    /// (vencido, revocado o inválido): publicar va a fallar.
+    /// <see cref="double.MaxValue"/> = no vence (System User) o no se pudo
+    /// consultar (caída de Meta, red, rate limit): en ese caso no se frena nada.
+    /// </summary>
     public async Task<double> GetTokenExpiryDaysAsync(CancellationToken ct = default)
     {
         try
@@ -551,23 +557,57 @@ public class MetaGraphApiClient(
                     + $"&access_token={Uri.EscapeDataString(settings.AccessToken)}";
 
             var resp = await Http.GetAsync(url, ct);
-            if (!resp.IsSuccessStatusCode) return double.MaxValue;
-
             var body = await resp.Content.ReadAsStringAsync(ct);
-            using var doc = JsonDocument.Parse(body);
+            return ParseTokenExpiryDays(resp.StatusCode, body, DateTimeOffset.UtcNow);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch { return double.MaxValue; }
+    }
 
-            if (doc.RootElement.TryGetProperty("data", out var data)
-                && data.TryGetProperty("expires_at", out var expiresAt))
+    /// <summary>
+    /// Interpreta la respuesta de <c>debug_token</c>. Nov-2026: el token venció y
+    /// esto devolvía "OK" durante tres días, porque con el token vencido como
+    /// access_token Meta contesta 400 (OAuthException 190) y cualquier no-200 se
+    /// tomaba como "no se pudo consultar". Ahora el 190 cuenta como vencido; los
+    /// demás errores (5xx, rate limits 4/17/32) siguen sin frenar la corrida.
+    /// </summary>
+    public static double ParseTokenExpiryDays(HttpStatusCode status, string body, DateTimeOffset now)
+    {
+        if ((int)status >= 500) return double.MaxValue;
+
+        JsonDocument doc;
+        try { doc = JsonDocument.Parse(body); }
+        catch (JsonException) { return double.MaxValue; }
+
+        using (doc)
+        {
+            var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object) return double.MaxValue;
+
+            // 190 = token inválido/vencido/revocado; 102 = sesión inválida.
+            if (root.TryGetProperty("error", out var error)
+                && error.TryGetProperty("code", out var code)
+                && code.ValueKind == JsonValueKind.Number)
+                return code.GetInt32() is 190 or 102 ? 0 : double.MaxValue;
+
+            if (!root.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Object)
+                return double.MaxValue;
+
+            if (data.TryGetProperty("is_valid", out var isValid)
+                && isValid.ValueKind == JsonValueKind.False)
+                return 0;
+
+            if (data.TryGetProperty("expires_at", out var expiresAt)
+                && expiresAt.ValueKind == JsonValueKind.Number)
             {
                 var expiresAtValue = expiresAt.GetInt64();
                 // System User tokens never expire — Meta returns expires_at=0 for them
                 if (expiresAtValue == 0) return double.MaxValue;
-                var secs = expiresAtValue - DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+                var secs = expiresAtValue - now.ToUnixTimeSeconds();
                 return secs / 86400.0;
             }
             return double.MaxValue;
         }
-        catch { return double.MaxValue; }
     }
 
     private static string Truncate(string s, int max) =>
