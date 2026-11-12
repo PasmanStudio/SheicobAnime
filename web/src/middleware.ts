@@ -1,4 +1,33 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { getCloudflareContext } from "@opennextjs/cloudflare";
+
+/**
+ * Crawler de Meta que se hace pasar por Chrome.
+ *
+ * Nov-2026: el cupo de writes de KV (1000/día en el plan free) llegaba al 50-100 %
+ * con apenas 400-900 requests diarias. Las subidas eran ráfagas de 1-3 h desde
+ * el ASN de Meta (AS32934): 407 de 419 requests el 9-nov, sobre 371 páginas de
+ * episodio distintas, todas frías → cada una escribe 2-4 keys en KV. Usa UA de
+ * Chrome, así que el `Disallow` a meta-externalagent de robots.txt no lo frena.
+ *
+ * Se corta acá, antes del render: un 403 no toca la API ni KV. Se dejan pasar
+ * los fetchers de vista previa de links (los stickers de las historias de
+ * Instagram apuntan a páginas de episodio).
+ */
+const META_ASN = 32934;
+const META_LINK_PREVIEW_UA = /facebookexternalhit|facebookcatalog|Facebot/i;
+
+function isMetaCrawler(req: NextRequest): boolean {
+  let asn: number | undefined;
+  try {
+    asn = getCloudflareContext().cf?.asn;
+  } catch {
+    // `next dev` sin contexto de Cloudflare: no hay ASN, no se bloquea.
+    return false;
+  }
+  if (asn !== META_ASN) return false;
+  return !META_LINK_PREVIEW_UA.test(req.headers.get("user-agent") ?? "");
+}
 
 /**
  * Geo-detección liviana para decidir el modo de consentimiento de anuncios.
@@ -27,6 +56,10 @@ const CONSENT_REQUIRED = new Set([
 const GEO_COOKIE = "sheicob_ads_geo";
 
 export function middleware(req: NextRequest) {
+  if (isMetaCrawler(req)) {
+    return new NextResponse(null, { status: 403 });
+  }
+
   const res = NextResponse.next();
 
   // Ya resuelto en una request anterior → no reescribir (mantiene las
