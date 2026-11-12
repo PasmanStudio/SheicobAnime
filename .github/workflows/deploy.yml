@@ -147,8 +147,12 @@ jobs:
           restore-keys: nuget-
       - name: Restore
         run: dotnet restore api/AnimeIndex.sln --locked-mode
+      # Versión fija = la de Microsoft.EntityFrameworkCore.Design del API. Sin
+      # versión instala la última (10.x desde nov-2026), que pide el runtime de
+      # .NET 10 y falla con "Could not load System.Runtime 10.0.0.0" en un runner
+      # con .NET 9. Subirla junto con los paquetes de EF.
       - name: Install EF CLI tool
-        run: dotnet tool install --global dotnet-ef
+        run: dotnet tool install --global dotnet-ef --version 9.0.5
       # DATABASE_URL uses the session-mode pooler (IPv4-reachable from GH Actions).
       # Supabase direct hostname is IPv6-only, which GH Actions cannot reach.
       # Session-mode pooler supports full transaction semantics needed for EF migrations.
