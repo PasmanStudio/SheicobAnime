@@ -300,7 +300,7 @@ public sealed partial class VideoRenderService(
     public const int MaxAiImages = 10;
 
     /// <summary>Similitud CLIP mínima para aceptar un fotograma como "lo que se dice".</summary>
-    public const float MinFrameMatch = 0.20f;
+    public const float MinFrameMatch = 0.27f;
 
     /// <summary>
     /// Si la toma nombra a un personaje, su retrato oficial normalizado a
