@@ -74,7 +74,9 @@ public sealed class VideoScriptService(GeminiClient gemini, ILogger<VideoScriptS
             """;
         var scriptPrompt = $$"""
             Tema del video: {{research.Topic}}
-            Duración objetivo: {{minutes}} minutos (unas {{words}} palabras de narración en total).
+            Duración objetivo: {{minutes}} minutos: la narración debe sumar COMO MÍNIMO {{words}} palabras
+            (ni una menos: un guion corto da un video corto). Si las fuentes no alcanzan para tanto,
+            profundiza en el análisis, el contexto de la serie y lo que comenta el público, sin inventar datos.
 
             Estructura: un gancho de 2 o 3 frases que haga quedarse a quien mira, el desarrollo
             en orden lógico (contexto, historia, datos curiosos, por qué importa, y una teoría o

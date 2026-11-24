@@ -175,6 +175,8 @@ if (args.Contains("--youtube"))
             PythonCommand: YtArg(args, "--python") ?? "python",
             QwenBackend: YtArg(args, "--qwen-backend") ?? "kaggle",
             YtDlpCommand: YtArg(args, "--yt-dlp") ?? "yt-dlp",
+            // Python con torch + open_clip para elegir fotogramas por descripción (Scripts/frame_match.py).
+            MatcherPython: YtArg(args, "--matcher-python") ?? "python",
             // ~3,5 s para videos largos; el Short de referencia corta cada 1–1,5 s.
             ShotSeconds: double.TryParse(YtArg(args, "--shot-seconds"), System.Globalization.NumberStyles.Float,
                 System.Globalization.CultureInfo.InvariantCulture, out var shotSecs) ? Math.Clamp(shotSecs, 0.8, 15) : 3.5);

@@ -539,13 +539,26 @@ public class MetaGraphApiClient(
                 result.Add((
                     c.TryGetProperty("text", out var text) ? text.GetString() ?? "" : "",
                     c.TryGetProperty("like_count", out var l) ? l.GetInt32() : 0,
-                    c.TryGetProperty("timestamp", out var ts) ? ts.GetDateTime() : default,
+                    // Meta manda "2026-11-04T20:30:00+0000" (offset sin ':'), que
+                    // JsonElement.GetDateTime rechaza: se parsea a mano.
+                    c.TryGetProperty("timestamp", out var ts) ? ParseMetaTimestamp(ts.GetString()) : default,
                     replies));
             }
             url = doc.RootElement.TryGetProperty("paging", out var p) && p.TryGetProperty("next", out var next)
                 ? next.GetString() : null;
         }
         return result;
+    }
+
+    /// <summary>"2026-11-04T20:30:00+0000" → UTC. Público para tests.</summary>
+    public static DateTime ParseMetaTimestamp(string? value)
+    {
+        if (string.IsNullOrEmpty(value)) return default;
+        // Offset "+0000" → "+00:00" (el formato que entiende DateTimeOffset).
+        if (value.Length >= 5 && value[^5] is '+' or '-' && char.IsDigit(value[^1]))
+            value = value.Insert(value.Length - 2, ":");
+        return DateTimeOffset.TryParse(value, System.Globalization.CultureInfo.InvariantCulture,
+            System.Globalization.DateTimeStyles.None, out var at) ? at.UtcDateTime : default;
     }
 
     // ── Token management ─────────────────────────────────────────────

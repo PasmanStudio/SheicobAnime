@@ -224,6 +224,13 @@ jobs:
       - name: Instalar ffmpeg
         run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg > /dev/null
 
+      # CLIP elige qué plano del video fuente muestra cada descripción del storyboard.
+      - name: Instalar CLIP (CPU)
+        continue-on-error: true
+        run: |
+          pip install --quiet torch --index-url https://download.pytorch.org/whl/cpu
+          pip install --quiet open_clip_torch pillow
+
       # ── Tráiler oficial (clips y fotogramas) ──────────────────────────────
       # YouTube frena a yt-dlp en los runners: misma receta que news-cron.yml
       # (ver ahí el porqué de cada paso). Sin tráiler el render sigue con

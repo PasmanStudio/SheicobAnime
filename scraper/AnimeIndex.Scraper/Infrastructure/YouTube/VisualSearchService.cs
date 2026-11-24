@@ -9,14 +9,15 @@ namespace AnimeIndex.Scraper.Infrastructure.YouTube;
 public sealed record VisualCandidate(string Url, string Title, int Width, int Height, string Source);
 
 /// <summary>
-/// Busca imágenes que muestren LO QUE DICE cada toma, para cualquier tema, sin
-/// nombres escritos a mano:
+/// Fuentes genéricas (sin nombres escritos a mano) para que la imagen acompañe
+/// lo que se dice, para cualquier tema:
+///   • la imagen oficial de cada personaje de AniList, cuando la toma lo nombra;
 ///   • la wiki de Fandom de la serie, descubierta desde su nombre
-///     ("Cyberpunk: Edgerunners" → cyberpunk.fandom.com; "Frieren" → frieren.fandom.com).
-///     Sus archivos son capturas de episodios con nombres descriptivos
-///     ("Aura activates the Scales of Obedience EP10").
-///   • la imagen oficial de cada personaje de AniList, si la toma lo nombra.
-/// Se descarta lo que no es una escena (figuras, dioramas, logos, páginas del manga).
+///     ("Cyberpunk: Edgerunners" → cyberpunk.fandom.com): sus ARTÍCULOS son
+///     fuente del guion. Sus IMÁGENES no se usan: el CDN (static.wikia.nocookie.net)
+///     responde con el desafío anti-bot de Cloudflare y no se esquiva (24-nov-2026).
+/// Las descripciones visuales ("a couple under neon lights") no se buscan acá:
+/// las resuelve Scripts/frame_match.py contra los fotogramas de los videos oficiales.
 /// </summary>
 public sealed partial class VisualSearchService(IHttpClientFactory httpFactory, ILogger<VisualSearchService> logger)
 {
@@ -71,52 +72,19 @@ public sealed partial class VisualSearchService(IHttpClientFactory httpFactory, 
     }
 
     /// <summary>
-    /// Imágenes para una búsqueda: retratos de los personajes nombrados primero
-    /// si la búsqueda es solo un personaje, después capturas de la wiki
-    /// (episodios antes que el resto). Resultados en caché por búsqueda.
+    /// ¿La toma pide a un personaje? (la búsqueda es su nombre, de 1 a 3 palabras).
+    /// Si sí, devuelve su retrato oficial; si no, null y la toma se resuelve con
+    /// los fotogramas de los videos.
     /// </summary>
-    public async Task<List<VisualCandidate>> SearchAsync(string query, CancellationToken ct)
+    public VisualCandidate? FindCharacter(string query)
     {
-        if (_cache.TryGetValue(query, out var cached)) return cached;
-        var found = new List<VisualCandidate>();
-
-        if (_wiki is not null)
-        {
-            var url = $"{_wiki}/api.php?action=query&generator=search&gsrsearch={Uri.EscapeDataString(query)}" +
-                      "&gsrnamespace=6&gsrlimit=20&prop=imageinfo&iiprop=url|size|mime&format=json&formatversion=2";
-            try
-            {
-                using var doc = JsonDocument.Parse(await httpFactory.CreateClient("youtube-research").GetStringAsync(url, ct));
-                if (doc.RootElement.TryGetProperty("query", out var q))
-                    foreach (var page in q.GetProperty("pages").EnumerateArray())
-                    {
-                        if (!page.TryGetProperty("imageinfo", out var ii)) continue;
-                        var info = ii[0];
-                        var title = page.GetProperty("title").GetString() ?? "";
-                        var mime = info.TryGetProperty("mime", out var m) ? m.GetString() ?? "" : "";
-                        var w = info.GetProperty("width").GetInt32();
-                        var h = info.GetProperty("height").GetInt32();
-                        if (IsUsableScene(title, mime, w, h))
-                            found.Add(new VisualCandidate(info.GetProperty("url").GetString()!, title, w, h, "wiki"));
-                    }
-            }
-            catch (Exception ex) when (ex is HttpRequestException or JsonException or TaskCanceledException or KeyNotFoundException)
-            {
-                logger.LogWarning("Wiki: búsqueda '{Query}' falló: {Msg}", query, ex.Message);
-            }
-            // Las capturas de episodios primero (EP7, Episode 3…), después lo más grande.
-            found = found.OrderByDescending(c => EpisodeShot().IsMatch(c.Title)).ThenByDescending(c => c.Width).ToList();
-        }
-
-        // Personajes nombrados en la búsqueda: su retrato oficial. Si la búsqueda
-        // es solo el nombre, va primero; si describe una escena, al final.
-        var named = _characters.Where(c => NameMentioned(query, c.Name)).ToList();
-        var portraits = named.Select(c => new VisualCandidate(c.Image, c.Name, 460, 650, "anilist")).ToList();
-        var onlyName = named.Count > 0 && query.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length <= 2;
-        found = onlyName ? [.. portraits, .. found] : [.. found, .. portraits];
-
+        if (_cache.TryGetValue(query, out var cached)) return cached.FirstOrDefault();
+        var named = query.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length <= 3
+            ? _characters.Where(c => NameMentioned(query, c.Name)).ToList()
+            : [];
+        var found = named.Select(c => new VisualCandidate(c.Image, c.Name, 460, 650, "anilist")).ToList();
         _cache[query] = found;
-        return found;
+        return found.FirstOrDefault();
     }
 
     /// <summary>

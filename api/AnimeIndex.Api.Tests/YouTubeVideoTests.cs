@@ -123,6 +123,32 @@ public class YouTubeVideoTests
     }
 
     [Fact]
+    public void ParseMetaTimestamp_AcceptsOffsetWithoutColon() =>
+        // Así lo manda la Graph API; GetDateTime() de System.Text.Json lo rechazaba (corrida 45493953065).
+        Assert.Equal(new DateTime(2026, 11, 4, 20, 30, 0, DateTimeKind.Utc),
+            AnimeIndex.Scraper.Infrastructure.Instagram.MetaGraphApiClient.ParseMetaTimestamp("2026-11-04T20:30:00+0000"));
+
+    [Fact]
+    public void WikiSlugCandidates_CoversTheUsualFandomNames()
+    {
+        var slugs = VisualSearchService.WikiSlugCandidates(["Cyberpunk: Edgerunners", "Sousou no Frieren"]);
+
+        // cyberpunk.fandom.com y frieren.fandom.com son las wikis reales (24-nov-2026).
+        Assert.Contains("cyberpunk", slugs);
+        Assert.Contains("cyberpunkedgerunners", slugs);
+        Assert.Contains("frieren", slugs);
+        Assert.DoesNotContain("no", slugs);
+    }
+
+    [Theory]
+    [InlineData("File:David Lucy Moon EP2 CPEDGE.jpg", "image/jpeg", 1920, 1080, true)]
+    [InlineData("File:Lucy 1-6 Scale Statue.jpg", "image/jpeg", 1920, 1080, false)]
+    [InlineData("File:Aura with her Scales of Obedience CH18.png", "image/png", 1249, 448, false)]
+    [InlineData("File:Lucy portrait.png", "image/png", 600, 900, false)]
+    public void IsUsableScene_KeepsEpisodeStillsOnly(string title, string mime, int w, int h, bool expected) =>
+        Assert.Equal(expected, VisualSearchService.IsUsableScene(title, mime, w, h));
+
+    [Fact]
     public void PickAwayFrom_SkipsTrailerMomentsTooCloseToTheLastOne()
     {
         double[] times = [10, 12, 15, 30, 31, 60];

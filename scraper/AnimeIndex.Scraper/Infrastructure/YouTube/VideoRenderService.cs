@@ -24,6 +24,7 @@ public sealed record VideoRenderOptions(
     string PythonCommand = "python",
     string QwenBackend = "kaggle",
     string YtDlpCommand = "yt-dlp",
+    string MatcherPython = "python",
     double ShotSeconds = 3.5)
 {
     public bool UsesClonedVoice => !string.IsNullOrWhiteSpace(CloneRef);
@@ -33,7 +34,7 @@ public sealed record VideoRenderOptions(
 public sealed record VideoShot(int Scene, int Slot, double Start, double Duration);
 
 /// <summary>De dónde sale la imagen de una toma.</summary>
-public enum ShotSource { SceneImage, TrailerClip, TrailerStill, WikiImage }
+public enum ShotSource { SceneImage, TrailerClip, TrailerStill, Portrait }
 
 /// <summary>Tráiler oficial bajado y cortado: tramos usables como clip y fotogramas sueltos.</summary>
 public sealed record TrailerPool(string Path, List<(double Start, double Length)> Clips, List<(string Path, double Time)> Stills);
@@ -177,8 +178,11 @@ public sealed partial class VideoRenderService(
         var stillTurn = (trailer?.Stills.Count ?? 0) / 2;
         double? lastTrailerTime = null;
         var usedTrailerMoments = new HashSet<double>(); // por segmento: clip y fotograma comparten el plano
-        var usedVisuals = new HashSet<string>(StringComparer.Ordinal);
+        string? lastPortrait = null;
         var counts = new Dictionary<ShotSource, int>();
+        var matched = 0;
+        // Qué fotograma de los videos oficiales muestra cada descripción del storyboard.
+        var matches = trailer is null ? [] : await MatchFramesAsync(plan, trailer, opt, dir, ct);
         for (var k = 0; k < shots.Count; k++)
         {
             var shot = shots[k];
@@ -187,24 +191,55 @@ public sealed partial class VideoRenderService(
             var flash = k > 0 && k % 4 == 0; // flash blanco cada ~4 cortes, como la referencia
             var source = ChooseShotSource(shot, k, trailer?.Clips.Count ?? 0, trailer?.Stills.Count ?? 0);
 
-            // Lo que dice la toma manda: si el storyboard pidió algo concreto
-            // ("Weak Kingsley crown") y la wiki o AniList lo tienen, eso se ve.
-            // Las tomas impares quedan para clips del video fuente, si hay.
-            string? wikiImage = null;
-            var queries = plan.Scenes[shot.Scene].VisualQueries;
-            if (queries is { Count: > 0 } && (source != ShotSource.TrailerClip || shot.Slot % 2 == 0))
-            {
-                wikiImage = await PickVisualAsync(queries[shot.Slot % queries.Count], usedVisuals, dir, opt, ct);
-                if (wikiImage is not null) source = ShotSource.WikiImage;
-            }
-
-            // Un clip sirve si cubre al menos el 60% de la toma (el resto se
-            // completa con cámara lenta); si no, un fotograma. Clips y fotogramas
-            // se identifican por el centro de su plano, así no se repite un plano
-            // como clip y después como fotograma.
+            // Lo que dice la toma manda. Si nombra a un personaje: su retrato
+            // oficial. Si describe una imagen: el plano de los videos oficiales que
+            // CLIP encontró más parecido (como clip si dura lo suficiente).
+            string? portrait = null;
             (double Start, double Length) clip = default;
             (string Path, double Time) still = default;
-            if (source == ShotSource.TrailerClip)
+            var resolved = false;
+            var queries = plan.Scenes[shot.Scene].VisualQueries;
+            var query = queries is { Count: > 0 } ? queries[shot.Slot % queries.Count] : null;
+            if (query is not null)
+            {
+                portrait = await PickPortraitAsync(query, lastPortrait, dir, opt, ct);
+                if (portrait is not null)
+                {
+                    source = ShotSource.Portrait;
+                    lastPortrait = portrait;
+                    resolved = true;
+                }
+                else if (matches.TryGetValue(query, out var ranked))
+                {
+                    foreach (var (idx, score) in ranked)
+                    {
+                        if (score < MinFrameMatch) break;
+                        var time = trailer!.Stills[idx].Time;
+                        if (usedTrailerMoments.Contains(time)) continue;
+                        usedTrailerMoments.Add(time);
+                        lastTrailerTime = time;
+                        if (trailer.Clips[idx].Length >= shot.Duration * 0.6)
+                        {
+                            source = ShotSource.TrailerClip;
+                            clip = trailer.Clips[idx];
+                        }
+                        else
+                        {
+                            source = ShotSource.TrailerStill;
+                            still = trailer.Stills[idx];
+                        }
+                        resolved = true;
+                        matched++;
+                        break;
+                    }
+                }
+            }
+
+            // Sin coincidencia: rotación de antes. Un clip sirve si cubre al menos
+            // el 60% de la toma (el resto con cámara lenta); si no, un fotograma.
+            // Clips y fotogramas se identifican por el centro de su plano, así no
+            // se repite un plano como clip y después como fotograma.
+            if (!resolved && source == ShotSource.TrailerClip)
             {
                 var fits = trailer!.Clips.Where(c => c.Length >= shot.Duration * 0.6).ToList();
                 var pick = PickAwayFrom(fits.Select(c => c.Start + c.Length / 2).ToList(), ref clipTurn,
@@ -212,7 +247,7 @@ public sealed partial class VideoRenderService(
                 if (pick >= 0) { clip = fits[pick]; lastTrailerTime = clip.Start + clip.Length / 2; }
                 else source = trailer.Stills.Count > 0 ? ShotSource.TrailerStill : ShotSource.SceneImage;
             }
-            if (source == ShotSource.TrailerStill)
+            if (!resolved && source == ShotSource.TrailerStill)
             {
                 var pick = PickAwayFrom(trailer!.Stills.Select(s => s.Time).ToList(), ref stillTurn,
                     lastTrailerTime, used: usedTrailerMoments);
@@ -227,7 +262,7 @@ public sealed partial class VideoRenderService(
                 ShotSource.TrailerClip => ClipShotArgs(trailer!.Path, clip.Start, frameCount, flash, output,
                     slowdown: Math.Max(1, shot.Duration / clip.Length)),
                 ShotSource.TrailerStill => ImageShotArgs(still.Path, frameCount, k, flash, output),
-                ShotSource.WikiImage => ImageShotArgs(wikiImage!, frameCount, k, flash, output),
+                ShotSource.Portrait => ImageShotArgs(portrait!, frameCount, k, flash, output),
                 _ => ImageShotArgs(frames[shot.Scene], frameCount, k, flash, output),
             };
             await RunAsync(opt.FfmpegPath, args, dir, ct);
@@ -264,35 +299,74 @@ public sealed partial class VideoRenderService(
     /// <summary>Imágenes IA como máximo por video (Pollinations: 1 cada 45 s).</summary>
     public const int MaxAiImages = 10;
 
+    /// <summary>Similitud CLIP mínima para aceptar un fotograma como "lo que se dice".</summary>
+    public const float MinFrameMatch = 0.20f;
+
     /// <summary>
-    /// Primera imagen de la búsqueda que todavía no se usó en el video: la baja
-    /// y la normaliza a 1920x1080 (fondo desenfocado si es vertical, como un
-    /// retrato de personaje). Null si no hay ninguna nueva.
+    /// Si la toma nombra a un personaje, su retrato oficial normalizado a
+    /// 1920x1080 (fondo desenfocado: los retratos son verticales). No repite el
+    /// mismo retrato en dos tomas seguidas. Null si la toma no es un personaje.
     /// </summary>
-    private async Task<string?> PickVisualAsync(string query, HashSet<string> used, string dir,
+    private async Task<string?> PickPortraitAsync(string query, string? lastPortrait, string dir,
         VideoRenderOptions opt, CancellationToken ct)
     {
-        foreach (var candidate in await visuals.SearchAsync(query, ct))
+        var candidate = visuals.FindCharacter(query);
+        if (candidate is null) return null;
+        var hash = Convert.ToHexString(System.Security.Cryptography.SHA1.HashData(Encoding.UTF8.GetBytes(candidate.Url)))[..12];
+        var raw = Path.Combine(dir, $"portrait_{hash}.img");
+        var frame = Path.Combine(dir, $"pframe_{hash}.jpg");
+        if (frame == lastPortrait) return null;
+        try
         {
-            if (!used.Add(candidate.Url)) continue;
-            var hash = Convert.ToHexString(System.Security.Cryptography.SHA1.HashData(Encoding.UTF8.GetBytes(candidate.Url)))[..12];
-            var raw = Path.Combine(dir, $"visual_{hash}{Path.GetExtension(new Uri(candidate.Url).AbsolutePath).ToLowerInvariant() switch { ".png" => ".png", ".webp" => ".webp", _ => ".jpg" }}");
-            var frame = Path.Combine(dir, $"vframe_{hash}.jpg");
-            try
-            {
-                if (!File.Exists(raw))
-                    await File.WriteAllBytesAsync(raw, await httpFactory.CreateClient("youtube-research").GetByteArrayAsync(candidate.Url, ct), ct);
-                if (!File.Exists(frame))
-                    await RunAsync(opt.FfmpegPath, FrameArgs(raw, frame, isAiImage: false), dir, ct);
-                logger.LogDebug("Toma '{Query}' → {Title} ({Source})", query, candidate.Title, candidate.Source);
-                return frame;
-            }
-            catch (Exception ex) when (ex is HttpRequestException or InvalidOperationException or TaskCanceledException)
-            {
-                logger.LogWarning("No se pudo usar {Title} para '{Query}': {Msg}", candidate.Title, query, ex.Message);
-            }
+            if (!File.Exists(raw))
+                await File.WriteAllBytesAsync(raw, await httpFactory.CreateClient("youtube-research").GetByteArrayAsync(candidate.Url, ct), ct);
+            if (!File.Exists(frame))
+                await RunAsync(opt.FfmpegPath, FrameArgs(raw, frame, isAiImage: false), dir, ct);
+            return frame;
         }
-        return null;
+        catch (Exception ex) when (ex is HttpRequestException or InvalidOperationException or TaskCanceledException)
+        {
+            logger.LogWarning("Retrato de {Name} no disponible: {Msg}", candidate.Title, ex.Message);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Corre Scripts/frame_match.py (CLIP) con todas las descripciones visuales
+    /// del storyboard contra los fotogramas del video fuente. Devuelve, por
+    /// descripción, los fotogramas más parecidos (índice en el pool, puntaje).
+    /// Si falla (sin torch, sin modelo), el video sigue con la rotación de siempre.
+    /// </summary>
+    private async Task<Dictionary<string, List<(int Index, float Score)>>> MatchFramesAsync(
+        VideoPlan plan, TrailerPool trailer, VideoRenderOptions opt, string dir, CancellationToken ct)
+    {
+        var queries = plan.Scenes.SelectMany(s => s.VisualQueries ?? [])
+            .Where(q => visuals.FindCharacter(q) is null).Distinct().ToList();
+        var result = new Dictionary<string, List<(int, float)>>();
+        if (queries.Count == 0) return result;
+
+        var job = Path.Combine(dir, "frame_match_job.json");
+        var output = Path.Combine(dir, "frame_match.json");
+        await File.WriteAllTextAsync(job, System.Text.Json.JsonSerializer.Serialize(
+            new { frames = trailer.Stills.Select(s => s.Path), queries }), ct);
+        try
+        {
+            var parts = opt.MatcherPython.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            var script = Path.Combine(AppContext.BaseDirectory, "Scripts", "frame_match.py");
+            await RunAsync(parts[0], parts.Skip(1).Concat(["-I", script, job, output]), dir, ct, TimeSpan.FromMinutes(15));
+            using var doc = System.Text.Json.JsonDocument.Parse(await File.ReadAllTextAsync(output, ct));
+            foreach (var q in doc.RootElement.EnumerateObject())
+                result[q.Name] = q.Value.EnumerateArray()
+                    .Select(p => (p[0].GetInt32(), (float)p[1].GetDouble())).ToList();
+            logger.LogInformation("CLIP: {Queries} descripciones contra {Frames} fotogramas del video fuente",
+                queries.Count, trailer.Stills.Count);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception or IOException or System.Text.Json.JsonException)
+        {
+            logger.LogWarning("CLIP no disponible ({Msg}) — los clips van en rotación",
+                ex.Message.Length > 300 ? ex.Message[..300] : ex.Message);
+        }
+        return result;
     }
 
     // ── Voz ─────────────────────────────────────────────────────────────────
@@ -489,7 +563,7 @@ public sealed partial class VideoRenderService(
 
             var pool = new TrailerPool(path, [], []);
             var kept = new List<float[]>();
-            for (var i = 0; i + 1 < cuts.Count && pool.Clips.Count < 40; i++)
+            for (var i = 0; i + 1 < cuts.Count && pool.Clips.Count < 80; i++)
             {
                 var (a, b) = (cuts[i] + 0.15, cuts[i + 1] - 0.15);
                 // Los créditos del staff (texto en japonés encima de la imagen) se
