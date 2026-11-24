@@ -22,28 +22,53 @@ public sealed record VideoRenderOptions(
     string? CloneRefText = null,
     string QwenModel = "1.7B",
     string PythonCommand = "python",
-    string QwenBackend = "kaggle")
+    string QwenBackend = "kaggle",
+    string YtDlpCommand = "yt-dlp",
+    double ShotSeconds = 3.5)
 {
     public bool UsesClonedVoice => !string.IsNullOrWhiteSpace(CloneRef);
 }
 
+/// <summary>Una toma del video: qué escena acompaña, su lugar dentro de la escena y cuándo va.</summary>
+public sealed record VideoShot(int Scene, int Slot, double Start, double Duration);
+
+/// <summary>De dónde sale la imagen de una toma.</summary>
+public enum ShotSource { SceneImage, TrailerClip, TrailerStill }
+
+/// <summary>Tráiler oficial bajado y cortado: tramos usables como clip y fotogramas sueltos.</summary>
+public sealed record TrailerPool(string Path, List<(double Start, double Length)> Clips, List<(string Path, double Time)> Stills);
+
 /// <summary>
-/// <see cref="VideoPlan"/> → video.mp4 horizontal 1080p:
-///   voz por escena (Edge TTS, voces neuronales es-MX, sin key),
-///   una imagen por escena (arte oficial de AniList o Pollinations),
-///   zoom/paneo lento sobre cada imagen (FFmpeg zoompan),
-///   subtítulos quemados con los tiempos que devuelve el propio TTS.
+/// <see cref="VideoPlan"/> → video.mp4 horizontal 1080p, con el ritmo de los
+/// Shorts de teorías que funcionan (analizado el 24-nov-2026 sobre uno de
+/// "El Psy-Kongroo": voz continua, micropausas de 0,12–0,28 s solo en las comas,
+/// imagen que cambia cada 1–1,5 s SIN esperar a la voz, 36% clips del anime):
+///
+///   VOZ: una sola pista continua. Cada escena se recorta en los bordes y se une
+///   a la siguiente con <see cref="SceneGapSeconds"/> de silencio. La voz no se
+///   procesa (el usuario probó EQ/compresión y prefirió el sonido original).
+///
+///   IMAGEN: independiente de la voz. Cada escena se parte en tomas de
+///   ~<see cref="VideoRenderOptions.ShotSeconds"/> que rotan entre la imagen de
+///   la escena (IA o arte oficial), clips cortos del tráiler oficial y
+///   fotogramas del tráiler, con un flash blanco de 0,1 s en algunos cortes.
+///
+///   SUBTÍTULOS quemados con los tiempos del TTS (o estimados por frase).
 ///
 /// El MP4 queda en la carpeta de salida para revisarlo; acá no se sube nada.
-/// Las imágenes ya bajadas (raw_NN.jpg) se reutilizan si se re-renderiza en la
-/// misma carpeta: para regenerarlas, borrarlas.
+/// Imágenes (raw_NN.jpg) y tráiler ya bajados se reutilizan al re-renderizar.
 /// </summary>
 public sealed partial class VideoRenderService(
     IHttpClientFactory httpFactory,
     ILogger<VideoRenderService> logger)
 {
     private const int Fps = 30;
-    private const double ScenePadSeconds = 0.4;
+
+    /// <summary>Silencio entre escenas: el rango de las micropausas del Short de referencia.</summary>
+    public const double SceneGapSeconds = 0.2;
+
+    /// <summary>Colchón al final del video, después de la última frase.</summary>
+    public const double EndTailSeconds = 1.0;
 
     public async Task<string> RenderAsync(
         VideoPlan plan, VideoResearch? research, VideoRenderOptions opt, CancellationToken ct)
@@ -53,10 +78,11 @@ public sealed partial class VideoRenderService(
         await File.WriteAllTextAsync(Path.Combine(dir, "plan.json"), plan.ToJson(), ct);
 
         var keyArt = await DownloadKeyArtAsync(research, dir, ct);
-        var segments = new List<string>();
         var subtitles = new List<(string Srt, TimeSpan Offset)>();
-        var elapsed = TimeSpan.Zero;
         var keyArtTurn = 0;
+
+        // El tráiler se baja y se corta en paralelo con la voz.
+        var trailerJob = PrepareTrailerAsync(research, opt, dir, ct);
 
         // Pollinations da 1 imagen cada 45 s por IP: se generan en segundo plano,
         // en orden, mientras el loop hace voz y segmentos de las escenas previas.
@@ -87,70 +113,383 @@ public sealed partial class VideoRenderService(
         if (opt.UsesClonedVoice)
             await RunQwenTtsAsync(plan, opt, dir, ct);
 
+        // ── 1. Voz: una pista continua ──────────────────────────────────────
+        var voiceParts = new List<string>();
+        var gaps = new List<double>();
+        var spans = new List<double>();
+        var elapsed = 0.0;
         for (var i = 0; i < plan.Scenes.Count; i++)
         {
             var scene = plan.Scenes[i];
             var n = (i + 1).ToString("00", CultureInfo.InvariantCulture);
-            var sw = Stopwatch.StartNew();
-
-            // 1. Voz + subtítulos de la escena
-            var audio = Path.Combine(dir, opt.UsesClonedVoice ? $"scene_{n}.wav" : $"scene_{n}.mp3");
+            var rawAudio = Path.Combine(dir, opt.UsesClonedVoice ? $"scene_{n}.wav" : $"scene_{n}.mp3");
             var srt = Path.Combine(dir, $"scene_{n}.srt");
-            double seconds;
-            if (opt.UsesClonedVoice)
-            {
-                // Qwen no devuelve tiempos: se reparten por frase según su largo.
-                var voice = await ProbeDurationAsync(opt, audio, ct);
-                await File.WriteAllTextAsync(srt, EstimateSrt(scene.Narration, voice), ct);
-                seconds = voice + ScenePadSeconds;
-            }
-            else
-            {
-                await RunTtsAsync(opt, scene.Narration, audio, srt, ct);
-                seconds = await ProbeDurationAsync(opt, audio, ct) + ScenePadSeconds;
-            }
+            if (!opt.UsesClonedVoice)
+                await RunTtsAsync(opt, scene.Narration, rawAudio, srt, ct);
 
-            // 2. Imagen → cuadro 1920x1080
+            // Sin el silencio que deja cada generación en los bordes: es lo que
+            // hacía sonar "cortado" el cambio de escena.
+            var voice = Path.Combine(dir, $"voice_{n}.wav");
+            await RunAsync(opt.FfmpegPath, TrimVoiceArgs(rawAudio, voice), dir, ct);
+            var seconds = await ProbeDurationAsync(opt, voice, ct);
+            if (opt.UsesClonedVoice)
+                await File.WriteAllTextAsync(srt, EstimateSrt(scene.Narration, seconds), ct); // Qwen no da tiempos
+
+            var gap = i == plan.Scenes.Count - 1 ? EndTailSeconds : SceneGapSeconds;
+            subtitles.Add((await File.ReadAllTextAsync(srt, ct), TimeSpan.FromSeconds(elapsed)));
+            voiceParts.Add(voice);
+            gaps.Add(gap);
+            spans.Add(seconds + gap);
+            elapsed += seconds + gap;
+        }
+        await RunAsync(opt.FfmpegPath, VoiceTrackArgs(voiceParts, gaps, Path.Combine(dir, "voice.wav")), dir, ct);
+        logger.LogInformation("Voz continua: {Scenes} escenas, {Secs:F1}s", plan.Scenes.Count, elapsed);
+
+        // ── 2. Imagen de cada escena → cuadro 1920x1080 ─────────────────────
+        var frames = new List<string>();
+        for (var i = 0; i < plan.Scenes.Count; i++)
+        {
+            var scene = plan.Scenes[i];
             var raw = UsesKeyArt(scene) ? keyArt[keyArtTurn++ % keyArt.Count] : await images[i].Task;
             raw ??= keyArt.Count > 0 ? keyArt[i % keyArt.Count] : null;
-
-            var frame = Path.Combine(dir, $"frame_{n}.jpg");
-            await RunAsync(opt.FfmpegPath, FrameArgs(raw, frame, isAiImage: raw is not null && Path.GetFileName(raw).StartsWith("raw_", StringComparison.Ordinal)), dir, ct);
-
-            // 3. Segmento con movimiento + voz
-            var segment = Path.Combine(dir, $"seg_{n}.mp4");
-            await RunAsync(opt.FfmpegPath, SegmentArgs(frame, audio, seconds, i, segment), dir, ct);
-            segments.Add(segment);
-
-            subtitles.Add((await File.ReadAllTextAsync(srt, ct), elapsed));
-            elapsed += TimeSpan.FromSeconds(seconds);
-            logger.LogInformation("Escena {N}/{Total}: {Secs:F1}s, visual={Visual} ({Ms} ms)",
-                n, plan.Scenes.Count, seconds, raw is null ? "fondo" : Path.GetFileName(raw), sw.ElapsedMilliseconds);
+            var frame = Path.Combine(dir, $"frame_{(i + 1).ToString("00", CultureInfo.InvariantCulture)}.jpg");
+            await RunAsync(opt.FfmpegPath, FrameArgs(raw, frame,
+                isAiImage: raw is not null && Path.GetFileName(raw).StartsWith("raw_", StringComparison.Ordinal)), dir, ct);
+            frames.Add(frame);
         }
-
         await imageJob;
+        var trailer = await trailerJob;
 
-        // 4. Unir segmentos y quemar subtítulos
-        await File.WriteAllLinesAsync(Path.Combine(dir, "segments.txt"),
-            segments.Select(s => $"file '{Path.GetFileName(s)}'"), ct);
+        // ── 3. Tomas: independientes de la voz ─────────────────────────────
+        var shots = PlanShots(spans, opt.ShotSeconds);
+        var shotFiles = new List<string>();
+        // Clips desde el principio del tráiler y fotogramas desde la mitad, y nunca
+        // dos tomas seguidas del tráiler a menos de 8 s entre sí: un tráiler muestra
+        // la misma escena en varios cortes y salían dos tomas iguales (el árbol de
+        // Frieren, 24-nov-2026).
+        var clipTurn = 0;
+        var stillTurn = (trailer?.Stills.Count ?? 0) / 2;
+        double? lastTrailerTime = null;
+        var usedTrailerMoments = new HashSet<double>(); // por segmento: clip y fotograma comparten el plano
+        var counts = new Dictionary<ShotSource, int>();
+        for (var k = 0; k < shots.Count; k++)
+        {
+            var shot = shots[k];
+            var startFrame = (int)Math.Round(shot.Start * Fps);
+            var frameCount = Math.Max(1, (int)Math.Round((shot.Start + shot.Duration) * Fps) - startFrame);
+            var flash = k > 0 && k % 4 == 0; // flash blanco cada ~4 cortes, como la referencia
+            var source = ChooseShotSource(shot, k, trailer?.Clips.Count ?? 0, trailer?.Stills.Count ?? 0);
+
+            // Un clip sirve si cubre al menos el 60% de la toma (el resto se
+            // completa con cámara lenta); si no, un fotograma. Clips y fotogramas
+            // se identifican por el centro de su plano, así no se repite un plano
+            // como clip y después como fotograma.
+            (double Start, double Length) clip = default;
+            (string Path, double Time) still = default;
+            if (source == ShotSource.TrailerClip)
+            {
+                var fits = trailer!.Clips.Where(c => c.Length >= shot.Duration * 0.6).ToList();
+                var pick = PickAwayFrom(fits.Select(c => c.Start + c.Length / 2).ToList(), ref clipTurn,
+                    lastTrailerTime, used: usedTrailerMoments);
+                if (pick >= 0) { clip = fits[pick]; lastTrailerTime = clip.Start + clip.Length / 2; }
+                else source = trailer.Stills.Count > 0 ? ShotSource.TrailerStill : ShotSource.SceneImage;
+            }
+            if (source == ShotSource.TrailerStill)
+            {
+                var pick = PickAwayFrom(trailer!.Stills.Select(s => s.Time).ToList(), ref stillTurn,
+                    lastTrailerTime, used: usedTrailerMoments);
+                still = trailer.Stills[pick];
+                lastTrailerTime = still.Time;
+            }
+            counts[source] = counts.GetValueOrDefault(source) + 1;
+
+            var output = Path.Combine(dir, $"shot_{(k + 1).ToString("000", CultureInfo.InvariantCulture)}.mp4");
+            var args = source switch
+            {
+                ShotSource.TrailerClip => ClipShotArgs(trailer!.Path, clip.Start, frameCount, flash, output,
+                    slowdown: Math.Max(1, shot.Duration / clip.Length)),
+                ShotSource.TrailerStill => ImageShotArgs(still.Path, frameCount, k, flash, output),
+                _ => ImageShotArgs(frames[shot.Scene], frameCount, k, flash, output),
+            };
+            await RunAsync(opt.FfmpegPath, args, dir, ct);
+            shotFiles.Add(output);
+        }
+        logger.LogInformation("Tomas: {Total} ({Mix})", shots.Count,
+            string.Join(", ", counts.Select(c => $"{c.Key}={c.Value}")));
+
+        // ── 4. Unir tomas + voz + subtítulos ───────────────────────────────
+        await File.WriteAllLinesAsync(Path.Combine(dir, "shots.txt"),
+            shotFiles.Select(s => $"file '{Path.GetFileName(s)}'"), ct);
         await RunAsync(opt.FfmpegPath,
-            ["-y", "-f", "concat", "-safe", "0", "-i", "segments.txt", "-c", "copy", "body.mp4"], dir, ct);
+            ["-y", "-f", "concat", "-safe", "0", "-i", "shots.txt", "-c", "copy", "visuals.mp4"], dir, ct);
 
         await File.WriteAllTextAsync(Path.Combine(dir, "subs.srt"), MergeSrt(subtitles), new UTF8Encoding(false), ct);
         var final = Path.Combine(dir, "video.mp4");
         await RunAsync(opt.FfmpegPath,
         [
-            "-y", "-i", "body.mp4",
+            "-y", "-i", "visuals.mp4", "-i", "voice.wav",
             // Ruta relativa a propósito: en Windows "C:" rompe el parseo del filtro.
             "-vf", "subtitles=subs.srt:force_style='FontName=Arial,FontSize=15,Bold=1,Outline=2,Shadow=0,MarginV=28'",
+            "-map", "0:v", "-map", "1:a", "-t", elapsed.ToString("0.###", CultureInfo.InvariantCulture),
             "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
-            "-c:a", "copy", "-movflags", "+faststart", "video.mp4",
+            "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2", "-movflags", "+faststart", "video.mp4",
         ], dir, ct);
 
-        await File.WriteAllTextAsync(Path.Combine(dir, "youtube.txt"), Metadata(plan, elapsed), ct);
-        File.Copy(Path.Combine(dir, "frame_01.jpg"), Path.Combine(dir, "thumbnail.jpg"), overwrite: true);
-        logger.LogInformation("Video listo: {Path} ({Duration:mm\\:ss})", final, elapsed);
+        var duration = TimeSpan.FromSeconds(elapsed);
+        await File.WriteAllTextAsync(Path.Combine(dir, "youtube.txt"), Metadata(plan, duration), ct);
+        File.Copy(frames[0], Path.Combine(dir, "thumbnail.jpg"), overwrite: true);
+        logger.LogInformation("Video listo: {Path} ({Duration:mm\\:ss})", final, duration);
         return final;
+    }
+
+    // ── Voz ─────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Recorta el silencio de los bordes (umbral -45 dB) con fundidos de 10 ms
+    /// para que no haga "click". No toca el sonido de la voz. Mono 24 kHz, la
+    /// frecuencia nativa de Qwen3. Público para tests.
+    /// </summary>
+    public static List<string> TrimVoiceArgs(string input, string output) =>
+    [
+        "-y", "-i", input, "-af",
+        "silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.02," +
+        "areverse,silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.04," +
+        "afade=t=in:d=0.01,areverse,afade=t=in:d=0.01",
+        "-ar", "24000", "-ac", "1", output,
+    ];
+
+    /// <summary>
+    /// Une las voces de todas las escenas en una sola pista, con el silencio
+    /// indicado después de cada una. Público para tests.
+    /// </summary>
+    public static List<string> VoiceTrackArgs(IReadOnlyList<string> parts, IReadOnlyList<double> gaps, string output)
+    {
+        var args = new List<string> { "-y" };
+        foreach (var p in parts) { args.Add("-i"); args.Add(p); }
+        var filter = new StringBuilder();
+        for (var i = 0; i < parts.Count; i++)
+            filter.Append($"[{i}:a]apad=pad_dur={gaps[i].ToString("0.###", CultureInfo.InvariantCulture)}[a{i}];");
+        for (var i = 0; i < parts.Count; i++) filter.Append($"[a{i}]");
+        filter.Append($"concat=n={parts.Count}:v=0:a=1[out]");
+        args.AddRange(["-filter_complex", filter.ToString(), "-map", "[out]", "-ar", "24000", "-ac", "1", output]);
+        return args;
+    }
+
+    // ── Tomas ───────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Parte cada escena (voz + pausa) en tomas de ~<paramref name="shotSeconds"/>,
+    /// todas del mismo largo dentro de la escena. Las tomas cubren el video sin
+    /// huecos ni solapes. Público para tests.
+    /// </summary>
+    public static List<VideoShot> PlanShots(IReadOnlyList<double> sceneSpans, double shotSeconds)
+    {
+        var shots = new List<VideoShot>();
+        var t = 0.0;
+        for (var s = 0; s < sceneSpans.Count; s++)
+        {
+            var count = Math.Max(1, (int)Math.Round(sceneSpans[s] / shotSeconds));
+            var d = sceneSpans[s] / count;
+            for (var j = 0; j < count; j++)
+                shots.Add(new VideoShot(s, j, t + j * d, d));
+            t += sceneSpans[s];
+        }
+        return shots;
+    }
+
+    /// <summary>
+    /// Qué se ve en cada toma. La primera de cada escena es siempre su imagen
+    /// (la que eligió el storyboard); las demás rotan clip del tráiler →
+    /// fotograma del tráiler → imagen de la escena, lo que da ~1/3 de clips como
+    /// la referencia. Sin tráiler, todo sale de las imágenes. Público para tests.
+    /// </summary>
+    public static ShotSource ChooseShotSource(VideoShot shot, int index, int clips, int stills)
+    {
+        if (shot.Slot == 0) return ShotSource.SceneImage;
+        return (shot.Slot % 3) switch
+        {
+            1 when clips > 0 => ShotSource.TrailerClip,
+            2 when stills > 0 => ShotSource.TrailerStill,
+            0 when clips > 0 => ShotSource.TrailerClip,
+            _ => stills > 0 && index % 2 == 0 ? ShotSource.TrailerStill : ShotSource.SceneImage,
+        };
+    }
+
+    /// <summary>
+    /// Elige el próximo elemento de una lista rotativa (tramos o fotogramas del
+    /// tráiler, por su segundo en el tráiler) que esté a más de
+    /// <paramref name="minDistance"/> s del último usado. Si ninguno cumple, el
+    /// siguiente en la rotación. -1 si la lista está vacía. Público para tests.
+    /// </summary>
+    public static int PickAwayFrom(IReadOnlyList<double> times, ref int turn, double? last, double minDistance = 8,
+        ISet<double>? used = null)
+    {
+        if (times.Count == 0) return -1;
+        // 1º: un momento sin usar y lejos del último; 2º: lejos aunque repita; 3º: el que sigue.
+        foreach (var requireUnused in new[] { true, false })
+        {
+            for (var step = 0; step < times.Count; step++)
+            {
+                var i = (turn + step) % times.Count;
+                if (requireUnused && used?.Contains(times[i]) == true) continue;
+                if (last is not null && Math.Abs(times[i] - last.Value) <= minDistance) continue;
+                turn = i + 1;
+                used?.Add(times[i]);
+                return i;
+            }
+            if (used is null) break;
+        }
+        var fallback = turn % times.Count;
+        turn = fallback + 1;
+        return fallback;
+    }
+
+    /// <summary>
+    /// Imagen fija → toma con movimiento (Ken Burns). Seis movimientos distintos
+    /// (acercar, alejar, paneos y acercamientos a un costado) para que la misma
+    /// imagen en dos tomas parezca otra. Se escala a 4K antes del zoompan para
+    /// que no tiemble. Sin audio: la voz va aparte. Público para tests.
+    /// </summary>
+    public static List<string> ImageShotArgs(string image, int frames, int variant, bool flash, string output)
+    {
+        var d = frames.ToString(CultureInfo.InvariantCulture);
+        var (z, x, y) = (variant % 6) switch
+        {
+            0 => ($"1+0.12*on/{d}", "iw/2-(iw/zoom/2)", "ih/2-(ih/zoom/2)"),
+            1 => ($"1.15-0.12*on/{d}", "iw/2-(iw/zoom/2)", "ih/2-(ih/zoom/2)"),
+            2 => ("1.12", $"(iw-iw/zoom)*on/{d}", "ih/2-(ih/zoom/2)"),
+            3 => ("1.12", $"(iw-iw/zoom)*(1-on/{d})", "ih/2-(ih/zoom/2)"),
+            4 => ($"1.2+0.1*on/{d}", "iw*0.08", "ih*0.08"),
+            _ => ($"1.2+0.1*on/{d}", "iw-iw/zoom-iw*0.08", "ih/2-(ih/zoom/2)"),
+        };
+        var filter = $"scale=3840:2160:force_original_aspect_ratio=increase,crop=3840:2160," +
+                     $"zoompan=z='{z}':x='{x}':y='{y}':d={d}:s=1920x1080:fps={Fps},format=yuv420p" +
+                     (flash ? ",fade=t=in:st=0:d=0.1:color=white" : "");
+        return
+        [
+            "-y", "-i", image, "-vf", filter, "-frames:v", d, "-an",
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-r", Fps.ToString(CultureInfo.InvariantCulture), output,
+        ];
+    }
+
+    /// <summary>
+    /// Tramo del tráiler → toma de video (sin su audio). Llena el cuadro 16:9.
+    /// Público para tests.
+    /// </summary>
+    public static List<string> ClipShotArgs(string trailer, double start, int frames, bool flash, string output,
+        double slowdown = 1)
+    {
+        var d = frames.ToString(CultureInfo.InvariantCulture);
+        var slow = slowdown > 1.001 ? $"setpts={slowdown.ToString("0.###", CultureInfo.InvariantCulture)}*PTS," : "";
+        var filter = $"{slow}scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,fps={Fps},format=yuv420p" +
+                     (flash ? ",fade=t=in:st=0:d=0.1:color=white" : "");
+        return
+        [
+            "-y", "-ss", start.ToString("0.###", CultureInfo.InvariantCulture), "-i", trailer,
+            "-vf", filter, "-frames:v", d, "-an",
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-r", Fps.ToString(CultureInfo.InvariantCulture), output,
+        ];
+    }
+
+    /// <summary>
+    /// Baja el tráiler oficial (YouTube, vía yt-dlp) y lo corta por cambios de
+    /// plano: los tramos de 1,2 s o más son clips posibles y de cada uno sale un
+    /// fotograma. Se descartan los primeros 2 s y los últimos 6 s (logos,
+    /// fechas, créditos). Si algo falla, el video sale igual solo con imágenes.
+    /// </summary>
+    private async Task<TrailerPool?> PrepareTrailerAsync(VideoResearch? research, VideoRenderOptions opt, string dir, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(research?.TrailerUrl)) return null;
+        try
+        {
+            var path = Directory.GetFiles(dir, "trailer.*").FirstOrDefault(f => !f.EndsWith(".part", StringComparison.Ordinal));
+            if (path is null)
+            {
+                var parts = opt.YtDlpCommand.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                await RunAsync(parts[0], parts.Skip(1).Concat(
+                [
+                    "-q", "--no-warnings", "--no-playlist",
+                    "-f", "bv*[ext=mp4][height<=1080]/bv*[height<=1080]/best[height<=1080]",
+                    "-o", "trailer.%(ext)s", research.TrailerUrl!,
+                ]), dir, ct, TimeSpan.FromMinutes(5));
+                path = Directory.GetFiles(dir, "trailer.*").First(f => !f.EndsWith(".part", StringComparison.Ordinal));
+            }
+
+            var duration = await ProbeDurationAsync(opt, path, ct);
+            var (_, err) = await RunFullAsync(opt.FfmpegPath,
+                ["-hide_banner", "-i", path, "-vf", "scale=320:-2,select='gt(scene,0.3)',showinfo", "-an", "-f", "null", "-"],
+                dir, ct, TimeSpan.FromMinutes(5));
+            var cuts = new List<double> { 0 };
+            cuts.AddRange(ShowInfoTime().Matches(err).Select(m => double.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture)));
+            cuts.Add(duration);
+
+            var pool = new TrailerPool(path, [], []);
+            var kept = new List<float[]>();
+            for (var i = 0; i + 1 < cuts.Count && pool.Clips.Count < 40; i++)
+            {
+                var (a, b) = (cuts[i] + 0.15, cuts[i + 1] - 0.15);
+                // Los créditos del staff (texto en japonés encima de la imagen) se
+                // concentran al principio y al final: visto en el tráiler de Frieren.
+                if (a < Math.Max(2, duration * 0.15) || b > duration - Math.Max(6, duration * 0.10) || b - a < 1.2) continue;
+
+                var still = Path.Combine(dir, $"trailer_seg_{i:000}.jpg");
+                if (!File.Exists(still))
+                    await RunAsync(opt.FfmpegPath,
+                        ["-y", "-ss", ((a + b) / 2).ToString("0.###", CultureInfo.InvariantCulture), "-i", path,
+                         "-frames:v", "1", "-q:v", "2", still], dir, ct);
+
+                // Un tráiler vuelve varias veces al mismo lugar: si este plano se
+                // parece a uno ya elegido, se descarta (si no, salen dos tomas iguales).
+                var signature = ImageSignature(still);
+                if (signature is null || kept.Any(k => SignatureDistance(k, signature) < SimilarSignature)) continue;
+                kept.Add(signature);
+                pool.Clips.Add((a, b - a));
+                pool.Stills.Add((still, (a + b) / 2));
+            }
+            logger.LogInformation("Tráiler: {Secs:F0}s, {Clips} clips y {Stills} fotogramas usables",
+                duration, pool.Clips.Count, pool.Stills.Count);
+            return pool.Clips.Count == 0 ? null : pool;
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or InvalidDataException or System.ComponentModel.Win32Exception)
+        {
+            logger.LogWarning("Sin tráiler ({Url}): {Msg} — el video sale solo con imágenes",
+                research.TrailerUrl, ex.Message.Length > 300 ? ex.Message[..300] : ex.Message);
+            return null;
+        }
+    }
+
+    [GeneratedRegex(@"pts_time:([\d.]+)")]
+    private static partial Regex ShowInfoTime();
+
+    /// <summary>Diferencia media (0–255) por debajo de la cual dos planos se consideran el mismo.</summary>
+    public const float SimilarSignature = 22f;
+
+    /// <summary>
+    /// Huella de una imagen: 32×18 en escala de grises. Dos fotogramas del mismo
+    /// lugar dan huellas cercanas aunque cambie un detalle. Público para tests.
+    /// </summary>
+    public static float[]? ImageSignature(string path)
+    {
+        using var bitmap = SkiaSharp.SKBitmap.Decode(path);
+        if (bitmap is null) return null;
+        using var small = bitmap.Resize(new SkiaSharp.SKImageInfo(32, 18), new SkiaSharp.SKSamplingOptions(SkiaSharp.SKFilterMode.Linear));
+        if (small is null) return null;
+        var sig = new float[32 * 18];
+        for (var y = 0; y < 18; y++)
+            for (var x = 0; x < 32; x++)
+            {
+                var c = small.GetPixel(x, y);
+                sig[y * 32 + x] = 0.299f * c.Red + 0.587f * c.Green + 0.114f * c.Blue;
+            }
+        return sig;
+    }
+
+    /// <summary>Diferencia media absoluta entre dos huellas (0 = iguales). Público para tests.</summary>
+    public static float SignatureDistance(float[] a, float[] b)
+    {
+        var sum = 0f;
+        for (var i = 0; i < a.Length; i++) sum += Math.Abs(a[i] - b[i]);
+        return sum / a.Length;
     }
 
     // ── Imágenes ────────────────────────────────────────────────────────────
@@ -251,34 +590,6 @@ public sealed partial class VideoRenderService(
             "[b]scale=1920:1080:force_original_aspect_ratio=decrease[fg];" +
             "[bg][fg]overlay=(W-w)/2:(H-h)/2,format=yuvj420p";
         return ["-y", "-i", image, "-filter_complex", filter, "-frames:v", "1", "-q:v", "2", output];
-    }
-
-    /// <summary>
-    /// Un cuadro fijo + la voz → segmento con movimiento lento (Ken Burns).
-    /// Se escala a 4K antes del zoompan para que el movimiento no tiemble. El
-    /// movimiento rota entre acercar, alejar y paneo para que no sea monótono.
-    /// </summary>
-    public static List<string> SegmentArgs(string frame, string audio, double seconds, int index, string output)
-    {
-        var frames = (int)Math.Ceiling(seconds * Fps);
-        var d = frames.ToString(CultureInfo.InvariantCulture);
-        var (z, x, y) = (index % 3) switch
-        {
-            0 => ($"1+0.12*on/{d}", "iw/2-(iw/zoom/2)", "ih/2-(ih/zoom/2)"),
-            1 => ($"1.12-0.12*on/{d}", "iw/2-(iw/zoom/2)", "ih/2-(ih/zoom/2)"),
-            _ => ("1.1", $"(iw-iw/zoom)*on/{d}", "ih/2-(ih/zoom/2)"),
-        };
-        var secs = seconds.ToString("0.###", CultureInfo.InvariantCulture);
-        var filter =
-            $"[0:v]scale=3840:2160,zoompan=z='{z}':x='{x}':y='{y}':d={d}:s=1920x1080:fps={Fps},format=yuv420p[v];" +
-            $"[1:a]loudnorm=I=-16:TP=-1.5:LRA=11,apad=pad_dur={ScenePadSeconds.ToString(CultureInfo.InvariantCulture)}[a]";
-        return
-        [
-            "-y", "-i", frame, "-i", audio, "-filter_complex", filter,
-            "-map", "[v]", "-map", "[a]", "-t", secs,
-            "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-r", Fps.ToString(CultureInfo.InvariantCulture),
-            "-c:a", "aac", "-b:a", "160k", "-ar", "48000", "-ac", "2", output,
-        ];
     }
 
     // ── Subtítulos ──────────────────────────────────────────────────────────
@@ -456,6 +767,10 @@ public sealed partial class VideoRenderService(
     /// con el final de stderr.
     /// </summary>
     private static async Task<string> RunAsync(string file, IEnumerable<string> args, string workDir, CancellationToken ct, TimeSpan? limit = null)
+        => (await RunFullAsync(file, args, workDir, ct, limit)).Out;
+
+    /// <summary>Igual que <see cref="RunAsync"/> pero también devuelve stderr (donde ffmpeg escribe showinfo).</summary>
+    private static async Task<(string Out, string Err)> RunFullAsync(string file, IEnumerable<string> args, string workDir, CancellationToken ct, TimeSpan? limit = null)
     {
         var psi = new ProcessStartInfo(file)
         {
@@ -492,6 +807,6 @@ public sealed partial class VideoRenderService(
             if (tail.Length > 1500) tail = tail[^1500..];
             throw new InvalidOperationException($"{file} falló (exit {process.ExitCode}): {tail}");
         }
-        return await stdout;
+        return (await stdout, await stderr);
     }
 }

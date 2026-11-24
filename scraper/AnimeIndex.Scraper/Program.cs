@@ -142,7 +142,11 @@ if (args.Contains("--youtube"))
             CloneRefText: voiceRefText,
             QwenModel: YtArg(args, "--qwen-model") ?? "1.7B",
             PythonCommand: YtArg(args, "--python") ?? "python",
-            QwenBackend: YtArg(args, "--qwen-backend") ?? "kaggle");
+            QwenBackend: YtArg(args, "--qwen-backend") ?? "kaggle",
+            YtDlpCommand: YtArg(args, "--yt-dlp") ?? "yt-dlp",
+            // ~3,5 s para videos largos; el Short de referencia corta cada 1–1,5 s.
+            ShotSeconds: double.TryParse(YtArg(args, "--shot-seconds"), System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out var shotSecs) ? Math.Clamp(shotSecs, 0.8, 15) : 3.5);
         await sp.GetRequiredService<AnimeIndex.Scraper.Infrastructure.YouTube.VideoRenderService>()
             .RenderAsync(plan, found, options, ytCts.Token);
     }

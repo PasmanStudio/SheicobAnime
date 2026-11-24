@@ -171,8 +171,12 @@ jobs:
         with:
           dotnet-version: '9.x'
 
-      - name: Instalar ffmpeg
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg > /dev/null
+      # yt-dlp baja el tráiler oficial (clips y fotogramas). Si YouTube lo frena
+      # con el bot-check en el runner, el render sigue solo con imágenes.
+      - name: Instalar ffmpeg y yt-dlp
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg > /dev/null
+          pip install --quiet yt-dlp
 
       - uses: actions/download-artifact@v4
         with:

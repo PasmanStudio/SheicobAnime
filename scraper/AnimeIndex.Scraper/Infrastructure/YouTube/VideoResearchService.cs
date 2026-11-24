@@ -11,7 +11,8 @@ public sealed record VideoResearch(
     string Topic,
     List<ResearchSource> Sources,
     string? CoverImageUrl,
-    string? BannerImageUrl);
+    string? BannerImageUrl,
+    string? TrailerUrl = null);
 
 public sealed record ResearchSource(string Name, string Url, string Text);
 
@@ -33,7 +34,7 @@ public sealed partial class VideoResearchService(
         string topic, string? anime, IReadOnlyList<string> urls, CancellationToken ct)
     {
         var sources = new List<ResearchSource>();
-        string? cover = null, banner = null;
+        string? cover = null, banner = null, trailer = null;
         var searchTerm = anime ?? topic;
 
         if (anime is not null)
@@ -44,6 +45,7 @@ public sealed partial class VideoResearchService(
                 sources.Add(aniList.Value.Source);
                 cover = aniList.Value.Cover;
                 banner = aniList.Value.Banner;
+                trailer = aniList.Value.Trailer;
             }
         }
 
@@ -59,12 +61,12 @@ public sealed partial class VideoResearchService(
             if (page is not null) sources.Add(page);
         }
 
-        logger.LogInformation("Investigación: {Count} fuentes ({Names}), arte oficial={HasArt}",
-            sources.Count, string.Join(", ", sources.Select(s => s.Name)), cover is not null);
-        return new VideoResearch(topic, sources, cover, banner);
+        logger.LogInformation("Investigación: {Count} fuentes ({Names}), arte oficial={HasArt}, tráiler={Trailer}",
+            sources.Count, string.Join(", ", sources.Select(s => s.Name)), cover is not null, trailer ?? "no");
+        return new VideoResearch(topic, sources, cover, banner, trailer);
     }
 
-    private async Task<(ResearchSource Source, string? Cover, string? Banner)?> TryAniListAsync(
+    private async Task<(ResearchSource Source, string? Cover, string? Banner, string? Trailer)?> TryAniListAsync(
         string anime, CancellationToken ct)
     {
         const string query = """
@@ -78,6 +80,7 @@ public sealed partial class VideoResearchService(
                 studios(isMain: true) { nodes { name } }
                 bannerImage
                 coverImage { extraLarge }
+                trailer { id site }
               }
             }
             """;
@@ -114,8 +117,13 @@ public sealed partial class VideoResearchService(
                 .ToString();
 
             var cover = m.TryGetProperty("coverImage", out var c) ? S(c, "extraLarge") : null;
+            // Tráiler oficial: de ahí salen los clips y fotogramas reales del video.
+            string? trailer = null;
+            if (m.TryGetProperty("trailer", out var tr) && tr.ValueKind == JsonValueKind.Object
+                && S(tr, "site") == "youtube" && S(tr, "id") is { } trailerId)
+                trailer = $"https://www.youtube.com/watch?v={trailerId}";
             return (new ResearchSource("AniList", S(m, "siteUrl") ?? "https://anilist.co", text),
-                cover, S(m, "bannerImage"));
+                cover, S(m, "bannerImage"), trailer);
         }
         catch (Exception ex) when (ex is HttpRequestException or JsonException or KeyNotFoundException or TaskCanceledException)
         {

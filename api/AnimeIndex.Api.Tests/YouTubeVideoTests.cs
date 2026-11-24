@@ -80,14 +80,69 @@ public class YouTubeVideoTests
     }
 
     [Fact]
-    public void SegmentArgs_ZoompanCoversWholeSceneAtThirtyFps()
+    public void ImageShotArgs_ZoompanMakesExactlyTheShotFrames()
     {
-        var args = VideoRenderService.SegmentArgs("frame.jpg", "voz.mp3", 8.4, 0, "seg.mp4");
+        var args = VideoRenderService.ImageShotArgs("frame.jpg", 105, 0, flash: false, "shot.mp4");
 
-        var filter = args[args.IndexOf("-filter_complex") + 1];
-        Assert.Contains("d=252:", filter); // ceil(8.4 s * 30 fps)
-        Assert.Equal("8.4", args[args.IndexOf("-t") + 1]);
+        var filter = args[args.IndexOf("-vf") + 1];
+        Assert.Contains("d=105:", filter);
+        Assert.Equal("105", args[args.IndexOf("-frames:v") + 1]);
+        Assert.Contains("-an", args); // la voz va en una pista aparte
         // Una sola imagen de entrada: con -loop 1 zoompan multiplicaría los cuadros.
         Assert.DoesNotContain("-loop", args);
+        Assert.DoesNotContain("color=white", filter);
+    }
+
+    [Fact]
+    public void ImageShotArgs_FlashFadesInFromWhite() =>
+        Assert.Contains("fade=t=in:st=0:d=0.1:color=white",
+            VideoRenderService.ImageShotArgs("f.jpg", 90, 3, flash: true, "s.mp4") is var a ? a[a.IndexOf("-vf") + 1] : "");
+
+    [Fact]
+    public void PlanShots_SplitsScenesIntoEvenShotsWithoutGaps()
+    {
+        // 10,5 s → 3 tomas de 3,5 s; 2 s → 1 toma (nunca 0); 7,2 s → 2 de 3,6 s.
+        var shots = VideoRenderService.PlanShots([10.5, 2.0, 7.2], 3.5);
+
+        Assert.Equal([3, 1, 2], shots.GroupBy(s => s.Scene).Select(g => g.Count()));
+        for (var i = 1; i < shots.Count; i++)
+            Assert.Equal(shots[i - 1].Start + shots[i - 1].Duration, shots[i].Start, 6);
+        Assert.Equal(19.7, shots[^1].Start + shots[^1].Duration, 6);
+        Assert.All(shots.Where(s => s.Slot == 0), s => Assert.Equal(0, s.Slot));
+    }
+
+    [Fact]
+    public void ChooseShotSource_FirstShotIsTheSceneImageThenRotatesTrailer()
+    {
+        var shots = VideoRenderService.PlanShots([14.0], 3.5); // 4 tomas
+        var withTrailer = shots.Select((s, i) => VideoRenderService.ChooseShotSource(s, i, clips: 10, stills: 10)).ToList();
+        var withoutTrailer = shots.Select((s, i) => VideoRenderService.ChooseShotSource(s, i, clips: 0, stills: 0)).ToList();
+
+        Assert.Equal([ShotSource.SceneImage, ShotSource.TrailerClip, ShotSource.TrailerStill, ShotSource.TrailerClip], withTrailer);
+        Assert.All(withoutTrailer, s => Assert.Equal(ShotSource.SceneImage, s));
+    }
+
+    [Fact]
+    public void PickAwayFrom_SkipsTrailerMomentsTooCloseToTheLastOne()
+    {
+        double[] times = [10, 12, 15, 30, 31, 60];
+        var turn = 0;
+
+        Assert.Equal(0, VideoRenderService.PickAwayFrom(times, ref turn, last: null));   // 10 s
+        Assert.Equal(3, VideoRenderService.PickAwayFrom(times, ref turn, last: 10));     // salta 12 y 15
+        Assert.Equal(5, VideoRenderService.PickAwayFrom(times, ref turn, last: 30));     // salta 31
+        var empty = 0;
+        Assert.Equal(-1, VideoRenderService.PickAwayFrom([], ref empty, last: null));
+    }
+
+    [Fact]
+    public void VoiceTrackArgs_PadsEachSceneAndConcatsInOrder()
+    {
+        var args = VideoRenderService.VoiceTrackArgs(["v1.wav", "v2.wav"], [0.2, 1.0], "voice.wav");
+
+        var filter = args[args.IndexOf("-filter_complex") + 1];
+        Assert.Equal(
+            "[0:a]apad=pad_dur=0.2[a0];[1:a]apad=pad_dur=1[a1];[a0][a1]concat=n=2:v=0:a=1[out]", filter);
+        Assert.Equal("voice.wav", args[^1]);
     }
 }
