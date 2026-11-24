@@ -42,16 +42,16 @@ concurrency:
 
 env:
   PLAN_FILE: ${{ inputs.plan_file || 'youtube/plans/frieren-poder-oculto.json' }}
-  ANIME: ${{ inputs.anime || 'Frieren' }}
-  RUNNERS: ${{ inputs.runners || '3' }}
 
 jobs:
   plan:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     outputs:
       shards: ${{ steps.shards.outputs.list }}
       total: ${{ steps.shards.outputs.total }}
+      anime: ${{ steps.request.outputs.anime }}
+      clip: ${{ steps.request.outputs.clip }}
     steps:
       - uses: actions/checkout@v4
 
@@ -63,24 +63,71 @@ jobs:
           gpg --batch --quiet --pinentry-mode loopback --passphrase-fd 0 \
             -d youtube/voice/ref.tar.gpg <<< "$VOICE_REF_PASSPHRASE" | tar -x -C "$RUNNER_TEMP/voice"
 
+      # El pedido: o los inputs del dispatch, o youtube/request.json en un push.
+      # Así el workflow hace cualquier video sin tocar el YAML.
+      - name: Pedido
+        id: request
+        env:
+          IN_TOPIC: ${{ inputs.topic }}
+          IN_ANIME: ${{ inputs.anime }}
+          IN_MINUTES: ${{ inputs.minutes }}
+          IN_RUNNERS: ${{ inputs.runners }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          req = {}
+          if not os.environ.get("IN_TOPIC") and os.path.exists("youtube/request.json"):
+              req = json.load(open("youtube/request.json", encoding="utf-8"))
+          val = lambda k, env, d="": os.environ.get(env) or str(req.get(k, d) or d)
+          out = {
+              "TOPIC": val("topic", "IN_TOPIC"),
+              "ANIME": val("anime", "IN_ANIME", "Frieren"),
+              "MINUTES": val("minutes", "IN_MINUTES", "10"),
+              "RUNNERS": val("runners", "IN_RUNNERS", "3"),
+              "IG_MEDIA": str(req.get("igMediaId", "")),
+              "CLIP": str(req.get("clip", "")),
+          }
+          with open(os.environ["GITHUB_ENV"], "a") as e, open(os.environ["GITHUB_OUTPUT"], "a") as o:
+              for k, v in out.items():
+                  e.write(f"{k}={v}\n")
+              o.write(f"anime={out['ANIME']}\nclip={out['CLIP']}\n")
+          with open(os.path.join(os.environ["RUNNER_TEMP"], "sources.txt"), "w") as f:
+              f.write("\n".join(req.get("sources", [])))
+          print(json.dumps(out, ensure_ascii=False, indent=2))
+          PY
+
       - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
-        if: inputs.topic != ''
+        if: env.TOPIC != ''
         with:
           dotnet-version: '9.x'
 
+      # Lo que comentó la gente en el reel que originó el video. Best-effort: si el
+      # token no tiene permiso de comentarios, el guion se escribe sin ellos.
+      - name: Comentarios del reel
+        if: env.TOPIC != '' && env.IG_MEDIA != ''
+        continue-on-error: true
+        env:
+          Instagram__AccessToken: ${{ secrets.INSTAGRAM_ACCESS_TOKEN }}
+          Instagram__IgUserId: ${{ secrets.INSTAGRAM_IG_USER_ID }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/plan"
+          dotnet run --project scraper/AnimeIndex.Scraper -c Release -- --ig-comments "$IG_MEDIA" "$RUNNER_TEMP/plan/comments.json"
+
       - name: Guion con Gemini
-        if: inputs.topic != ''
+        if: env.TOPIC != ''
         env:
           Ai__ApiKey: ${{ secrets.GEMINI_API_KEY }}
-          TOPIC: ${{ inputs.topic }}
-          MINUTES: ${{ inputs.minutes }}
         run: |
+          extra=()
+          while IFS= read -r url; do [ -n "$url" ] && extra+=(--source "$url"); done < "$RUNNER_TEMP/sources.txt"
+          [ -f "$RUNNER_TEMP/plan/comments.json" ] && extra+=(--comments "$RUNNER_TEMP/plan/comments.json")
           dotnet run --project scraper/AnimeIndex.Scraper -c Release -- --youtube --plan-only \
             --topic "$TOPIC" --anime "$ANIME" --minutes "$MINUTES" --out "$RUNNER_TEMP/plan" \
-            --voice-ref "$RUNNER_TEMP/voice/ref_largo.wav" --voice-ref-text "$RUNNER_TEMP/voice/ref_largo.txt"
+            --voice-ref "$RUNNER_TEMP/voice/ref_largo.wav" --voice-ref-text "$RUNNER_TEMP/voice/ref_largo.txt" \
+            "${extra[@]}"
 
       - name: Plan ya escrito
-        if: inputs.topic == ''
+        if: env.TOPIC == ''
         run: mkdir -p "$RUNNER_TEMP/plan" && cp "$PLAN_FILE" "$RUNNER_TEMP/plan/plan.json"
 
       - name: Repartir escenas
@@ -95,7 +142,10 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: plan
-          path: ${{ runner.temp }}/plan/plan.json
+          path: |
+            ${{ runner.temp }}/plan/plan.json
+            ${{ runner.temp }}/plan/comments.json
+          if-no-files-found: warn
           retention-days: 7
 
   voice:
@@ -236,10 +286,16 @@ jobs:
           ls "$out"
 
       - name: Render
+        env:
+          ANIME: ${{ needs.plan.outputs.anime }}
+          CLIP: ${{ needs.plan.outputs.clip }}
         run: |
+          extra=()
+          [ -n "$CLIP" ] && extra+=(--clip "$CLIP")
           dotnet run --project scraper/AnimeIndex.Scraper -c Release -- --youtube \
             --plan "$RUNNER_TEMP/video/plan.json" --anime "$ANIME" \
-            --voice-ref "$RUNNER_TEMP/voice/ref_largo.wav" --voice-ref-text "$RUNNER_TEMP/voice/ref_largo.txt"
+            --voice-ref "$RUNNER_TEMP/voice/ref_largo.wav" --voice-ref-text "$RUNNER_TEMP/voice/ref_largo.txt" \
+            "${extra[@]}"
           rm -rf "$RUNNER_TEMP/voice"
           { echo "## Video listo"; echo; echo '```'; cat "$RUNNER_TEMP/video/youtube.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 

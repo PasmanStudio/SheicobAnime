@@ -52,4 +52,11 @@ public sealed class VideoScene
 
     /// <summary>Prompt en inglés para el generador de imágenes (solo si Visual = "ai").</summary>
     public string? ImagePrompt { get; set; }
+
+    /// <summary>
+    /// Qué tiene que verse mientras se dice esta escena, como búsquedas en inglés
+    /// para la wiki de la serie ("Weak Kingsley crown", "Aura Scales of Obedience").
+    /// Una por toma de ~3,5 s, en orden. Las resuelve <see cref="VisualSearchService"/>.
+    /// </summary>
+    public List<string>? VisualQueries { get; set; }
 }

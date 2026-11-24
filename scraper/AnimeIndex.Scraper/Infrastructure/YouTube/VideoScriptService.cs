@@ -35,12 +35,22 @@ public sealed class VideoScriptService(GeminiClient gemini, ILogger<VideoScriptS
     /// <param name="wordsPerMinute">Velocidad del narrador: Edge ~150, el clon ~200.</param>
     public async Task<VideoPlan> WriteAsync(
         VideoResearch research, int minutes, bool hasKeyArt, CancellationToken ct,
-        string? styleExample = null, int wordsPerMinute = WordsPerMinute)
+        string? styleExample = null, int wordsPerMinute = WordsPerMinute,
+        IReadOnlyList<string>? comments = null)
     {
         if (research.Sources.Count == 0)
             throw new InvalidOperationException("Sin fuentes no se escribe guion: la IA inventaría los datos.");
 
         var words = minutes * wordsPerMinute;
+        // Lo que comentó la gente en el reel que originó el video: qué preguntan,
+        // qué teorías tienen, qué les gustó. Se responde en el guion (sin citar nombres).
+        var audience = comments is not { Count: > 0 } ? "" : $$"""
+
+            LO QUE COMENTÓ EL PÚBLICO en el reel que originó este video (ordenado por likes).
+            Usa sus dudas, teorías y opiniones para elegir qué explicar y responde las preguntas
+            que se repiten, sin citar usuarios ni copiar comentarios textuales:
+            {{string.Join("\n", comments.Take(60).Select(c => "- " + c.Replace('\n', ' ')))}}
+            """;
         var style = string.IsNullOrWhiteSpace(styleExample) ? "" : $$"""
 
             ESTILO: escribe como habla este narrador. Copia su forma de construir las frases,
@@ -67,9 +77,13 @@ public sealed class VideoScriptService(GeminiClient gemini, ILogger<VideoScriptS
             Duración objetivo: {{minutes}} minutos (unas {{words}} palabras de narración en total).
 
             Estructura: un gancho de 2 o 3 frases que haga quedarse a quien mira, el desarrollo
-            en orden lógico (contexto, historia, datos curiosos, por qué importa) y un cierre que
-            invite a comentar y suscribirse.
+            en orden lógico (contexto, historia, datos curiosos, por qué importa, y una teoría o
+            análisis propio cuando las fuentes den pie) y un cierre.
+            El CIERRE siempre: una pregunta concreta sobre el tema para que la gente comente
+            (por ejemplo "¿qué crees tú sobre esta teoría?" o "¿crees que X va a pasar?"), y
+            después pedir el like y la suscripción, en una o dos frases naturales.
             {{style}}
+            {{audience}}
 
             Devuelve exactamente este JSON:
             {
@@ -104,7 +118,18 @@ public sealed class VideoScriptService(GeminiClient gemini, ILogger<VideoScriptS
             Parte este guion en escenas de 1 a 3 frases (entre 6 y 15 segundos leídas en voz alta).
             Copia la narración TAL CUAL, sin resumir ni agregar nada: la suma de las escenas es el guion completo.
 
-            Para cada escena elige qué se ve. {{keyArtRule}}
+            Para cada escena decide QUÉ SE VE mientras se dice, para que la imagen acompañe la frase:
+            - "visualQueries": de 1 a 4 descripciones EN INGLÉS de lo que debe verse (una cada
+              ~3,5 segundos de la escena, en orden). Se usan de dos formas:
+              · si la frase habla de UN personaje con nombre, pon SOLO su nombre completo
+                ("Weak Kingsley", "Lucy") y se muestra su imagen oficial;
+              · si no, describe la imagen con palabras visuales y concretas, sin nombres propios,
+                para buscarla entre los fotogramas de los videos oficiales: personas, acción,
+                lugar, colores ("a man and a woman embracing under neon lights", "a crowded
+                concert stage with pink lights", "a girl looking at the moon").
+            - "visual": la imagen de respaldo si la wiki no tiene nada. {{keyArtRule}}
+              Usa "ai" SOLO para ideas abstractas sin escena real (el paso del tiempo, una
+              emoción) y en no más de 1 de cada 6 escenas.
             Para "ai" escribe "imagePrompt" EN INGLÉS: una imagen estilo ilustración anime,
             cinematográfica, que ilustre la idea de la escena (lugar, objeto, emoción, época).
             NUNCA nombres de personajes, series, estudios ni personas reales en el prompt, y
@@ -118,7 +143,7 @@ public sealed class VideoScriptService(GeminiClient gemini, ILogger<VideoScriptS
               "title": "...",
               "description": "...",
               "tags": ["..."],
-              "scenes": [ { "narration": "...", "visual": "ai|keyart", "imagePrompt": "..." } ]
+              "scenes": [ { "narration": "...", "visualQueries": ["..."], "visual": "ai|keyart", "imagePrompt": "..." } ]
             }
 
             GUION:

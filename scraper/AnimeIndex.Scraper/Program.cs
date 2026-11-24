@@ -60,11 +60,15 @@ if (args.Contains("--youtube"))
         {
             c.Timeout = TimeSpan.FromSeconds(30);
             c.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", "SheicobAnimeBot/1.0 (video research)");
+            // Sin Accept, el CDN de Fandom (static.wikia.nocookie.net) responde 403;
+            // curl manda "*/*" por defecto y pasa (verificado el 24-nov-2026).
+            c.DefaultRequestHeaders.TryAddWithoutValidation("Accept", "*/*");
         });
         ytBuilder.Services.AddHttpClient("pollinations", c => c.Timeout = TimeSpan.FromMinutes(2));
         ytBuilder.Services.AddScoped<AnimeIndex.Scraper.Infrastructure.AiRewrite.GeminiClient>();
         ytBuilder.Services.AddScoped<AnimeIndex.Scraper.Infrastructure.YouTube.VideoResearchService>();
         ytBuilder.Services.AddScoped<AnimeIndex.Scraper.Infrastructure.YouTube.VideoScriptService>();
+        ytBuilder.Services.AddScoped<AnimeIndex.Scraper.Infrastructure.YouTube.VisualSearchService>();
         ytBuilder.Services.AddScoped<AnimeIndex.Scraper.Infrastructure.YouTube.VideoRenderService>();
 
         await using var ytScope = ytBuilder.Build().Services.CreateAsyncScope();
@@ -99,8 +103,18 @@ if (args.Contains("--youtube"))
         var voiceRefText = TextOrFile(YtArg(args, "--voice-ref-text"));
 
         var research = sp.GetRequiredService<AnimeIndex.Scraper.Infrastructure.YouTube.VideoResearchService>();
+        var visuals = sp.GetRequiredService<AnimeIndex.Scraper.Infrastructure.YouTube.VisualSearchService>();
         AnimeIndex.Scraper.Infrastructure.YouTube.VideoPlan plan;
         AnimeIndex.Scraper.Infrastructure.YouTube.VideoResearch? found = null;
+
+        // Wiki de la serie (descubierta desde el nombre) y personajes de AniList:
+        // de ahí salen las imágenes de cada toma y artículos para el guion.
+        if (anime is not null || topic is not null)
+            await visuals.InitAsync(new[] { anime, topic }.OfType<string>(), anime, ytCts.Token);
+
+        // --clip <url>: video fuente para los clips (el del reel, un PV, un MV);
+        // reemplaza al tráiler de AniList.
+        var clipUrl = YtArg(args, "--clip");
 
         if (planPath is not null)
         {
@@ -116,11 +130,28 @@ if (args.Contains("--youtube"))
                 throw new InvalidOperationException("Falta la key de Gemini: Ai__ApiKey (o --plan para no usar IA)");
 
             found = await research.GatherAsync(topic, anime, urls, ytCts.Token);
+            found.Sources.AddRange(await visuals.WikiArticlesAsync(topic, 3, ytCts.Token));
+
+            // --comments <ig-comments.json>: lo que dijo la gente en el reel (salida de --ig-comments).
+            List<string>? comments = null;
+            if (YtArg(args, "--comments") is { } commentsPath && File.Exists(commentsPath))
+            {
+                using var cdoc = System.Text.Json.JsonDocument.Parse(await File.ReadAllTextAsync(commentsPath));
+                comments = cdoc.RootElement.EnumerateArray()
+                    .Select(c => c.GetProperty("text").GetString() ?? "")
+                    .Where(t => t.Trim().Length > 3).ToList();
+                Log.Information("Comentarios del público para el guion: {N}", comments.Count);
+            }
+
             plan = await sp.GetRequiredService<AnimeIndex.Scraper.Infrastructure.YouTube.VideoScriptService>()
                 .WriteAsync(found, minutes, hasKeyArt: found.CoverImageUrl is not null, ytCts.Token,
                     styleExample: TextOrFile(YtArg(args, "--style")) ?? voiceRefText,
-                    wordsPerMinute: voiceRef is not null ? 200 : 150);
+                    wordsPerMinute: voiceRef is not null ? 200 : 150,
+                    comments: comments);
         }
+        if (clipUrl is not null)
+            found = (found ?? new AnimeIndex.Scraper.Infrastructure.YouTube.VideoResearch(topic ?? anime ?? "", [], null, null))
+                with { TrailerUrl = clipUrl };
 
         // --plan-only: solo el guion (primer job del workflow youtube-video.yml;
         // la voz la generan después varios runners en paralelo).
@@ -619,6 +650,52 @@ if (args.Contains("--images"))
 //
 // Ojo con lo no-obvio: agregar el permiso en el dashboard NO alcanza. Los
 // tokens ya emitidos NO lo heredan — hay que regenerar el token.
+// ── Comentarios de un post de Instagram → JSON (insumo del guion de YouTube) ──
+// Usage: dotnet run --project scraper/AnimeIndex.Scraper -- --ig-comments <mediaId> <salida.json>
+// Necesita Instagram__AccessToken con permiso de lectura de comentarios.
+if (args.Contains("--ig-comments"))
+{
+    var idx = Array.IndexOf(args, "--ig-comments");
+    var mediaId = idx + 1 < args.Length ? args[idx + 1] : null;
+    var outPath = idx + 2 < args.Length ? args[idx + 2] : "ig-comments.json";
+    if (string.IsNullOrWhiteSpace(mediaId))
+    {
+        Console.Error.WriteLine("Uso: --ig-comments <mediaId> <salida.json>");
+        Environment.ExitCode = 1;
+        return;
+    }
+
+    var igCom = new AnimeIndex.Scraper.Infrastructure.Instagram.InstagramSettings();
+    new ConfigurationBuilder().AddEnvironmentVariables().Build().GetSection("Instagram").Bind(igCom);
+    var comServices = new ServiceCollection();
+    comServices.AddHttpClient("instagram-graph", c => c.Timeout = TimeSpan.FromSeconds(30));
+    comServices.AddLogging();
+    comServices.AddSingleton(igCom);
+    comServices.AddSingleton<AnimeIndex.Scraper.Infrastructure.Instagram.MetaGraphApiClient>();
+    await using var comSp = comServices.BuildServiceProvider();
+    var graph = comSp.GetRequiredService<AnimeIndex.Scraper.Infrastructure.Instagram.MetaGraphApiClient>();
+
+    try
+    {
+        var comments = await graph.GetCommentsAsync(mediaId);
+        var json = System.Text.Json.JsonSerializer.Serialize(
+            comments.OrderByDescending(c => c.Likes).Select(c => new { text = c.Text, likes = c.Likes, at = c.At, replies = c.Replies }),
+            new System.Text.Json.JsonSerializerOptions
+            {
+                WriteIndented = true,
+                Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+            });
+        await File.WriteAllTextAsync(outPath, json);
+        Console.WriteLine($"{comments.Count} comentarios de {mediaId} → {outPath}");
+    }
+    catch (InvalidOperationException ex)
+    {
+        Console.Error.WriteLine(ex.Message);
+        Environment.ExitCode = 1;
+    }
+    return;
+}
+
 if (args.Contains("--token-scopes"))
 {
     var igTok = new AnimeIndex.Scraper.Infrastructure.Instagram.InstagramSettings();

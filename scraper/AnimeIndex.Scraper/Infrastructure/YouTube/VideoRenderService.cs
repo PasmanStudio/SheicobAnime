@@ -33,7 +33,7 @@ public sealed record VideoRenderOptions(
 public sealed record VideoShot(int Scene, int Slot, double Start, double Duration);
 
 /// <summary>De dónde sale la imagen de una toma.</summary>
-public enum ShotSource { SceneImage, TrailerClip, TrailerStill }
+public enum ShotSource { SceneImage, TrailerClip, TrailerStill, WikiImage }
 
 /// <summary>Tráiler oficial bajado y cortado: tramos usables como clip y fotogramas sueltos.</summary>
 public sealed record TrailerPool(string Path, List<(double Start, double Length)> Clips, List<(string Path, double Time)> Stills);
@@ -60,6 +60,7 @@ public sealed record TrailerPool(string Path, List<(double Start, double Length)
 /// </summary>
 public sealed partial class VideoRenderService(
     IHttpClientFactory httpFactory,
+    VisualSearchService visuals,
     ILogger<VideoRenderService> logger)
 {
     private const int Fps = 30;
@@ -91,13 +92,18 @@ public sealed partial class VideoRenderService(
         var images = plan.Scenes
             .Select(_ => new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously))
             .ToList();
+        // Tope de imágenes IA por video: a 1 cada 45 s, un video de 8 min con una
+        // por escena tardaría ~45 min. Son el último recurso (la wiki va primero).
+        var aiBudget = MaxAiImages;
         var imageJob = Task.Run(async () =>
         {
             for (var i = 0; i < plan.Scenes.Count; i++)
             {
                 try
                 {
-                    images[i].SetResult(UsesKeyArt(plan.Scenes[i])
+                    var wantsAi = !UsesKeyArt(plan.Scenes[i]) && aiBudget > 0;
+                    if (wantsAi) aiBudget--;
+                    images[i].SetResult(!wantsAi
                         ? null
                         : await GenerateImageAsync(plan.Scenes[i], i, dir, (i + 1).ToString("00", CultureInfo.InvariantCulture), ct));
                 }
@@ -171,6 +177,7 @@ public sealed partial class VideoRenderService(
         var stillTurn = (trailer?.Stills.Count ?? 0) / 2;
         double? lastTrailerTime = null;
         var usedTrailerMoments = new HashSet<double>(); // por segmento: clip y fotograma comparten el plano
+        var usedVisuals = new HashSet<string>(StringComparer.Ordinal);
         var counts = new Dictionary<ShotSource, int>();
         for (var k = 0; k < shots.Count; k++)
         {
@@ -179,6 +186,17 @@ public sealed partial class VideoRenderService(
             var frameCount = Math.Max(1, (int)Math.Round((shot.Start + shot.Duration) * Fps) - startFrame);
             var flash = k > 0 && k % 4 == 0; // flash blanco cada ~4 cortes, como la referencia
             var source = ChooseShotSource(shot, k, trailer?.Clips.Count ?? 0, trailer?.Stills.Count ?? 0);
+
+            // Lo que dice la toma manda: si el storyboard pidió algo concreto
+            // ("Weak Kingsley crown") y la wiki o AniList lo tienen, eso se ve.
+            // Las tomas impares quedan para clips del video fuente, si hay.
+            string? wikiImage = null;
+            var queries = plan.Scenes[shot.Scene].VisualQueries;
+            if (queries is { Count: > 0 } && (source != ShotSource.TrailerClip || shot.Slot % 2 == 0))
+            {
+                wikiImage = await PickVisualAsync(queries[shot.Slot % queries.Count], usedVisuals, dir, opt, ct);
+                if (wikiImage is not null) source = ShotSource.WikiImage;
+            }
 
             // Un clip sirve si cubre al menos el 60% de la toma (el resto se
             // completa con cámara lenta); si no, un fotograma. Clips y fotogramas
@@ -209,6 +227,7 @@ public sealed partial class VideoRenderService(
                 ShotSource.TrailerClip => ClipShotArgs(trailer!.Path, clip.Start, frameCount, flash, output,
                     slowdown: Math.Max(1, shot.Duration / clip.Length)),
                 ShotSource.TrailerStill => ImageShotArgs(still.Path, frameCount, k, flash, output),
+                ShotSource.WikiImage => ImageShotArgs(wikiImage!, frameCount, k, flash, output),
                 _ => ImageShotArgs(frames[shot.Scene], frameCount, k, flash, output),
             };
             await RunAsync(opt.FfmpegPath, args, dir, ct);
@@ -240,6 +259,40 @@ public sealed partial class VideoRenderService(
         File.Copy(frames[0], Path.Combine(dir, "thumbnail.jpg"), overwrite: true);
         logger.LogInformation("Video listo: {Path} ({Duration:mm\\:ss})", final, duration);
         return final;
+    }
+
+    /// <summary>Imágenes IA como máximo por video (Pollinations: 1 cada 45 s).</summary>
+    public const int MaxAiImages = 10;
+
+    /// <summary>
+    /// Primera imagen de la búsqueda que todavía no se usó en el video: la baja
+    /// y la normaliza a 1920x1080 (fondo desenfocado si es vertical, como un
+    /// retrato de personaje). Null si no hay ninguna nueva.
+    /// </summary>
+    private async Task<string?> PickVisualAsync(string query, HashSet<string> used, string dir,
+        VideoRenderOptions opt, CancellationToken ct)
+    {
+        foreach (var candidate in await visuals.SearchAsync(query, ct))
+        {
+            if (!used.Add(candidate.Url)) continue;
+            var hash = Convert.ToHexString(System.Security.Cryptography.SHA1.HashData(Encoding.UTF8.GetBytes(candidate.Url)))[..12];
+            var raw = Path.Combine(dir, $"visual_{hash}{Path.GetExtension(new Uri(candidate.Url).AbsolutePath).ToLowerInvariant() switch { ".png" => ".png", ".webp" => ".webp", _ => ".jpg" }}");
+            var frame = Path.Combine(dir, $"vframe_{hash}.jpg");
+            try
+            {
+                if (!File.Exists(raw))
+                    await File.WriteAllBytesAsync(raw, await httpFactory.CreateClient("youtube-research").GetByteArrayAsync(candidate.Url, ct), ct);
+                if (!File.Exists(frame))
+                    await RunAsync(opt.FfmpegPath, FrameArgs(raw, frame, isAiImage: false), dir, ct);
+                logger.LogDebug("Toma '{Query}' → {Title} ({Source})", query, candidate.Title, candidate.Source);
+                return frame;
+            }
+            catch (Exception ex) when (ex is HttpRequestException or InvalidOperationException or TaskCanceledException)
+            {
+                logger.LogWarning("No se pudo usar {Title} para '{Query}': {Msg}", candidate.Title, query, ex.Message);
+            }
+        }
+        return null;
     }
 
     // ── Voz ─────────────────────────────────────────────────────────────────
