@@ -171,12 +171,52 @@ jobs:
         with:
           dotnet-version: '9.x'
 
-      # yt-dlp baja el tráiler oficial (clips y fotogramas). Si YouTube lo frena
-      # con el bot-check en el runner, el render sigue solo con imágenes.
-      - name: Instalar ffmpeg y yt-dlp
+      - name: Instalar ffmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg > /dev/null
+
+      # ── Tráiler oficial (clips y fotogramas) ──────────────────────────────
+      # YouTube frena a yt-dlp en los runners: misma receta que news-cron.yml
+      # (ver ahí el porqué de cada paso). Sin tráiler el render sigue con
+      # imágenes — confirmado en la corrida 45484911273: "Failed to extract any
+      # player response" desde la IP del runner sin WARP.
+      - name: Instalar yt-dlp (nightly) y Deno
         run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg > /dev/null
-          pip install --quiet yt-dlp
+          pipx install --pip-args=--pre "yt-dlp[default]"
+          curl -fsSL https://deno.land/install.sh | sh -s -- -y > /dev/null
+          echo "$HOME/.deno/bin" >> "$GITHUB_PATH"
+
+      - name: Proxy Cloudflare WARP (wireproxy)
+        env:
+          WARP_WIREGUARD_CONFIG: ${{ secrets.WARP_WIREGUARD_CONFIG }}
+        run: |
+          if [ -z "$WARP_WIREGUARD_CONFIG" ]; then echo "sin WARP — yt-dlp directo"; exit 0; fi
+          cd "$RUNNER_TEMP"
+          curl -sL -o wireproxy.tar.gz \
+            "https://github.com/whyvl/wireproxy/releases/download/v1.1.2/wireproxy_linux_amd64.tar.gz"
+          tar -xzf wireproxy.tar.gz
+          printf '%s\n\n[Socks5]\nBindAddress = 127.0.0.1:1080\n' "$WARP_WIREGUARD_CONFIG" > wp.conf
+          for attempt in 1 2 3; do
+            pkill -f '[w]ireproxy' 2>/dev/null || true
+            nohup ./wireproxy -c wp.conf > "wireproxy-$attempt.log" 2>&1 &
+            for _ in $(seq 1 30); do
+              if curl -s -m 5 --proxy socks5h://127.0.0.1:1080 ifconfig.me > /dev/null; then
+                echo "WARP arriba (intento $attempt)"
+                echo "YTDLP_PROXY=socks5h://127.0.0.1:1080" >> "$GITHUB_ENV"
+                exit 0
+              fi
+              sleep 1
+            done
+          done
+          echo "WARP no levantó — yt-dlp directo"
+
+      - name: Cookies de YouTube
+        env:
+          YOUTUBE_COOKIES: ${{ secrets.YOUTUBE_COOKIES }}
+        run: |
+          if [ -z "$YOUTUBE_COOKIES" ]; then echo "sin cookies"; exit 0; fi
+          printf '%s' "$YOUTUBE_COOKIES" > "$RUNNER_TEMP/yt-cookies.txt"
+          chmod 600 "$RUNNER_TEMP/yt-cookies.txt"
+          echo "YTDLP_COOKIES=$RUNNER_TEMP/yt-cookies.txt" >> "$GITHUB_ENV"
 
       - uses: actions/download-artifact@v4
         with:

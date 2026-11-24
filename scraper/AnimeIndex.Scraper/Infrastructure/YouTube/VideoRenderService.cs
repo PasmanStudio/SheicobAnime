@@ -406,12 +406,23 @@ public sealed partial class VideoRenderService(
             if (path is null)
             {
                 var parts = opt.YtDlpCommand.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-                await RunAsync(parts[0], parts.Skip(1).Concat(
+                var ytArgs = parts.Skip(1).Concat(
                 [
                     "-q", "--no-warnings", "--no-playlist",
                     "-f", "bv*[ext=mp4][height<=1080]/bv*[height<=1080]/best[height<=1080]",
-                    "-o", "trailer.%(ext)s", research.TrailerUrl!,
-                ]), dir, ct, TimeSpan.FromMinutes(5));
+                    "-o", "trailer.%(ext)s",
+                ]).ToList();
+                // En GitHub Actions: proxy WARP y cookies (los pone el workflow,
+                // igual que en news-cron) y node como respaldo de deno para el
+                // "n challenge" de YouTube.
+                if (Environment.GetEnvironmentVariable("YTDLP_PROXY") is { Length: > 0 } proxy)
+                    ytArgs.AddRange(["--proxy", proxy]);
+                if (Environment.GetEnvironmentVariable("YTDLP_COOKIES") is { Length: > 0 } cookies && File.Exists(cookies))
+                    ytArgs.AddRange(["--cookies", cookies]);
+                if (Environment.GetEnvironmentVariable("GITHUB_ACTIONS") == "true")
+                    ytArgs.AddRange(["--js-runtimes", "node"]);
+                ytArgs.Add(research.TrailerUrl!);
+                await RunAsync(parts[0], ytArgs, dir, ct, TimeSpan.FromMinutes(5));
                 path = Directory.GetFiles(dir, "trailer.*").First(f => !f.EndsWith(".part", StringComparison.Ordinal));
             }
 
