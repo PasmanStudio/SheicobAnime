@@ -36,6 +36,8 @@
     <EmbeddedResource Include="Resources\sheicob-logo.png" />
     <!-- Anton (OFL) — heavy condensed display font for news headline slides -->
     <EmbeddedResource Include="Resources\Anton-Regular.ttf" />
+    <!-- Voz clonada del prototipo de YouTube (lo corre VideoRenderService) -->
+    <None Include="Scripts\*.py" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

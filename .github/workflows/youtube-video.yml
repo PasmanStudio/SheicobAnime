@@ -1,0 +1,209 @@
+# Video de YouTube con la voz clonada del canal, gratis, sin GPU.
+#
+#   plan   → guion + storyboard con Gemini (o un plan ya escrito en youtube/plans/)
+#   voice  → Qwen3-TTS 1.7B en CPU, escenas repartidas en N runners en paralelo
+#            (benchmark 24-nov-2026: 12,3 s por s de audio en 4 CPU → un video de
+#            10 min tarda ~2 h en 1 runner y ~15 min en 8)
+#   render → imágenes, FFmpeg y subtítulos → video.mp4 para revisar (no se sube a YouTube)
+#
+# La grabación de referencia va CIFRADA (youtube/voice/ref.tar.gpg; clave en el
+# secret VOICE_REF_PASSPHRASE) y las voces intermedias viajan cifradas entre
+# jobs: los artifacts de un repo público los puede bajar cualquiera.
+name: youtube-video
+
+on:
+  workflow_dispatch:
+    inputs:
+      topic:
+        description: 'Tema del video (vacío = usar plan_file)'
+        required: false
+      anime:
+        description: 'Anime para AniList / arte oficial'
+        required: false
+      minutes:
+        description: 'Duración objetivo en minutos'
+        default: '10'
+      plan_file:
+        description: 'Plan ya escrito (si no hay tema)'
+        default: 'youtube/plans/frieren-poder-oculto.json'
+      runners:
+        description: 'Runners en paralelo para la voz'
+        default: '8'
+  push:
+    branches: [feat/youtube-tts-bench]
+    paths: [youtube/**, scraper/AnimeIndex.Scraper/Infrastructure/YouTube/**, .github/workflows/youtube-video.yml]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: youtube-video-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PLAN_FILE: ${{ inputs.plan_file || 'youtube/plans/frieren-poder-oculto.json' }}
+  ANIME: ${{ inputs.anime || 'Frieren' }}
+  RUNNERS: ${{ inputs.runners || '3' }}
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      shards: ${{ steps.shards.outputs.list }}
+      total: ${{ steps.shards.outputs.total }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Descifrar la referencia (la transcripción guía el estilo del guion)
+        env:
+          VOICE_REF_PASSPHRASE: ${{ secrets.VOICE_REF_PASSPHRASE }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/voice"
+          gpg --batch --quiet --pinentry-mode loopback --passphrase-fd 0 \
+            -d youtube/voice/ref.tar.gpg <<< "$VOICE_REF_PASSPHRASE" | tar -x -C "$RUNNER_TEMP/voice"
+
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        if: inputs.topic != ''
+        with:
+          dotnet-version: '9.x'
+
+      - name: Guion con Gemini
+        if: inputs.topic != ''
+        env:
+          Ai__ApiKey: ${{ secrets.GEMINI_API_KEY }}
+          TOPIC: ${{ inputs.topic }}
+          MINUTES: ${{ inputs.minutes }}
+        run: |
+          dotnet run --project scraper/AnimeIndex.Scraper -c Release -- --youtube --plan-only \
+            --topic "$TOPIC" --anime "$ANIME" --minutes "$MINUTES" --out "$RUNNER_TEMP/plan" \
+            --voice-ref "$RUNNER_TEMP/voice/ref_largo.wav" --voice-ref-text "$RUNNER_TEMP/voice/ref_largo.txt"
+
+      - name: Plan ya escrito
+        if: inputs.topic == ''
+        run: mkdir -p "$RUNNER_TEMP/plan" && cp "$PLAN_FILE" "$RUNNER_TEMP/plan/plan.json"
+
+      - name: Repartir escenas
+        id: shards
+        run: |
+          scenes=$(python3 -c "import json;print(sum(1 for s in json.load(open('$RUNNER_TEMP/plan/plan.json'))['scenes'] if s.get('narration','').strip()))")
+          n=$(( RUNNERS < scenes ? RUNNERS : scenes ))
+          echo "list=$(python3 -c "import json;print(json.dumps(list(range($n))))")" >> "$GITHUB_OUTPUT"
+          echo "total=$n" >> "$GITHUB_OUTPUT"
+          echo "$scenes escenas en $n runners" >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: plan
+          path: ${{ runner.temp }}/plan/plan.json
+          retention-days: 7
+
+  voice:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    strategy:
+      fail-fast: true
+      matrix:
+        shard: ${{ fromJson(needs.plan.outputs.shards) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # torch CPU primero: si no, qwen-tts arrastra la build con CUDA (~2.5 GB).
+      - name: Instalar Qwen3-TTS (CPU)
+        run: |
+          pip install --quiet torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+          pip install --quiet qwen-tts soundfile
+
+      - name: Cache del modelo
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-qwen3-tts-1.7b-base
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: plan
+          path: ${{ runner.temp }}/plan
+
+      - name: Descifrar la referencia de voz
+        env:
+          VOICE_REF_PASSPHRASE: ${{ secrets.VOICE_REF_PASSPHRASE }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/voice"
+          gpg --batch --quiet --pinentry-mode loopback --passphrase-fd 0 \
+            -d youtube/voice/ref.tar.gpg <<< "$VOICE_REF_PASSPHRASE" | tar -x -C "$RUNNER_TEMP/voice"
+
+      - name: Generar voz (runner ${{ matrix.shard }})
+        run: |
+          python youtube/tts_shard.py "$RUNNER_TEMP/plan/plan.json" \
+            "$RUNNER_TEMP/voice/ref_largo.wav" "$RUNNER_TEMP/voice/ref_largo.txt" \
+            "$RUNNER_TEMP/out" ${{ matrix.shard }} ${{ needs.plan.outputs.total }} 1.7B
+
+      - name: Cifrar las voces
+        env:
+          VOICE_REF_PASSPHRASE: ${{ secrets.VOICE_REF_PASSPHRASE }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/out"
+          tar -C "$RUNNER_TEMP/out" -cf voice.tar .
+          gpg --batch --quiet --pinentry-mode loopback --passphrase-fd 0 \
+            --symmetric --cipher-algo AES256 -o voice.tar.gpg voice.tar <<< "$VOICE_REF_PASSPHRASE"
+          rm -rf voice.tar "$RUNNER_TEMP/voice"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: voice-${{ matrix.shard }}
+          path: voice.tar.gpg
+          retention-days: 3
+
+  render:
+    needs: [plan, voice]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: '9.x'
+
+      - name: Instalar ffmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg > /dev/null
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: ${{ runner.temp }}/artifacts
+
+      - name: Juntar voces y referencia
+        env:
+          VOICE_REF_PASSPHRASE: ${{ secrets.VOICE_REF_PASSPHRASE }}
+        run: |
+          out="$RUNNER_TEMP/video"; mkdir -p "$out" "$RUNNER_TEMP/voice"
+          cp "$RUNNER_TEMP/artifacts/plan/plan.json" "$out/plan.json"
+          for f in "$RUNNER_TEMP"/artifacts/voice-*/voice.tar.gpg; do
+            gpg --batch --quiet --pinentry-mode loopback --passphrase-fd 0 -d "$f" <<< "$VOICE_REF_PASSPHRASE" | tar -x -C "$out"
+          done
+          gpg --batch --quiet --pinentry-mode loopback --passphrase-fd 0 \
+            -d youtube/voice/ref.tar.gpg <<< "$VOICE_REF_PASSPHRASE" | tar -x -C "$RUNNER_TEMP/voice"
+          ls "$out"
+
+      - name: Render
+        run: |
+          dotnet run --project scraper/AnimeIndex.Scraper -c Release -- --youtube \
+            --plan "$RUNNER_TEMP/video/plan.json" --anime "$ANIME" \
+            --voice-ref "$RUNNER_TEMP/voice/ref_largo.wav" --voice-ref-text "$RUNNER_TEMP/voice/ref_largo.txt"
+          rm -rf "$RUNNER_TEMP/voice"
+          { echo "## Video listo"; echo; echo '```'; cat "$RUNNER_TEMP/video/youtube.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: video
+          path: |
+            ${{ runner.temp }}/video/video.mp4
+            ${{ runner.temp }}/video/thumbnail.jpg
+            ${{ runner.temp }}/video/youtube.txt
+          retention-days: 7
