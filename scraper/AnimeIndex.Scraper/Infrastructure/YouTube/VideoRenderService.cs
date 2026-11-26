@@ -47,7 +47,7 @@ public sealed record TrailerPool(string Path, List<(double Start, double Length)
 /// imagen que cambia cada 1–1,5 s SIN esperar a la voz, 36% clips del anime):
 ///
 ///   VOZ: una sola pista continua. Cada escena se recorta en los bordes y se une
-///   a la siguiente con <see cref="SceneGapSeconds"/> de silencio. La voz no se
+///   a la siguiente conservando un poco de su silencio natural. La voz no se
 ///   procesa (el usuario probó EQ/compresión y prefirió el sonido original).
 ///
 ///   IMAGEN: independiente de la voz. Cada escena se parte en tomas de
@@ -68,7 +68,10 @@ public sealed partial class VideoRenderService(
     private const int Fps = 30;
 
     /// <summary>Silencio entre escenas: el rango de las micropausas del Short de referencia.</summary>
-    public const double SceneGapSeconds = 0.2;
+    /// Desde el 26-nov-2026 es 0: la pausa la ponen los bordes naturales que deja
+    /// <see cref="TrimVoiceArgs"/> (0,10 + 0,15 s con el aire de la voz). Rellenar con
+    /// silencio digital hacía que ese aire se cortara y volviera en cada empalme (clicks).
+    public const double SceneGapSeconds = 0;
 
     /// <summary>Colchón al final del video, después de la última frase.</summary>
     public const double EndTailSeconds = 1.0;
@@ -426,16 +429,19 @@ public sealed partial class VideoRenderService(
     // ── Voz ─────────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Recorta el silencio de los bordes (umbral -45 dB) con fundidos de 10 ms
-    /// para que no haga "click". No toca el sonido de la voz. Mono 24 kHz, la
-    /// frecuencia nativa de Qwen3. Público para tests.
+    /// Recorta solo el silencio que sobra en los bordes: deja 0,10 s al inicio y
+    /// 0,15 s al final, con umbral −55 dB (debajo del aire de la voz, ~−49 dB) y
+    /// fundidos de 30/60 ms. Antes cortaba a −45 dB con fundidos de 10 ms y la
+    /// escena siguiente arrancaba a mitad de una respiración: click en cada empalme
+    /// (prueba de oído D/E del 26-nov-2026). No toca el sonido de la voz. Mono
+    /// 24 kHz, la frecuencia nativa de Qwen3. Público para tests.
     /// </summary>
     public static List<string> TrimVoiceArgs(string input, string output) =>
     [
         "-y", "-i", input, "-af",
-        "silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.02," +
-        "areverse,silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.04," +
-        "afade=t=in:d=0.01,areverse,afade=t=in:d=0.01",
+        "silenceremove=start_periods=1:start_threshold=-55dB:start_silence=0.10," +
+        "areverse,silenceremove=start_periods=1:start_threshold=-55dB:start_silence=0.15," +
+        "afade=t=in:d=0.06,areverse,afade=t=in:d=0.03",
         "-ar", "24000", "-ac", "1", output,
     ];
 

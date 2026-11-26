@@ -274,13 +274,24 @@ public class YouTubeVideoTests
         Assert.Equal("-1", args[args.IndexOf("-stream_loop") + 1]);
         var filter = args[args.IndexOf("-filter_complex") + 1];
         Assert.Contains("volume=0.12", filter);
-        Assert.Contains("[music][key]sidechaincompress", filter);
+        Assert.Contains("[music][key]sidechaincompress=threshold=0.02:ratio=3:attack=150:release=2000", filter);
         Assert.Contains("afade=t=out:st=297:d=3", filter);
         Assert.Contains("amix=inputs=2:duration=first:normalize=0[aout]", filter);
 
         var silent = VideoRenderService.FinalMuxArgs(null, 0.12, 300);
         Assert.DoesNotContain("-stream_loop", silent);
         Assert.DoesNotContain("sidechaincompress", silent[silent.IndexOf("-filter_complex") + 1]);
+    }
+
+    [Fact]
+    public void TrimVoiceArgs_KeepsNaturalEdgesInsteadOfCuttingToSilence()
+    {
+        var filter = VideoRenderService.TrimVoiceArgs("in.wav", "out.wav") is var a ? a[a.IndexOf("-af") + 1] : "";
+
+        Assert.Contains("start_threshold=-55dB:start_silence=0.10", filter); // inicio
+        Assert.Contains("start_threshold=-55dB:start_silence=0.15", filter); // final
+        Assert.DoesNotContain("d=0.01", filter); // fundidos de 10 ms → click
+        Assert.Equal(0, VideoRenderService.SceneGapSeconds);
     }
 
     [Fact]

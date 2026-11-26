@@ -78,7 +78,8 @@ public static class VideoMusic
             "[1:a]aformat=sample_rates=48000:channel_layouts=stereo,asplit=2[voice][key];" +
             $"[2:a]aformat=sample_rates=48000:channel_layouts=stereo,volume={volume.ToString("0.###", inv)}," +
             $"afade=t=in:d=2,afade=t=out:st={fadeOut}:d=3[music];" +
-            "[music][key]sidechaincompress=threshold=0.02:ratio=4:attack=30:release=600[ducked];" +
+            // Ducking suave (E): con release corto la música subía en cada micropausa.
+            "[music][key]sidechaincompress=threshold=0.02:ratio=3:attack=150:release=2000[ducked];" +
             "[voice][ducked]amix=inputs=2:duration=first:normalize=0[aout]";
     }
 }
