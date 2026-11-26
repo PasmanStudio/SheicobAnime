@@ -209,6 +209,81 @@ if (args.Contains("--youtube"))
     return;
 }
 
+// ── Subida del video renderizado al canal de YouTube ─────────────────────────
+// Usage: dotnet run --project scraper/AnimeIndex.Scraper -- --youtube-upload <dir>
+//          [--plan <dir>/plan.json] [--video <dir>/video.mp4] [--thumbnail <dir>/thumbnail.jpg]
+//          [--playlist "Teorías de anime"] [--privacy private|unlisted|public] [--no-music]
+// Necesita YouTube__ClientId, YouTube__ClientSecret y YouTube__RefreshToken.
+// Deja <dir>/youtube-upload.json con el id del video. Sin auditoría de la API,
+// YouTube deja privado todo lo que se sube así: publicarlo a mano en Studio.
+if (args.Contains("--youtube-upload"))
+{
+    Log.Logger = new LoggerConfiguration()
+        .MinimumLevel.Override("System.Net.Http", Serilog.Events.LogEventLevel.Warning)
+        .WriteTo.Console(outputTemplate: "{Timestamp:HH:mm:ss} {Level:u3} {Message:lj}{NewLine}{Exception}")
+        .CreateLogger();
+
+    static string? UpArg(string[] a, string name)
+    {
+        var i = Array.IndexOf(a, name);
+        return i >= 0 && i + 1 < a.Length ? a[i + 1] : null;
+    }
+
+    try
+    {
+        var dir = UpArg(args, "--youtube-upload") ?? ".";
+        var planPath = UpArg(args, "--plan") ?? Path.Combine(dir, "plan.json");
+        var videoPath = UpArg(args, "--video") ?? Path.Combine(dir, "video.mp4");
+        var thumbPath = UpArg(args, "--thumbnail") ?? Path.Combine(dir, "thumbnail.jpg");
+
+        var ytSettings = new AnimeIndex.Scraper.Infrastructure.YouTube.YouTubeSettings();
+        new ConfigurationBuilder().AddEnvironmentVariables().Build().GetSection("YouTube").Bind(ytSettings);
+        if (UpArg(args, "--privacy") is { Length: > 0 } privacy) ytSettings.PrivacyStatus = privacy;
+
+        var plan = AnimeIndex.Scraper.Infrastructure.YouTube.VideoPlan.Parse(await File.ReadAllTextAsync(planPath));
+        // El render elige los temas igual (mood + título): los créditos CC BY coinciden con lo que suena.
+        var music = args.Contains("--no-music")
+            ? []
+            : AnimeIndex.Scraper.Infrastructure.YouTube.VideoMusic.PickTracks(plan.Mood, plan.Title, count: 3);
+        var resource = AnimeIndex.Scraper.Infrastructure.YouTube.YouTubeMetadata.Build(plan, ytSettings, music);
+        var playlist = AnimeIndex.Scraper.Infrastructure.YouTube.YouTubeMetadata.PickPlaylist(plan, UpArg(args, "--playlist"));
+        Log.Information("Subiendo \"{Title}\" ({Privacy}) → playlist \"{Playlist}\"",
+            resource.Snippet.Title, resource.Status.PrivacyStatus, playlist);
+
+        var upServices = new ServiceCollection();
+        upServices.AddSerilog(Log.Logger);
+        upServices.AddHttpClient(AnimeIndex.Scraper.Infrastructure.YouTube.YouTubeUploadService.HttpClientName,
+            c => c.Timeout = TimeSpan.FromMinutes(30));
+        upServices.AddSingleton(ytSettings);
+        upServices.AddSingleton<AnimeIndex.Scraper.Infrastructure.YouTube.YouTubeUploadService>();
+        await using var upSp = upServices.BuildServiceProvider();
+
+        using var upCts = new CancellationTokenSource(TimeSpan.FromMinutes(45));
+        var result = await upSp.GetRequiredService<AnimeIndex.Scraper.Infrastructure.YouTube.YouTubeUploadService>()
+            .UploadAsync(videoPath, thumbPath, resource, playlist, upCts.Token);
+
+        await File.WriteAllTextAsync(Path.Combine(dir, "youtube-upload.json"), System.Text.Json.JsonSerializer.Serialize(
+            new { videoId = result.VideoId, url = result.Url, privacy = result.PrivacyStatus, thumbnail = result.ThumbnailSet, playlist = result.Playlist },
+            new System.Text.Json.JsonSerializerOptions
+            {
+                WriteIndented = true,
+                Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+            }));
+        Log.Information("Listo: {Url} · miniatura {Thumb} · playlist {Playlist}",
+            result.Url, result.ThumbnailSet ? "sí" : "no", result.Playlist ?? "ninguna");
+    }
+    catch (Exception ex)
+    {
+        Log.Fatal(ex, "Subida a YouTube falló");
+        Environment.ExitCode = 1;
+    }
+    finally
+    {
+        await Log.CloseAndFlushAsync();
+    }
+    return;
+}
+
 // ── Anime news pipeline (lightweight, no Hangfire) ───────────────────────────
 // Usage: dotnet run --project scraper/AnimeIndex.Scraper -- --news
 // Designed for a dedicated GHA workflow that runs every hour.
