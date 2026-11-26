@@ -61,7 +61,23 @@ public sealed class VideoPlan
     {
         if (glossaryPath is null || !File.Exists(glossaryPath)) return;
         var glossary = JsonSerializer.Deserialize<Dictionary<string, string>>(File.ReadAllText(glossaryPath)) ?? [];
-        foreach (var (term, say) in glossary.Where(g => !g.Key.StartsWith('_')))
+        MergeGlossary(glossary);
+    }
+
+    /// <summary>
+    /// El glosario manda. Como <see cref="ForSpeech"/> reemplaza primero los términos
+    /// más largos, una sugerencia de Gemini que CONTIENE una palabra del glosario
+    /// ("Cyberpunk: Edgerunners" con "Edgerunners") la tapaba: esas sugerencias se
+    /// descartan y la frase se arma con el glosario. Público para tests.
+    /// </summary>
+    public void MergeGlossary(IReadOnlyDictionary<string, string> glossary)
+    {
+        var terms = glossary.Where(g => !g.Key.StartsWith('_') && g.Key.Length > 0).ToList();
+        foreach (var suggested in Pronunciations.Keys.ToList())
+            if (terms.Any(g => g.Key != suggested && System.Text.RegularExpressions.Regex.IsMatch(suggested,
+                    $@"(?<![\p{{L}}\p{{N}}]){System.Text.RegularExpressions.Regex.Escape(g.Key)}(?![\p{{L}}\p{{N}}])")))
+                Pronunciations.Remove(suggested);
+        foreach (var (term, say) in terms)
             Pronunciations[term] = say;
     }
 

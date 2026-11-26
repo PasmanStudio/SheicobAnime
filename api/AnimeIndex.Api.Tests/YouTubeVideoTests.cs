@@ -201,6 +201,26 @@ public class YouTubeVideoTests
     }
 
     [Fact]
+    public void MergeGlossary_WinsInsideLongerGeminiTerms()
+    {
+        var plan = new VideoPlan
+        {
+            Pronunciations = new()
+            {
+                ["Cyberpunk: Edgerunners"] = "Cáiberpunk Édyerruuners", // Gemini, contiene "Edgerunners"
+                ["Night City"] = "Nait Siti",
+            },
+        };
+
+        plan.MergeGlossary(new Dictionary<string, string> { ["Edgerunners"] = "Édchraners", ["_nota"] = "x" });
+
+        Assert.False(plan.Pronunciations.ContainsKey("Cyberpunk: Edgerunners"));
+        Assert.Equal("Nait Siti", plan.Pronunciations["Night City"]);
+        Assert.Equal("Cyberpunk: Édchraners en Nait Siti",
+            VideoPlan.ForSpeech("Cyberpunk: Edgerunners en Night City", plan.Pronunciations));
+    }
+
+    [Fact]
     public void ParseMetaTimestamp_AcceptsOffsetWithoutColon() =>
         // Así lo manda la Graph API; GetDateTime() de System.Text.Json lo rechazaba (corrida 45493953065).
         Assert.Equal(new DateTime(2026, 11, 4, 20, 30, 0, DateTimeKind.Utc),
