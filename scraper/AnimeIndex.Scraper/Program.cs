@@ -186,7 +186,12 @@ if (args.Contains("--youtube"))
             MatcherPython: YtArg(args, "--matcher-python") ?? "python",
             // ~3,5 s para videos largos; el Short de referencia corta cada 1–1,5 s.
             ShotSeconds: double.TryParse(YtArg(args, "--shot-seconds"), System.Globalization.NumberStyles.Float,
-                System.Globalization.CultureInfo.InvariantCulture, out var shotSecs) ? Math.Clamp(shotSecs, 0.8, 15) : 3.5);
+                System.Globalization.CultureInfo.InvariantCulture, out var shotSecs) ? Math.Clamp(shotSecs, 0.8, 15) : 3.5,
+            // Música de fondo CC BY bajo la voz: --music-volume 0.12 (≈ −18 dB), --no-music la apaga.
+            MusicVolume: args.Contains("--no-music") ? 0
+                : double.TryParse(YtArg(args, "--music-volume"), System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out var musicVol)
+                    ? Math.Clamp(musicVol, 0, 1) : AnimeIndex.Scraper.Infrastructure.YouTube.VideoMusic.DefaultVolume);
         await sp.GetRequiredService<AnimeIndex.Scraper.Infrastructure.YouTube.VideoRenderService>()
             .RenderAsync(plan, found, options, ytCts.Token);
     }

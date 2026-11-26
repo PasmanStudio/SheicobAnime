@@ -18,12 +18,25 @@ public sealed class VideoPlan
     public List<string> Sources { get; set; } = [];
 
     /// <summary>
+    /// Tono de la música de fondo: epic | dark | upbeat | chill | emotional (los
+    /// moods de la biblioteca de los reels). Lo elige Gemini; null → "dark", que
+    /// le queda bien a las teorías.
+    /// </summary>
+    public string? Mood { get; set; }
+
+    /// <summary>
     /// Cómo debe DECIR la voz los nombres extranjeros ("Jujutsu" → "Yuyutsu"):
     /// la voz clonada lee todo como español y la "j" japonesa sale como jota.
     /// Lo sugiere Gemini por video y lo pisa el glosario youtube/pronunciations.json.
     /// Solo afecta a la voz: los subtítulos muestran la narración original.
     /// </summary>
     public Dictionary<string, string> Pronunciations { get; set; } = [];
+
+    /// <summary>
+    /// Todos los nombres y términos extranjeros del guion, aunque se lean bien
+    /// tal cual. Con ellos youtube/terms_check.py arma el audio de control.
+    /// </summary>
+    public List<string> ForeignTerms { get; set; } = [];
 
     /// <summary>
     /// Narración → texto para la voz: reemplaza cada término del glosario como

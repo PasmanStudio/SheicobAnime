@@ -25,7 +25,8 @@ public sealed record VideoRenderOptions(
     string QwenBackend = "kaggle",
     string YtDlpCommand = "yt-dlp",
     string MatcherPython = "python",
-    double ShotSeconds = 3.5)
+    double ShotSeconds = 3.5,
+    double MusicVolume = VideoMusic.DefaultVolume)
 {
     public bool UsesClonedVoice => !string.IsNullOrWhiteSpace(CloneRef);
 }
@@ -284,21 +285,69 @@ public sealed partial class VideoRenderService(
 
         await File.WriteAllTextAsync(Path.Combine(dir, "subs.srt"), MergeSrt(subtitles), new UTF8Encoding(false), ct);
         var final = Path.Combine(dir, "video.mp4");
-        await RunAsync(opt.FfmpegPath,
-        [
-            "-y", "-i", "visuals.mp4", "-i", "voice.wav",
-            // Ruta relativa a propósito: en Windows "C:" rompe el parseo del filtro.
-            "-vf", "subtitles=subs.srt:force_style='FontName=Arial,FontSize=15,Bold=1,Outline=2,Shadow=0,MarginV=28'",
-            "-map", "0:v", "-map", "1:a", "-t", elapsed.ToString("0.###", CultureInfo.InvariantCulture),
-            "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
-            "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2", "-movflags", "+faststart", "video.mp4",
-        ], dir, ct);
+        var (musicBed, credits) = await PrepareMusicAsync(plan, opt, dir, ct);
+        await RunAsync(opt.FfmpegPath, FinalMuxArgs(musicBed, opt.MusicVolume, elapsed), dir, ct);
 
         var duration = TimeSpan.FromSeconds(elapsed);
-        await File.WriteAllTextAsync(Path.Combine(dir, "youtube.txt"), Metadata(plan, duration), ct);
+        await File.WriteAllTextAsync(Path.Combine(dir, "youtube.txt"), Metadata(plan, duration, credits), ct);
         File.Copy(frames[0], Path.Combine(dir, "thumbnail.jpg"), overwrite: true);
         logger.LogInformation("Video listo: {Path} ({Duration:mm\\:ss})", final, duration);
         return final;
+    }
+
+    /// <summary>
+    /// Baja 3 tracks del mood del plan y los une en music.wav (en el mux final va
+    /// en loop si el video dura más). Devuelve null si está apagada o falla la
+    /// descarga: el video sale igual, sin música. Los MP3 quedan en caché.
+    /// </summary>
+    private async Task<(string? Bed, IReadOnlyList<string> Credits)> PrepareMusicAsync(
+        VideoPlan plan, VideoRenderOptions opt, string dir, CancellationToken ct)
+    {
+        if (opt.MusicVolume <= 0) return (null, []);
+        var tracks = VideoMusic.PickTracks(plan.Mood, plan.Title, count: 3);
+        try
+        {
+            var http = httpFactory.CreateClient("youtube-research");
+            var files = new List<(string Path, int StartSeconds)>();
+            foreach (var t in tracks)
+            {
+                var file = Path.Combine(dir, $"music_{Regex.Replace(t.Title, @"[^\w]+", "_")}.mp3");
+                if (!File.Exists(file))
+                    await File.WriteAllBytesAsync(file, await http.GetByteArrayAsync(t.Url, ct), ct);
+                files.Add((Path.GetFileName(file), t.StartSeconds));
+            }
+            await RunAsync(opt.FfmpegPath, VideoMusic.MusicBedArgs(files, "music.wav"), dir, ct);
+            logger.LogInformation("Música ({Mood}): {Tracks}", plan.Mood ?? "dark",
+                string.Join(" → ", tracks.Select(t => t.Title)));
+            return ("music.wav", tracks.Select(t => t.Attribution).OfType<string>().ToList());
+        }
+        catch (Exception ex) when (ex is HttpRequestException or InvalidOperationException or TaskCanceledException && !ct.IsCancellationRequested)
+        {
+            logger.LogWarning("Sin música de fondo: {Msg}", ex.Message);
+            return (null, []);
+        }
+    }
+
+    /// <summary>
+    /// Mux final: tomas + subtítulos quemados + voz, y la música en loop debajo
+    /// si hay. Rutas relativas a propósito: en Windows "C:" rompe el filtro de
+    /// subtítulos. Público para tests.
+    /// </summary>
+    public static List<string> FinalMuxArgs(string? musicBed, double musicVolume, double duration)
+    {
+        var inv = CultureInfo.InvariantCulture;
+        var args = new List<string> { "-y", "-i", "visuals.mp4", "-i", "voice.wav" };
+        if (musicBed is not null) args.AddRange(["-stream_loop", "-1", "-i", musicBed]);
+
+        var filter = "[0:v]subtitles=subs.srt:force_style='FontName=Arial,FontSize=15,Bold=1,Outline=2,Shadow=0,MarginV=28'[vout]";
+        filter += musicBed is null
+            ? ";[1:a]aformat=sample_rates=48000:channel_layouts=stereo[aout]"
+            : ";" + VideoMusic.MixFilter(musicVolume, duration);
+        args.AddRange(["-filter_complex", filter, "-map", "[vout]", "-map", "[aout]",
+            "-t", duration.ToString("0.###", inv),
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", "video.mp4"]);
+        return args;
     }
 
     /// <summary>Imágenes IA como máximo por video (Pollinations: 1 cada 45 s).</summary>
@@ -769,11 +818,13 @@ public sealed partial class VideoRenderService(
         RegexOptions.Multiline | RegexOptions.Singleline)]
     private static partial Regex SrtCue();
 
-    private static string Metadata(VideoPlan plan, TimeSpan duration) => new StringBuilder()
+    private static string Metadata(VideoPlan plan, TimeSpan duration, IReadOnlyList<string> musicCredits) => new StringBuilder()
         .AppendLine($"TÍTULO: {plan.Title}")
         .AppendLine($"DURACIÓN: {duration:mm\\:ss}")
         .AppendLine().AppendLine("DESCRIPCIÓN:").AppendLine(plan.Description)
         .AppendLine().AppendLine("Fuentes:").AppendLine(string.Join("\n", plan.Sources.Select(s => "- " + s)))
+        // CC BY exige el crédito: va en la descripción del video.
+        .Append(musicCredits.Count == 0 ? "" : "\n" + string.Join("\n", musicCredits) + "\n")
         .AppendLine().AppendLine($"TAGS: {string.Join(", ", plan.Tags)}")
         .ToString();
 

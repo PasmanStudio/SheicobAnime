@@ -140,6 +140,10 @@ public sealed class VideoScriptService(GeminiClient gemini, ILogger<VideoScriptS
             Además escribe para YouTube: un título de menos de 70 caracteres que despierte
             curiosidad sin mentir, una descripción de 2 párrafos (sin links) y 8 a 12 tags.
 
+            MÚSICA DE FONDO: en "mood" elige UNO según el tono del video: epic (acción, anuncios
+            grandes), dark (teorías, misterio, polémicas), upbeat (curiosidades, comedia),
+            chill (slice of life, notas tranquilas), emotional (drama, despedidas, homenajes).
+
             PRONUNCIACIÓN: la narración la lee una voz sintética que pronuncia TODO como español.
             En "foreignTerms" lista cada nombre o término extranjero de la narración, tal como
             aparece escrito, con su idioma:
@@ -148,13 +152,16 @@ public sealed class VideoScriptService(GeminiClient gemini, ILogger<VideoScriptS
             - inglés u otro idioma ("lang": "en", etc.): agrega "say" con cómo lo diría un narrador
               de doblaje latino, escrito con ortografía española y SIN tildes salvo que el acento
               caiga donde el español no lo pondría (Weak Kingsley → Uik Kingsli, Chainsaw → Cheinso,
-              Family → Fámili). Omite las palabras inglesas que ya se leen bien (Netflix, anime).
+              Family → Fámili). Si ya se lee bien en español (Netflix, Lucy), "say" igual al término.
+            Lista TODOS los nombres y términos extranjeros (personajes, series, lugares, estudios,
+            técnicas), aunque se lean bien: con esa lista se arma un audio de control.
 
             Devuelve exactamente este JSON:
             {
               "title": "...",
               "description": "...",
               "tags": ["..."],
+              "mood": "epic|dark|upbeat|chill|emotional",
               "foreignTerms": [ { "term": "Jujutsu Kaisen", "lang": "ja" }, { "term": "Weak Kingsley", "lang": "en", "say": "Uik Kingsli" } ],
               "scenes": [ { "narration": "...", "visualQueries": ["..."], "visual": "ai|keyart", "imagePrompt": "..." } ]
             }
@@ -168,6 +175,7 @@ public sealed class VideoScriptService(GeminiClient gemini, ILogger<VideoScriptS
         var plan = VideoPlan.Parse(boardJson);
         plan.Sources = research.Sources.Select(s => s.Url).ToList();
         plan.Pronunciations = PronunciationsFrom(boardJson);
+        plan.ForeignTerms = ForeignTermsFrom(boardJson);
         logger.LogInformation("Storyboard ({Model}): {Scenes} escenas, título \"{Title}\"",
             board.Model, plan.Scenes.Count, plan.Title);
         return plan;
@@ -196,5 +204,16 @@ public sealed class VideoScriptService(GeminiClient gemini, ILogger<VideoScriptS
             if (!string.IsNullOrEmpty(say) && say != term) result[term] = say;
         }
         return result;
+    }
+
+    /// <summary>Todos los términos de "foreignTerms", cambien o no al leerse: la lista del audio de control. Público para tests.</summary>
+    public static List<string> ForeignTermsFrom(string storyboardJson)
+    {
+        using var doc = JsonDocument.Parse(storyboardJson);
+        if (!doc.RootElement.TryGetProperty("foreignTerms", out var terms) || terms.ValueKind != JsonValueKind.Array)
+            return [];
+        return terms.EnumerateArray()
+            .Select(t => t.TryGetProperty("term", out var tv) ? tv.GetString()?.Trim() : null)
+            .OfType<string>().Where(t => t.Length > 0).Distinct().ToList();
     }
 }

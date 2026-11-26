@@ -164,6 +164,8 @@ public class YouTubeVideoTests
         Assert.Equal("Uik Kingsli", map["Weak Kingsley"]);
         Assert.Equal("Kaiyu", map["Kaiju"]);
         Assert.False(map.ContainsKey("Netflix")); // igual al original: no hace falta
+        // Pero el audio de control los lista a todos, también los que no cambian.
+        Assert.Equal(["Shingeki no Kyojin", "Weak Kingsley", "Kaiju", "Netflix"], VideoScriptService.ForeignTermsFrom(board));
     }
 
     [Fact]
@@ -219,6 +221,50 @@ public class YouTubeVideoTests
         Assert.Equal(5, VideoRenderService.PickAwayFrom(times, ref turn, last: 30));     // salta 31
         var empty = 0;
         Assert.Equal(-1, VideoRenderService.PickAwayFrom([], ref empty, last: null));
+    }
+
+    [Fact]
+    public void PickTracks_SameMoodDistinctAndStablePerVideo()
+    {
+        var a = VideoMusic.PickTracks("dark", "Cyberpunk: la teoría", 3);
+        var again = VideoMusic.PickTracks("dark", "Cyberpunk: la teoría", 3);
+
+        Assert.Equal(3, a.Select(t => t.Title).Distinct().Count());
+        Assert.All(a, t => Assert.Equal("dark", t.Mood));
+        Assert.Equal(a.Select(t => t.Title), again.Select(t => t.Title));
+        Assert.All(VideoMusic.PickTracks(null, "x", 2), t => Assert.Equal("dark", t.Mood)); // sin mood → dark
+        Assert.All(a, t => Assert.Contains("CC BY", t.Attribution));
+    }
+
+    [Fact]
+    public void MusicBedArgs_CrossfadesTracksIntoOneOutput()
+    {
+        var args = VideoMusic.MusicBedArgs([("a.mp3", 5), ("b.mp3", 0), ("c.mp3", 0)], "music.wav");
+
+        Assert.Equal("5", args[args.IndexOf("-ss") + 1]); // salta la intro del primero
+        Assert.Equal(1, args.Count(a => a == "-ss"));
+        var filter = args[args.IndexOf("-filter_complex") + 1];
+        Assert.Contains("[t0][t1]acrossfade=d=3[x1];[x1][t2]acrossfade=d=3[out]", filter);
+
+        var single = VideoMusic.MusicBedArgs([("a.mp3", 0)], "music.wav");
+        Assert.Equal("[0:a]aformat=sample_rates=48000:channel_layouts=stereo[out]", single[single.IndexOf("-filter_complex") + 1]);
+    }
+
+    [Fact]
+    public void FinalMuxArgs_DucksLoopedMusicUnderTheVoice()
+    {
+        var args = VideoRenderService.FinalMuxArgs("music.wav", 0.12, 300);
+
+        Assert.Equal("-1", args[args.IndexOf("-stream_loop") + 1]);
+        var filter = args[args.IndexOf("-filter_complex") + 1];
+        Assert.Contains("volume=0.12", filter);
+        Assert.Contains("[music][key]sidechaincompress", filter);
+        Assert.Contains("afade=t=out:st=297:d=3", filter);
+        Assert.Contains("amix=inputs=2:duration=first:normalize=0[aout]", filter);
+
+        var silent = VideoRenderService.FinalMuxArgs(null, 0.12, 300);
+        Assert.DoesNotContain("-stream_loop", silent);
+        Assert.DoesNotContain("sidechaincompress", silent[silent.IndexOf("-filter_complex") + 1]);
     }
 
     [Fact]
