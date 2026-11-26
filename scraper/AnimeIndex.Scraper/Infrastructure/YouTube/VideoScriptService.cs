@@ -175,7 +175,7 @@ public sealed class VideoScriptService(GeminiClient gemini, ILogger<VideoScriptS
         var plan = VideoPlan.Parse(boardJson);
         plan.Sources = research.Sources.Select(s => s.Url).ToList();
         plan.Pronunciations = PronunciationsFrom(boardJson);
-        plan.ForeignTerms = ForeignTermsFrom(boardJson);
+        plan.CheckTerms = ForeignTermsFrom(boardJson);
         logger.LogInformation("Storyboard ({Model}): {Scenes} escenas, título \"{Title}\"",
             board.Model, plan.Scenes.Count, plan.Title);
         return plan;

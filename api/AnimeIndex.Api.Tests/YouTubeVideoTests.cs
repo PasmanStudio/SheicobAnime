@@ -169,6 +169,22 @@ public class YouTubeVideoTests
     }
 
     [Fact]
+    public void VideoPlan_Parse_AcceptsTheStoryboardWithForeignTermObjects()
+    {
+        // El storyboard entero se parsea como VideoPlan (corrida 45853115053 se cayó acá).
+        const string board = """
+            { "title": "T", "mood": "dark",
+              "foreignTerms": [ { "term": "Night City", "lang": "en", "say": "Nait Siti" } ],
+              "scenes": [ { "narration": "En Night City.", "visual": "keyart" } ] }
+            """;
+
+        var plan = VideoPlan.Parse(board);
+
+        Assert.Equal("dark", plan.Mood);
+        Assert.Single(plan.Scenes);
+    }
+
+    [Fact]
     public void ForSpeech_RespellsWholeTermsLongestFirst()
     {
         var map = new Dictionary<string, string>

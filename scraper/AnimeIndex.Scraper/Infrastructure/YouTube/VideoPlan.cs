@@ -35,8 +35,10 @@ public sealed class VideoPlan
     /// <summary>
     /// Todos los nombres y términos extranjeros del guion, aunque se lean bien
     /// tal cual. Con ellos youtube/terms_check.py arma el audio de control.
+    /// Otro nombre que el "foreignTerms" del storyboard (objetos {term, lang, say}):
+    /// el storyboard se parsea como VideoPlan y con el mismo nombre no deserializaba.
     /// </summary>
-    public List<string> ForeignTerms { get; set; } = [];
+    public List<string> CheckTerms { get; set; } = [];
 
     /// <summary>
     /// Narración → texto para la voz: reemplaza cada término del glosario como

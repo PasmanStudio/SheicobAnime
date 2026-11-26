@@ -46,7 +46,7 @@ def main():
         pron.update({k: v for k, v in json.load(open(glossary, encoding="utf-8")).items() if not k.startswith("_") and v})
 
     # Todos los términos que marcó Gemini (aunque no cambien) + los del glosario que aparecen.
-    candidates = dict.fromkeys(list(pron) + [t for t in plan.get("foreignTerms") or [] if t])
+    candidates = dict.fromkeys(list(pron) + [t for t in plan.get("checkTerms") or [] if t])
     terms = terms_in_order(plan, candidates)
     os.makedirs(out_dir, exist_ok=True)
     lines = [f"{i + 1}. {t} → {for_speech(t, pron)}" for i, t in enumerate(terms)]
