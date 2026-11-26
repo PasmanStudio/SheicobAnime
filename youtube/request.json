@@ -5,6 +5,8 @@
   "runners": 8,
   "igMediaId": "18099479825429040",
   "clip": "https://www.youtube.com/watch?v=c8vjJ43bCVY",
+  "upload": true,
+  "privacy": "private",
   "sources": [
     "https://finalweapon.net/2026/11/03/cyberpunk-edgerunners-2-music-videos/",
     "https://www.videogameschronicle.com/news/cyberpunk-edgerunners-2-music-video-reveals-entire-new-scenes-character-backstories/",
