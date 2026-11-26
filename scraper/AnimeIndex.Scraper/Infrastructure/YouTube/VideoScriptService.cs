@@ -36,8 +36,11 @@ public sealed class VideoScriptService(GeminiClient gemini, ILogger<VideoScriptS
     public async Task<VideoPlan> WriteAsync(
         VideoResearch research, int minutes, bool hasKeyArt, CancellationToken ct,
         string? styleExample = null, int wordsPerMinute = WordsPerMinute,
-        IReadOnlyList<string>? comments = null)
+        IReadOnlyList<string>? comments = null, string? guide = null)
     {
+        // youtube/GUIA_VIDEO.md: lo aprendido revisando videos (qué mostrar cuando se
+        // nombra algo, etc.). Va a las dos llamadas; crece con cada revisión.
+        var guideBlock = string.IsNullOrWhiteSpace(guide) ? "" : "\n\nGUÍA DEL CANAL (obligatoria):\n" + guide.Trim();
         if (research.Sources.Count == 0)
             throw new InvalidOperationException("Sin fuentes no se escribe guion: la IA inventaría los datos.");
 
@@ -97,7 +100,7 @@ public sealed class VideoScriptService(GeminiClient gemini, ILogger<VideoScriptS
             {{sources}}
             """;
 
-        var script = await gemini.GenerateDetailedAsync(scriptSystem, scriptPrompt, useWebSearch: false, ct: ct);
+        var script = await gemini.GenerateDetailedAsync(scriptSystem + guideBlock, scriptPrompt, useWebSearch: false, ct: ct);
         var scriptJson = GeminiClient.ExtractJsonObject(script.Text);
         using (var doc = JsonDocument.Parse(scriptJson))
         {
@@ -170,7 +173,7 @@ public sealed class VideoScriptService(GeminiClient gemini, ILogger<VideoScriptS
             {{scriptJson}}
             """;
 
-        var board = await gemini.GenerateDetailedAsync(boardSystem, boardPrompt, useWebSearch: false, ct: ct);
+        var board = await gemini.GenerateDetailedAsync(boardSystem + guideBlock, boardPrompt, useWebSearch: false, ct: ct);
         var boardJson = GeminiClient.ExtractJsonObject(board.Text);
         var plan = VideoPlan.Parse(boardJson);
         plan.Sources = research.Sources.Select(s => s.Url).ToList();

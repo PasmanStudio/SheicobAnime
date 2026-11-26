@@ -125,6 +125,7 @@ jobs:
             --topic "$TOPIC" --anime "$ANIME" --minutes "$MINUTES" --out "$RUNNER_TEMP/plan" \
             --voice-ref "$RUNNER_TEMP/voice/ref_largo.wav" --voice-ref-text "$RUNNER_TEMP/voice/ref_largo.txt" \
             --glossary "$GITHUB_WORKSPACE/youtube/pronunciations.json" \
+            --guide "$GITHUB_WORKSPACE/youtube/GUIA_VIDEO.md" \
             "${extra[@]}"
 
       - name: Plan ya escrito

@@ -147,7 +147,9 @@ if (args.Contains("--youtube"))
                 .WriteAsync(found, minutes, hasKeyArt: found.CoverImageUrl is not null, ytCts.Token,
                     styleExample: TextOrFile(YtArg(args, "--style")) ?? voiceRefText,
                     wordsPerMinute: voiceRef is not null ? 200 : 150,
-                    comments: comments);
+                    comments: comments,
+                    // --guide youtube/GUIA_VIDEO.md: reglas aprendidas revisando videos.
+                    guide: TextOrFile(YtArg(args, "--guide")));
         }
         if (clipUrl is not null)
             found = (found ?? new AnimeIndex.Scraper.Infrastructure.YouTube.VideoResearch(topic ?? anime ?? "", [], null, null))
