@@ -123,6 +123,22 @@ public class YouTubeVideoTests
     }
 
     [Fact]
+    public void ForSpeech_RespellsWholeTermsLongestFirst()
+    {
+        var map = new Dictionary<string, string>
+        {
+            ["Jujutsu"] = "Yuyutsu",
+            ["Jujutsu Kaisen"] = "Yuyutsu Kaisen",
+            ["Gojo"] = "Goyo",
+            ["_comentario"] = "ignorado",
+        };
+
+        var speech = VideoPlan.ForSpeech("En Jujutsu Kaisen, Gojo usa el Jujutsu. Gojou y Gojos no cambian.", map);
+
+        Assert.Equal("En Yuyutsu Kaisen, Goyo usa el Yuyutsu. Gojou y Gojos no cambian.", speech);
+    }
+
+    [Fact]
     public void ParseMetaTimestamp_AcceptsOffsetWithoutColon() =>
         // Así lo manda la Graph API; GetDateTime() de System.Text.Json lo rechazaba (corrida 45493953065).
         Assert.Equal(new DateTime(2026, 11, 4, 20, 30, 0, DateTimeKind.Utc),

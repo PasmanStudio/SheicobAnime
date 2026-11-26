@@ -8,6 +8,7 @@ Uso: python tts_shard.py <plan.json> <ref.wav> <ref.txt> <out_dir> <shard> <shar
 Escribe out_dir/scene_NN.wav (NN = número de escena en el plan, desde 01).
 """
 import json
+import re
 import os
 import sys
 import time
@@ -26,13 +27,24 @@ def assign(lengths, shards):
     return owner
 
 
+def for_speech(text, pron):
+    """Igual que VideoPlan.ForSpeech en C#: palabra completa, términos largos primero."""
+    for term in sorted(pron, key=len, reverse=True):
+        text = re.sub(rf"(?<![\w]){re.escape(term)}(?![\w])", pron[term], text)
+    return text
+
+
 def main():
     plan_path, ref_wav, ref_txt, out_dir = sys.argv[1:5]
     shard, shards = int(sys.argv[5]), int(sys.argv[6])
     size = sys.argv[7] if len(sys.argv) > 7 else "1.7B"
 
-    scenes = json.load(open(plan_path, encoding="utf-8"))["scenes"]
-    texts = [s["narration"].strip() for s in scenes if s.get("narration", "").strip()]
+    plan = json.load(open(plan_path, encoding="utf-8"))
+    pron = {k: v for k, v in (plan.get("pronunciations") or {}).items() if not k.startswith("_") and v}
+    glossary = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pronunciations.json")
+    if os.path.exists(glossary):  # el glosario del repo pisa lo que sugirió Gemini
+        pron.update({k: v for k, v in json.load(open(glossary, encoding="utf-8")).items() if not k.startswith("_") and v})
+    texts = [for_speech(s["narration"].strip(), pron) for s in plan["scenes"] if s.get("narration", "").strip()]
     owner = assign([len(t) for t in texts], shards)
     mine = [i for i in range(len(texts)) if owner[i] == shard]
     print(f"runner {shard + 1}/{shards}: escenas {[i + 1 for i in mine]} "

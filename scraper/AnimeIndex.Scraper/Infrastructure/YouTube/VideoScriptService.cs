@@ -140,11 +140,20 @@ public sealed class VideoScriptService(GeminiClient gemini, ILogger<VideoScriptS
             Además escribe para YouTube: un título de menos de 70 caracteres que despierte
             curiosidad sin mentir, una descripción de 2 párrafos (sin links) y 8 a 12 tags.
 
+            PRONUNCIACIÓN: la narración la lee una voz sintética que pronuncia TODO como español.
+            En "pronunciations" lista cada nombre o término japonés, inglés u otro idioma de la
+            narración que esa voz leería mal, con cómo lo diría un narrador de doblaje latino,
+            escrito con ortografía española. Reglas: la "j" japonesa suena "y" (Jujutsu → Yuyutsu,
+            Gojo → Goyo); "ge"/"gi" con sonido de g se escriben "gue"/"gui" (Shingeki → Shinguéki);
+            las vocales largas se escriben una vez (Satou → Sato); los nombres en inglés como suenan
+            (Kingsley → Kíngsli). No incluyas palabras que ya se leen bien.
+
             Devuelve exactamente este JSON:
             {
               "title": "...",
               "description": "...",
               "tags": ["..."],
+              "pronunciations": { "Jujutsu Kaisen": "Yuyutsu Kaisen" },
               "scenes": [ { "narration": "...", "visualQueries": ["..."], "visual": "ai|keyart", "imagePrompt": "..." } ]
             }
 

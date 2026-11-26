@@ -153,6 +153,13 @@ if (args.Contains("--youtube"))
             found = (found ?? new AnimeIndex.Scraper.Infrastructure.YouTube.VideoResearch(topic ?? anime ?? "", [], null, null))
                 with { TrailerUrl = clipUrl };
 
+        // --glossary youtube/pronunciations.json: cómo dice la voz los nombres
+        // extranjeros; pisa lo que sugirió Gemini (usar ruta absoluta).
+        plan.MergeGlossary(YtArg(args, "--glossary"));
+        if (plan.Pronunciations.Count > 0)
+            Log.Information("Pronunciación: {N} términos ({Sample})", plan.Pronunciations.Count,
+                string.Join(", ", plan.Pronunciations.Take(6).Select(p => $"{p.Key}→{p.Value}")));
+
         // --plan-only: solo el guion (primer job del workflow youtube-video.yml;
         // la voz la generan después varios runners en paralelo).
         if (args.Contains("--plan-only"))

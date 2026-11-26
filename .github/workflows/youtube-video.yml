@@ -124,6 +124,7 @@ jobs:
           dotnet run --project scraper/AnimeIndex.Scraper -c Release -- --youtube --plan-only \
             --topic "$TOPIC" --anime "$ANIME" --minutes "$MINUTES" --out "$RUNNER_TEMP/plan" \
             --voice-ref "$RUNNER_TEMP/voice/ref_largo.wav" --voice-ref-text "$RUNNER_TEMP/voice/ref_largo.txt" \
+            --glossary "$GITHUB_WORKSPACE/youtube/pronunciations.json" \
             "${extra[@]}"
 
       - name: Plan ya escrito
@@ -302,6 +303,7 @@ jobs:
           dotnet run --project scraper/AnimeIndex.Scraper -c Release -- --youtube \
             --plan "$RUNNER_TEMP/video/plan.json" --anime "$ANIME" \
             --voice-ref "$RUNNER_TEMP/voice/ref_largo.wav" --voice-ref-text "$RUNNER_TEMP/voice/ref_largo.txt" \
+            --glossary "$GITHUB_WORKSPACE/youtube/pronunciations.json" \
             "${extra[@]}"
           rm -rf "$RUNNER_TEMP/voice"
           { echo "## Video listo"; echo; echo '```'; cat "$RUNNER_TEMP/video/youtube.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"

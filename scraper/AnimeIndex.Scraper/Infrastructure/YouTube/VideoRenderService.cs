@@ -131,16 +131,21 @@ public sealed partial class VideoRenderService(
             var n = (i + 1).ToString("00", CultureInfo.InvariantCulture);
             var rawAudio = Path.Combine(dir, opt.UsesClonedVoice ? $"scene_{n}.wav" : $"scene_{n}.mp3");
             var srt = Path.Combine(dir, $"scene_{n}.srt");
+            // La voz lee el texto con el glosario de pronunciación aplicado; los
+            // subtítulos siempre muestran la narración original.
+            var speech = VideoPlan.ForSpeech(scene.Narration, plan.Pronunciations);
             if (!opt.UsesClonedVoice)
-                await RunTtsAsync(opt, scene.Narration, rawAudio, srt, ct);
+                await RunTtsAsync(opt, speech, rawAudio, srt, ct);
 
             // Sin el silencio que deja cada generación en los bordes: es lo que
             // hacía sonar "cortado" el cambio de escena.
             var voice = Path.Combine(dir, $"voice_{n}.wav");
             await RunAsync(opt.FfmpegPath, TrimVoiceArgs(rawAudio, voice), dir, ct);
             var seconds = await ProbeDurationAsync(opt, voice, ct);
-            if (opt.UsesClonedVoice)
-                await File.WriteAllTextAsync(srt, EstimateSrt(scene.Narration, seconds), ct); // Qwen no da tiempos
+            // Qwen no da tiempos; con Edge, si el glosario cambió el texto, su SRT
+            // mostraría "Yuyutsu": en los dos casos se estima sobre la narración original.
+            if (opt.UsesClonedVoice || speech != scene.Narration)
+                await File.WriteAllTextAsync(srt, EstimateSrt(scene.Narration, seconds), ct);
 
             var gap = i == plan.Scenes.Count - 1 ? EndTailSeconds : SceneGapSeconds;
             subtitles.Add((await File.ReadAllTextAsync(srt, ct), TimeSpan.FromSeconds(elapsed)));
@@ -794,7 +799,7 @@ public sealed partial class VideoRenderService(
             refText = opt.CloneRefText,
             items = plan.Scenes.Select((s, i) => new
             {
-                text = s.Narration,
+                text = VideoPlan.ForSpeech(s.Narration, plan.Pronunciations),
                 @out = Path.Combine(dir, $"scene_{(i + 1).ToString("00", CultureInfo.InvariantCulture)}.wav"),
             }),
         };

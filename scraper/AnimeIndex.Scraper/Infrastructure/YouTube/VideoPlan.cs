@@ -17,6 +17,39 @@ public sealed class VideoPlan
     public List<VideoScene> Scenes { get; set; } = [];
     public List<string> Sources { get; set; } = [];
 
+    /// <summary>
+    /// Cómo debe DECIR la voz los nombres extranjeros ("Jujutsu" → "Yuyutsu"):
+    /// la voz clonada lee todo como español y la "j" japonesa sale como jota.
+    /// Lo sugiere Gemini por video y lo pisa el glosario youtube/pronunciations.json.
+    /// Solo afecta a la voz: los subtítulos muestran la narración original.
+    /// </summary>
+    public Dictionary<string, string> Pronunciations { get; set; } = [];
+
+    /// <summary>
+    /// Narración → texto para la voz: reemplaza cada término del glosario como
+    /// palabra completa, los más largos primero ("Jujutsu Kaisen" antes que
+    /// "Jujutsu"). Público para tests.
+    /// </summary>
+    public static string ForSpeech(string narration, IReadOnlyDictionary<string, string> pronunciations)
+    {
+        var text = narration;
+        foreach (var (term, say) in pronunciations
+                     .Where(p => !p.Key.StartsWith('_') && p.Key.Length > 0 && !string.IsNullOrWhiteSpace(p.Value))
+                     .OrderByDescending(p => p.Key.Length))
+            text = System.Text.RegularExpressions.Regex.Replace(text,
+                $@"(?<![\p{{L}}\p{{N}}]){System.Text.RegularExpressions.Regex.Escape(term)}(?![\p{{L}}\p{{N}}])", say);
+        return text;
+    }
+
+    /// <summary>Suma el glosario (archivo JSON plano término → pronunciación) con prioridad sobre lo que ya hay.</summary>
+    public void MergeGlossary(string? glossaryPath)
+    {
+        if (glossaryPath is null || !File.Exists(glossaryPath)) return;
+        var glossary = JsonSerializer.Deserialize<Dictionary<string, string>>(File.ReadAllText(glossaryPath)) ?? [];
+        foreach (var (term, say) in glossary.Where(g => !g.Key.StartsWith('_')))
+            Pronunciations[term] = say;
+    }
+
     public static readonly JsonSerializerOptions Json = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
