@@ -125,12 +125,14 @@ public class YouTubeVideoTests
     // Respuestas esperadas según la investigación de fonología del 26-nov-2026.
     [Theory]
     [InlineData("Shingeki no Kyojin", "Shingueki no Kioyin")]
-    [InlineData("Jujutsu Kaisen", "Yuyutsu Kaisen")]
+    [InlineData("Jujutsu Kaisen", "Dyudyutsu Kaisen")] // elegido de oído (A/B 26-nov)
     [InlineData("Gojo Satoru", "Goyo Satoru")]
     [InlineData("Gojō", "Goyo")]
     [InlineData("Ryomen Sukuna", "Riomen Sukuna")]
     [InlineData("Kimetsu no Yaiba", "Kimetsu no Yaiba")]
-    [InlineData("Tanjiro", "Tanyiro")]
+    [InlineData("Tanjiro", "Tanjiro")] // elegido de oído: suena mejor que "Tanyiro"
+    [InlineData("Kamado Tanjiro", "Kamado Tanjiro")]
+    [InlineData("Junji Ito", "Yunyi Ito")] // fuera de las excepciones, la regla j → y sigue
     [InlineData("Hashira", "Jashira")]
     [InlineData("Uchiha Sasuke", "Uchija Sasuke")]
     [InlineData("Shippuden", "Shipuden")]

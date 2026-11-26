@@ -34,12 +34,31 @@ public static partial class JapaneseRespeller
         return string.Join(' ', words);
     }
 
+    /// <summary>
+    /// Palabras que el oído eligió distinto de las reglas (prueba A/B con la voz
+    /// clonada, 26-nov-2026). Van por palabra para que valgan también dentro de
+    /// nombres compuestos ("Tanjiro Kamado"). Con la j inicial de "Jujutsu" la
+    /// "dy" (africada, más cerca de [dʑ]) sonó mejor que la "y"; "Tanjiro" tal
+    /// cual sonó mejor que "Tanyiro".
+    /// </summary>
+    private static readonly Dictionary<string, string> WordExceptions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["jujutsu"] = "dyudyutsu",
+        ["tanjiro"] = "tanjiro",
+    };
+
     private static string RespellWord(string word)
     {
         if (word.Length == 0) return word;
         var capitalized = char.IsUpper(word[0]);
         var allCaps = word.Length > 1 && word.All(c => !char.IsLetter(c) || char.IsUpper(c));
         var w = word.ToLowerInvariant();
+
+        if (WordExceptions.TryGetValue(w, out var exception))
+        {
+            if (allCaps) return exception.ToUpperInvariant();
+            return capitalized ? char.ToUpperInvariant(exception[0]) + exception[1..] : exception;
+        }
 
         // n' marca límite de mora (Shin'ya): que no se lea "ñ".
         w = w.Replace("n'", "n\u0001");
