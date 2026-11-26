@@ -122,6 +122,48 @@ public class YouTubeVideoTests
         Assert.All(withoutTrailer, s => Assert.Equal(ShotSource.SceneImage, s));
     }
 
+    // Respuestas esperadas según la investigación de fonología del 26-nov-2026.
+    [Theory]
+    [InlineData("Shingeki no Kyojin", "Shingueki no Kioyin")]
+    [InlineData("Jujutsu Kaisen", "Yuyutsu Kaisen")]
+    [InlineData("Gojo Satoru", "Goyo Satoru")]
+    [InlineData("Gojō", "Goyo")]
+    [InlineData("Ryomen Sukuna", "Riomen Sukuna")]
+    [InlineData("Kimetsu no Yaiba", "Kimetsu no Yaiba")]
+    [InlineData("Tanjiro", "Tanyiro")]
+    [InlineData("Hashira", "Jashira")]
+    [InlineData("Uchiha Sasuke", "Uchija Sasuke")]
+    [InlineData("Shippuden", "Shipuden")]
+    [InlineData("Sousou no Frieren", "Soso no Frieren")]
+    [InlineData("Kaguya-sama", "Kaguya sama")]
+    [InlineData("Denji", "Denyi")]
+    [InlineData("Gyomei", "Guiomei")]
+    [InlineData("Kenpachi", "Kempachi")]
+    [InlineData("Yuuji", "Yuyi")]
+    [InlineData("Shin'ya", "Shinya")]
+    [InlineData("sensei", "sensei")] // sin tildes automáticas: "senséi" lo pone el glosario
+    public void JapaneseRespeller_FollowsSpanishPhoneticRules(string romaji, string expected) =>
+        Assert.Equal(expected, JapaneseRespeller.Respell(romaji));
+
+    [Fact]
+    public void PronunciationsFrom_RespellsJapaneseByRulesAndKeepsGeminiForEnglish()
+    {
+        const string board = """
+            { "foreignTerms": [
+                { "term": "Shingeki no Kyojin", "lang": "ja", "say": "Shinguéki no Kioyin" },
+                { "term": "Weak Kingsley", "lang": "en", "say": "Uik Kingsli" },
+                { "term": "Kaiju", "lang": "ja" },
+                { "term": "Netflix", "lang": "en", "say": "Netflix" } ] }
+            """;
+
+        var map = VideoScriptService.PronunciationsFrom(board);
+
+        Assert.Equal("Shingueki no Kioyin", map["Shingeki no Kyojin"]); // ignora el "say" de Gemini para japonés
+        Assert.Equal("Uik Kingsli", map["Weak Kingsley"]);
+        Assert.Equal("Kaiyu", map["Kaiju"]);
+        Assert.False(map.ContainsKey("Netflix")); // igual al original: no hace falta
+    }
+
     [Fact]
     public void ForSpeech_RespellsWholeTermsLongestFirst()
     {

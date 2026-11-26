@@ -141,19 +141,21 @@ public sealed class VideoScriptService(GeminiClient gemini, ILogger<VideoScriptS
             curiosidad sin mentir, una descripción de 2 párrafos (sin links) y 8 a 12 tags.
 
             PRONUNCIACIÓN: la narración la lee una voz sintética que pronuncia TODO como español.
-            En "pronunciations" lista cada nombre o término japonés, inglés u otro idioma de la
-            narración que esa voz leería mal, con cómo lo diría un narrador de doblaje latino,
-            escrito con ortografía española. Reglas: la "j" japonesa suena "y" (Jujutsu → Yuyutsu,
-            Gojo → Goyo); "ge"/"gi" con sonido de g se escriben "gue"/"gui" (Shingeki → Shinguéki);
-            las vocales largas se escriben una vez (Satou → Sato); los nombres en inglés como suenan
-            (Kingsley → Kíngsli). No incluyas palabras que ya se leen bien.
+            En "foreignTerms" lista cada nombre o término extranjero de la narración, tal como
+            aparece escrito, con su idioma:
+            - japonés en romaji ("lang": "ja"): solo el término; la ortografía para la voz la
+              calcula el sistema con reglas fijas, NO escribas "say".
+            - inglés u otro idioma ("lang": "en", etc.): agrega "say" con cómo lo diría un narrador
+              de doblaje latino, escrito con ortografía española y SIN tildes salvo que el acento
+              caiga donde el español no lo pondría (Weak Kingsley → Uik Kingsli, Chainsaw → Cheinso,
+              Family → Fámili). Omite las palabras inglesas que ya se leen bien (Netflix, anime).
 
             Devuelve exactamente este JSON:
             {
               "title": "...",
               "description": "...",
               "tags": ["..."],
-              "pronunciations": { "Jujutsu Kaisen": "Yuyutsu Kaisen" },
+              "foreignTerms": [ { "term": "Jujutsu Kaisen", "lang": "ja" }, { "term": "Weak Kingsley", "lang": "en", "say": "Uik Kingsli" } ],
               "scenes": [ { "narration": "...", "visualQueries": ["..."], "visual": "ai|keyart", "imagePrompt": "..." } ]
             }
 
@@ -162,10 +164,37 @@ public sealed class VideoScriptService(GeminiClient gemini, ILogger<VideoScriptS
             """;
 
         var board = await gemini.GenerateDetailedAsync(boardSystem, boardPrompt, useWebSearch: false, ct: ct);
-        var plan = VideoPlan.Parse(GeminiClient.ExtractJsonObject(board.Text));
+        var boardJson = GeminiClient.ExtractJsonObject(board.Text);
+        var plan = VideoPlan.Parse(boardJson);
         plan.Sources = research.Sources.Select(s => s.Url).ToList();
+        plan.Pronunciations = PronunciationsFrom(boardJson);
         logger.LogInformation("Storyboard ({Model}): {Scenes} escenas, título \"{Title}\"",
             board.Model, plan.Scenes.Count, plan.Title);
         return plan;
+    }
+
+    /// <summary>
+    /// "foreignTerms" del storyboard → glosario para la voz. Lo japonés lo
+    /// convierte <see cref="JapaneseRespeller"/> (reglas fijas: Gemini
+    /// inventaba tildes como "Shinguéki"); lo inglés usa el "say" de Gemini.
+    /// Público para tests.
+    /// </summary>
+    public static Dictionary<string, string> PronunciationsFrom(string storyboardJson)
+    {
+        var result = new Dictionary<string, string>();
+        using var doc = JsonDocument.Parse(storyboardJson);
+        if (!doc.RootElement.TryGetProperty("foreignTerms", out var terms) || terms.ValueKind != JsonValueKind.Array)
+            return result;
+        foreach (var t in terms.EnumerateArray())
+        {
+            var term = t.TryGetProperty("term", out var tv) ? tv.GetString()?.Trim() : null;
+            if (string.IsNullOrEmpty(term)) continue;
+            var lang = t.TryGetProperty("lang", out var lv) ? lv.GetString() ?? "" : "";
+            var say = lang.Equals("ja", StringComparison.OrdinalIgnoreCase)
+                ? JapaneseRespeller.Respell(term)
+                : t.TryGetProperty("say", out var sv) ? sv.GetString()?.Trim() : null;
+            if (!string.IsNullOrEmpty(say) && say != term) result[term] = say;
+        }
+        return result;
     }
 }
