@@ -13,6 +13,289 @@ using Microsoft.EntityFrameworkCore;
 using Serilog;
 using Serilog.Formatting.Json;
 
+// ── Prototipo de video para YouTube (one-shot, sin DB) ───────────────────────
+// Usage: dotnet run --project scraper/AnimeIndex.Scraper -- --youtube
+//          --topic "La historia de Frieren"  [--anime "Frieren"]  [--source <url>]…
+//          [--minutes 3] [--out <dir>] [--voice es-MX-JorgeNeural] [--rate +0%]
+//          [--tts "python -m edge_tts"] [--model gemini-2.5-flash]
+//        o, para re-renderizar un plan.json editado a mano sin gastar Gemini:
+//          --youtube --plan <dir>/plan.json [--anime "Frieren"] [--out <dir>]
+//        voz clonada (Qwen3-TTS; usar rutas ABSOLUTAS):
+//          --voice-ref ref.wav --voice-ref-text ref.txt [--style transcripcion.txt]
+//          [--qwen-backend kaggle|space] [--qwen-model 1.7B|0.6B] [--python python]
+//          kaggle (default): GPU T4 gratis, necesita KAGGLE_API_TOKEN y `pip install kaggle`.
+//          space: Space de Hugging Face, necesita HF_TOKEN; la cuota gratis da para ~3 escenas.
+//          (los textos aceptan una ruta a archivo o el texto directo)
+// Fuentes (AniList + Wikipedia + URLs) → 2 llamadas a Gemini (guion, storyboard)
+// → voz (Edge TTS es-MX o clon Qwen3) → imágenes (arte oficial / Pollinations)
+// → FFmpeg → video.mp4. Todo gratis. Necesita Ai__ApiKey salvo con --plan. No sube nada.
+// La grabación de referencia NUNCA va al repo (es público): dejarla en youtube-output/.
+if (args.Contains("--youtube"))
+{
+    Log.Logger = new LoggerConfiguration()
+        .MinimumLevel.Override("System.Net.Http", Serilog.Events.LogEventLevel.Warning)
+        .MinimumLevel.Override("Microsoft", Serilog.Events.LogEventLevel.Warning)
+        .WriteTo.Console(outputTemplate: "{Timestamp:HH:mm:ss} {Level:u3} {Message:lj}{NewLine}{Exception}")
+        .CreateLogger();
+
+    static string? YtArg(string[] a, string name)
+    {
+        var i = Array.IndexOf(a, name);
+        return i >= 0 && i + 1 < a.Length ? a[i + 1] : null;
+    }
+
+    try
+    {
+        var ytBuilder = Host.CreateApplicationBuilder(args);
+        ytBuilder.Services.AddSerilog(Log.Logger);
+
+        var ytAi = new AnimeIndex.Scraper.Infrastructure.AiRewrite.AiSettings();
+        ytBuilder.Configuration.GetSection("Ai").Bind(ytAi);
+        // El guion largo necesita el modelo bueno; flash-lite (el default de las noticias) se queda corto.
+        ytAi.Model = YtArg(args, "--model") ?? "gemini-2.5-flash";
+        ytBuilder.Services.AddSingleton(ytAi);
+
+        ytBuilder.Services.AddHttpClient("gemini", c => c.Timeout = TimeSpan.FromMinutes(3));
+        ytBuilder.Services.AddHttpClient("youtube-research", c =>
+        {
+            c.Timeout = TimeSpan.FromSeconds(30);
+            c.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", "SheicobAnimeBot/1.0 (video research)");
+            // Sin Accept, el CDN de Fandom (static.wikia.nocookie.net) responde 403;
+            // curl manda "*/*" por defecto y pasa (verificado el 24-nov-2026).
+            c.DefaultRequestHeaders.TryAddWithoutValidation("Accept", "*/*");
+        });
+        ytBuilder.Services.AddHttpClient("pollinations", c => c.Timeout = TimeSpan.FromMinutes(2));
+        ytBuilder.Services.AddScoped<AnimeIndex.Scraper.Infrastructure.AiRewrite.GeminiClient>();
+        ytBuilder.Services.AddScoped<AnimeIndex.Scraper.Infrastructure.YouTube.VideoResearchService>();
+        ytBuilder.Services.AddScoped<AnimeIndex.Scraper.Infrastructure.YouTube.VideoScriptService>();
+        ytBuilder.Services.AddScoped<AnimeIndex.Scraper.Infrastructure.YouTube.VisualSearchService>();
+        ytBuilder.Services.AddScoped<AnimeIndex.Scraper.Infrastructure.YouTube.MentionImageService>();
+        ytBuilder.Services.AddScoped<AnimeIndex.Scraper.Infrastructure.YouTube.MentionDetector>();
+        ytBuilder.Services.AddScoped<AnimeIndex.Scraper.Infrastructure.YouTube.VideoRenderService>();
+
+        await using var ytScope = ytBuilder.Build().Services.CreateAsyncScope();
+        var sp = ytScope.ServiceProvider;
+        using var ytCts = new CancellationTokenSource(TimeSpan.FromMinutes(60));
+
+        var topic = YtArg(args, "--topic");
+        var anime = YtArg(args, "--anime");
+        var planPath = YtArg(args, "--plan");
+        var minutes = int.TryParse(YtArg(args, "--minutes"), out var m) ? Math.Clamp(m, 1, 15) : 3;
+        var urls = args.Select((a, i) => (a, i))
+            .Where(x => x.a == "--source" && x.i + 1 < args.Length)
+            .Select(x => args[x.i + 1]).ToList();
+        var outDir = YtArg(args, "--out")
+            ?? (planPath is not null ? Path.GetDirectoryName(Path.GetFullPath(planPath))! : null)
+            ?? Path.Combine("youtube-output", DateTime.Now.ToString("yyyyMMdd-HHmmss"));
+
+        // Los textos largos (transcripciones) pueden venir como ruta a un archivo.
+        // Ojo: `dotnet run --project` resuelve las rutas relativas desde la carpeta
+        // del proyecto; una ruta a .txt que no existe es un error, no texto literal.
+        static string? TextOrFile(string? v)
+        {
+            if (v is null) return null;
+            if (File.Exists(v)) return File.ReadAllText(v).Trim();
+            if (v.EndsWith(".txt", StringComparison.OrdinalIgnoreCase))
+                throw new FileNotFoundException($"No existe {Path.GetFullPath(v)} — usá una ruta absoluta");
+            return v;
+        }
+        var voiceRef = YtArg(args, "--voice-ref");
+        if (voiceRef is not null && !File.Exists(voiceRef))
+            throw new FileNotFoundException($"No existe la referencia de voz {Path.GetFullPath(voiceRef)} — usá una ruta absoluta");
+        var voiceRefText = TextOrFile(YtArg(args, "--voice-ref-text"));
+
+        var research = sp.GetRequiredService<AnimeIndex.Scraper.Infrastructure.YouTube.VideoResearchService>();
+        var visuals = sp.GetRequiredService<AnimeIndex.Scraper.Infrastructure.YouTube.VisualSearchService>();
+        AnimeIndex.Scraper.Infrastructure.YouTube.VideoPlan plan;
+        AnimeIndex.Scraper.Infrastructure.YouTube.VideoResearch? found = null;
+
+        // Wiki de la serie (descubierta desde el nombre) y personajes de AniList:
+        // de ahí salen las imágenes de cada toma y artículos para el guion.
+        if (anime is not null || topic is not null)
+            await visuals.InitAsync(new[] { anime, topic }.OfType<string>(), anime, ytCts.Token);
+
+        // --clip <url>: video fuente para los clips (el del reel, un PV, un MV);
+        // reemplaza al tráiler de AniList.
+        var clipUrl = YtArg(args, "--clip");
+
+        if (planPath is not null)
+        {
+            plan = AnimeIndex.Scraper.Infrastructure.YouTube.VideoPlan.Parse(await File.ReadAllTextAsync(planPath));
+            if (anime is not null)
+                found = await research.GatherAsync(anime, anime, [], ytCts.Token); // solo por el arte oficial
+        }
+        else
+        {
+            if (string.IsNullOrWhiteSpace(topic))
+                throw new ArgumentException("--youtube necesita --topic \"...\" (o --plan <plan.json>)");
+            if (!ytAi.IsConfigured)
+                throw new InvalidOperationException("Falta la key de Gemini: Ai__ApiKey (o --plan para no usar IA)");
+
+            found = await research.GatherAsync(topic, anime, urls, ytCts.Token);
+            found.Sources.AddRange(await visuals.WikiArticlesAsync(topic, 3, ytCts.Token));
+
+            // --comments <ig-comments.json>: lo que dijo la gente en el reel (salida de --ig-comments).
+            List<string>? comments = null;
+            if (YtArg(args, "--comments") is { } commentsPath && File.Exists(commentsPath))
+            {
+                using var cdoc = System.Text.Json.JsonDocument.Parse(await File.ReadAllTextAsync(commentsPath));
+                comments = cdoc.RootElement.EnumerateArray()
+                    .Select(c => c.GetProperty("text").GetString() ?? "")
+                    .Where(t => t.Trim().Length > 3).ToList();
+                Log.Information("Comentarios del público para el guion: {N}", comments.Count);
+            }
+
+            plan = await sp.GetRequiredService<AnimeIndex.Scraper.Infrastructure.YouTube.VideoScriptService>()
+                .WriteAsync(found, minutes, hasKeyArt: found.CoverImageUrl is not null, ytCts.Token,
+                    styleExample: TextOrFile(YtArg(args, "--style")) ?? voiceRefText,
+                    wordsPerMinute: voiceRef is not null ? 200 : 150,
+                    comments: comments,
+                    // --guide youtube/GUIA_VIDEO.md: reglas aprendidas revisando videos.
+                    guide: TextOrFile(YtArg(args, "--guide")));
+        }
+        if (clipUrl is not null)
+            found = (found ?? new AnimeIndex.Scraper.Infrastructure.YouTube.VideoResearch(topic ?? anime ?? "", [], null, null))
+                with { TrailerUrl = clipUrl };
+
+        // --glossary youtube/pronunciations.json: cómo dice la voz los nombres
+        // extranjeros; pisa lo que sugirió Gemini (usar ruta absoluta).
+        plan.MergeGlossary(YtArg(args, "--glossary"));
+        if (plan.Pronunciations.Count > 0)
+            Log.Information("Pronunciación: {N} términos ({Sample})", plan.Pronunciations.Count,
+                string.Join(", ", plan.Pronunciations.Take(6).Select(p => $"{p.Key}→{p.Value}")));
+
+        // Lo que se nombra, se ve: reconoce en la narración cada nombre, fecha, cifra y
+        // cita, y le asigna su toma anclada (completa lo que Gemini no marcó).
+        // Deja mentions_report.md. --no-mentions lo apaga.
+        if (!args.Contains("--no-mentions"))
+        {
+            Directory.CreateDirectory(outDir);
+            await sp.GetRequiredService<AnimeIndex.Scraper.Infrastructure.YouTube.MentionDetector>()
+                .AnnotateAsync(plan, anime, Path.GetFullPath(outDir), ytCts.Token);
+        }
+
+        // --plan-only: solo el guion (primer job del workflow youtube-video.yml;
+        // la voz la generan después varios runners en paralelo).
+        if (args.Contains("--plan-only"))
+        {
+            Directory.CreateDirectory(outDir);
+            var planOut = Path.Combine(outDir, "plan.json");
+            await File.WriteAllTextAsync(planOut, plan.ToJson());
+            Log.Information("Plan listo: {Path} ({Scenes} escenas)", planOut, plan.Scenes.Count);
+            return;
+        }
+
+        var options = new AnimeIndex.Scraper.Infrastructure.YouTube.VideoRenderOptions(
+            OutputDir: outDir,
+            Voice: YtArg(args, "--voice") ?? "es-MX-JorgeNeural",
+            Rate: YtArg(args, "--rate") ?? "+0%",
+            TtsCommand: YtArg(args, "--tts") ?? "edge-tts",
+            CloneRef: voiceRef,
+            CloneRefText: voiceRefText,
+            QwenModel: YtArg(args, "--qwen-model") ?? "1.7B",
+            PythonCommand: YtArg(args, "--python") ?? "python",
+            QwenBackend: YtArg(args, "--qwen-backend") ?? "kaggle",
+            YtDlpCommand: YtArg(args, "--yt-dlp") ?? "yt-dlp",
+            // Python con torch + open_clip para elegir fotogramas por descripción (Scripts/frame_match.py).
+            MatcherPython: YtArg(args, "--matcher-python") ?? "python",
+            // ~3,5 s para videos largos; el Short de referencia corta cada 1–1,5 s.
+            ShotSeconds: double.TryParse(YtArg(args, "--shot-seconds"), System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out var shotSecs) ? Math.Clamp(shotSecs, 0.8, 15) : 3.5,
+            // Música de fondo CC BY bajo la voz: --music-volume 0.12 (≈ −18 dB), --no-music la apaga.
+            MusicVolume: args.Contains("--no-music") ? 0
+                : double.TryParse(YtArg(args, "--music-volume"), System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out var musicVol)
+                    ? Math.Clamp(musicVol, 0, 1) : AnimeIndex.Scraper.Infrastructure.YouTube.VideoMusic.DefaultVolume);
+        await sp.GetRequiredService<AnimeIndex.Scraper.Infrastructure.YouTube.VideoRenderService>()
+            .RenderAsync(plan, found, options, ytCts.Token);
+    }
+    catch (Exception ex)
+    {
+        Log.Fatal(ex, "Prototipo de YouTube falló");
+        Environment.ExitCode = 1;
+    }
+    finally
+    {
+        await Log.CloseAndFlushAsync();
+    }
+    return;
+}
+
+// ── Subida del video renderizado al canal de YouTube ─────────────────────────
+// Usage: dotnet run --project scraper/AnimeIndex.Scraper -- --youtube-upload <dir>
+//          [--plan <dir>/plan.json] [--video <dir>/video.mp4] [--thumbnail <dir>/thumbnail.jpg]
+//          [--playlist "Teorías de anime"] [--privacy private|unlisted|public] [--no-music]
+// Necesita YouTube__ClientId, YouTube__ClientSecret y YouTube__RefreshToken.
+// Deja <dir>/youtube-upload.json con el id del video. Sin auditoría de la API,
+// YouTube deja privado todo lo que se sube así: publicarlo a mano en Studio.
+if (args.Contains("--youtube-upload"))
+{
+    Log.Logger = new LoggerConfiguration()
+        .MinimumLevel.Override("System.Net.Http", Serilog.Events.LogEventLevel.Warning)
+        .WriteTo.Console(outputTemplate: "{Timestamp:HH:mm:ss} {Level:u3} {Message:lj}{NewLine}{Exception}")
+        .CreateLogger();
+
+    static string? UpArg(string[] a, string name)
+    {
+        var i = Array.IndexOf(a, name);
+        return i >= 0 && i + 1 < a.Length ? a[i + 1] : null;
+    }
+
+    try
+    {
+        var dir = UpArg(args, "--youtube-upload") ?? ".";
+        var planPath = UpArg(args, "--plan") ?? Path.Combine(dir, "plan.json");
+        var videoPath = UpArg(args, "--video") ?? Path.Combine(dir, "video.mp4");
+        var thumbPath = UpArg(args, "--thumbnail") ?? Path.Combine(dir, "thumbnail.jpg");
+
+        var ytSettings = new AnimeIndex.Scraper.Infrastructure.YouTube.YouTubeSettings();
+        new ConfigurationBuilder().AddEnvironmentVariables().Build().GetSection("YouTube").Bind(ytSettings);
+        if (UpArg(args, "--privacy") is { Length: > 0 } privacy) ytSettings.PrivacyStatus = privacy;
+
+        var plan = AnimeIndex.Scraper.Infrastructure.YouTube.VideoPlan.Parse(await File.ReadAllTextAsync(planPath));
+        // El render elige los temas igual (mood + título): los créditos CC BY coinciden con lo que suena.
+        var music = args.Contains("--no-music")
+            ? []
+            : AnimeIndex.Scraper.Infrastructure.YouTube.VideoMusic.PickTracks(plan.Mood, plan.Title, count: 3);
+        var resource = AnimeIndex.Scraper.Infrastructure.YouTube.YouTubeMetadata.Build(plan, ytSettings, music);
+        var playlist = AnimeIndex.Scraper.Infrastructure.YouTube.YouTubeMetadata.PickPlaylist(plan, UpArg(args, "--playlist"));
+        Log.Information("Subiendo \"{Title}\" ({Privacy}) → playlist \"{Playlist}\"",
+            resource.Snippet.Title, resource.Status.PrivacyStatus, playlist);
+
+        var upServices = new ServiceCollection();
+        upServices.AddSerilog(Log.Logger);
+        upServices.AddHttpClient(AnimeIndex.Scraper.Infrastructure.YouTube.YouTubeUploadService.HttpClientName,
+            c => c.Timeout = TimeSpan.FromMinutes(30));
+        upServices.AddSingleton(ytSettings);
+        upServices.AddSingleton<AnimeIndex.Scraper.Infrastructure.YouTube.YouTubeUploadService>();
+        await using var upSp = upServices.BuildServiceProvider();
+
+        using var upCts = new CancellationTokenSource(TimeSpan.FromMinutes(45));
+        var result = await upSp.GetRequiredService<AnimeIndex.Scraper.Infrastructure.YouTube.YouTubeUploadService>()
+            .UploadAsync(videoPath, thumbPath, resource, playlist, upCts.Token);
+
+        await File.WriteAllTextAsync(Path.Combine(dir, "youtube-upload.json"), System.Text.Json.JsonSerializer.Serialize(
+            new { videoId = result.VideoId, url = result.Url, privacy = result.PrivacyStatus, thumbnail = result.ThumbnailSet, playlist = result.Playlist },
+            new System.Text.Json.JsonSerializerOptions
+            {
+                WriteIndented = true,
+                Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+            }));
+        Log.Information("Listo: {Url} · miniatura {Thumb} · playlist {Playlist}",
+            result.Url, result.ThumbnailSet ? "sí" : "no", result.Playlist ?? "ninguna");
+    }
+    catch (Exception ex)
+    {
+        Log.Fatal(ex, "Subida a YouTube falló");
+        Environment.ExitCode = 1;
+    }
+    finally
+    {
+        await Log.CloseAndFlushAsync();
+    }
+    return;
+}
+
 // ── Anime news pipeline (lightweight, no Hangfire) ───────────────────────────
 // Usage: dotnet run --project scraper/AnimeIndex.Scraper -- --news
 // Designed for a dedicated GHA workflow that runs every hour.
@@ -470,6 +753,52 @@ if (args.Contains("--images"))
 //
 // Ojo con lo no-obvio: agregar el permiso en el dashboard NO alcanza. Los
 // tokens ya emitidos NO lo heredan — hay que regenerar el token.
+// ── Comentarios de un post de Instagram → JSON (insumo del guion de YouTube) ──
+// Usage: dotnet run --project scraper/AnimeIndex.Scraper -- --ig-comments <mediaId> <salida.json>
+// Necesita Instagram__AccessToken con permiso de lectura de comentarios.
+if (args.Contains("--ig-comments"))
+{
+    var idx = Array.IndexOf(args, "--ig-comments");
+    var mediaId = idx + 1 < args.Length ? args[idx + 1] : null;
+    var outPath = idx + 2 < args.Length ? args[idx + 2] : "ig-comments.json";
+    if (string.IsNullOrWhiteSpace(mediaId))
+    {
+        Console.Error.WriteLine("Uso: --ig-comments <mediaId> <salida.json>");
+        Environment.ExitCode = 1;
+        return;
+    }
+
+    var igCom = new AnimeIndex.Scraper.Infrastructure.Instagram.InstagramSettings();
+    new ConfigurationBuilder().AddEnvironmentVariables().Build().GetSection("Instagram").Bind(igCom);
+    var comServices = new ServiceCollection();
+    comServices.AddHttpClient("instagram-graph", c => c.Timeout = TimeSpan.FromSeconds(30));
+    comServices.AddLogging();
+    comServices.AddSingleton(igCom);
+    comServices.AddSingleton<AnimeIndex.Scraper.Infrastructure.Instagram.MetaGraphApiClient>();
+    await using var comSp = comServices.BuildServiceProvider();
+    var graph = comSp.GetRequiredService<AnimeIndex.Scraper.Infrastructure.Instagram.MetaGraphApiClient>();
+
+    try
+    {
+        var comments = await graph.GetCommentsAsync(mediaId);
+        var json = System.Text.Json.JsonSerializer.Serialize(
+            comments.OrderByDescending(c => c.Likes).Select(c => new { text = c.Text, likes = c.Likes, at = c.At, replies = c.Replies }),
+            new System.Text.Json.JsonSerializerOptions
+            {
+                WriteIndented = true,
+                Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+            });
+        await File.WriteAllTextAsync(outPath, json);
+        Console.WriteLine($"{comments.Count} comentarios de {mediaId} → {outPath}");
+    }
+    catch (InvalidOperationException ex)
+    {
+        Console.Error.WriteLine(ex.Message);
+        Environment.ExitCode = 1;
+    }
+    return;
+}
+
 if (args.Contains("--token-scopes"))
 {
     var igTok = new AnimeIndex.Scraper.Infrastructure.Instagram.InstagramSettings();

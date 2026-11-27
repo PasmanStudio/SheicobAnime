@@ -511,6 +511,56 @@ public class MetaGraphApiClient(
             ?? throw new InvalidOperationException("Comment response missing id");
     }
 
+    /// <summary>
+    /// Lee los comentarios de una publicación propia (con sus respuestas), para
+    /// saber qué pregunta y opina la gente antes de hacer un video sobre ese tema.
+    /// Necesita el permiso instagram_manage_comments (o instagram_business_manage_comments);
+    /// sin él Meta devuelve error y se lanza con el cuerpo de la respuesta.
+    /// </summary>
+    public async Task<List<(string Text, int Likes, DateTime At, List<string> Replies)>> GetCommentsAsync(
+        string mediaId, int max = 300, CancellationToken ct = default)
+    {
+        var result = new List<(string, int, DateTime, List<string>)>();
+        var url = $"{BaseUrl}/{mediaId}/comments?fields=text,like_count,timestamp,replies{{text}}&limit=50" +
+                  $"&access_token={Uri.EscapeDataString(settings.AccessToken)}";
+        while (url is not null && result.Count < max)
+        {
+            var resp = await Http.GetAsync(url, ct);
+            var body = await resp.Content.ReadAsStringAsync(ct);
+            if (!resp.IsSuccessStatusCode)
+                throw new InvalidOperationException($"GetComments failed ({resp.StatusCode}): {body}");
+
+            using var doc = JsonDocument.Parse(body);
+            foreach (var c in doc.RootElement.GetProperty("data").EnumerateArray())
+            {
+                var replies = new List<string>();
+                if (c.TryGetProperty("replies", out var r) && r.TryGetProperty("data", out var rd))
+                    replies.AddRange(rd.EnumerateArray().Select(x => x.TryGetProperty("text", out var t) ? t.GetString() ?? "" : ""));
+                result.Add((
+                    c.TryGetProperty("text", out var text) ? text.GetString() ?? "" : "",
+                    c.TryGetProperty("like_count", out var l) ? l.GetInt32() : 0,
+                    // Meta manda "2026-11-04T20:30:00+0000" (offset sin ':'), que
+                    // JsonElement.GetDateTime rechaza: se parsea a mano.
+                    c.TryGetProperty("timestamp", out var ts) ? ParseMetaTimestamp(ts.GetString()) : default,
+                    replies));
+            }
+            url = doc.RootElement.TryGetProperty("paging", out var p) && p.TryGetProperty("next", out var next)
+                ? next.GetString() : null;
+        }
+        return result;
+    }
+
+    /// <summary>"2026-11-04T20:30:00+0000" → UTC. Público para tests.</summary>
+    public static DateTime ParseMetaTimestamp(string? value)
+    {
+        if (string.IsNullOrEmpty(value)) return default;
+        // Offset "+0000" → "+00:00" (el formato que entiende DateTimeOffset).
+        if (value.Length >= 5 && value[^5] is '+' or '-' && char.IsDigit(value[^1]))
+            value = value.Insert(value.Length - 2, ":");
+        return DateTimeOffset.TryParse(value, System.Globalization.CultureInfo.InvariantCulture,
+            System.Globalization.DateTimeStyles.None, out var at) ? at.UtcDateTime : default;
+    }
+
     // ── Token management ─────────────────────────────────────────────
 
     /// <summary>

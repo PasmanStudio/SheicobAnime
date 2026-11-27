@@ -88,3 +88,6 @@ infra/supabase.exe
 
 # Salida local del harness visual --images
 test-output/
+
+# Videos del prototipo --youtube
+youtube-output/

@@ -1,0 +1,451 @@
+# Video de YouTube con la voz clonada del canal, gratis, sin GPU.
+#
+#   plan   → guion + storyboard con Gemini (o un plan ya escrito en youtube/plans/)
+#   voice  → Qwen3-TTS 1.7B en CPU, escenas repartidas en N runners en paralelo
+#            (benchmark 24-nov-2026: 12,3 s por s de audio en 4 CPU → un video de
+#            10 min tarda ~2 h en 1 runner y ~15 min en 8)
+#   render → imágenes, FFmpeg y subtítulos → video.mp4 para revisar
+#   upload → al canal, PRIVADO, solo con "upload": true en youtube/request.json
+#            (o el input del dispatch). Secrets YOUTUBE_CLIENT_ID/SECRET/REFRESH_TOKEN.
+#
+# La grabación de referencia va CIFRADA (youtube/voice/ref.tar.gpg; clave en el
+# secret VOICE_REF_PASSPHRASE) y las voces intermedias viajan cifradas entre
+# jobs: los artifacts de un repo público los puede bajar cualquiera.
+name: youtube-video
+
+on:
+  workflow_dispatch:
+    inputs:
+      topic:
+        description: 'Tema del video (vacío = usar plan_file)'
+        required: false
+      anime:
+        description: 'Anime para AniList / arte oficial'
+        required: false
+      minutes:
+        description: 'Duración objetivo en minutos'
+        default: '10'
+      plan_file:
+        description: 'Plan ya escrito (si no hay tema)'
+        default: 'youtube/plans/frieren-poder-oculto.json'
+      runners:
+        description: 'Runners en paralelo para la voz'
+        default: '8'
+      upload:
+        description: 'Subir el video al canal de YouTube'
+        type: boolean
+        default: false
+      privacy:
+        description: 'Visibilidad (sin auditoría de la API, YouTube fuerza privado igual)'
+        type: choice
+        options: [private, unlisted, public]
+        default: private
+      playlist:
+        description: 'Playlist del canal (vacío = deducida del título)'
+        required: false
+  push:
+    branches: [feat/youtube-tts-bench]
+    paths: [youtube/**, scraper/AnimeIndex.Scraper/Infrastructure/YouTube/**, .github/workflows/youtube-video.yml]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: youtube-video-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PLAN_FILE: ${{ inputs.plan_file || 'youtube/plans/frieren-poder-oculto.json' }}
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      shards: ${{ steps.shards.outputs.list }}
+      total: ${{ steps.shards.outputs.total }}
+      anime: ${{ steps.request.outputs.anime }}
+      clip: ${{ steps.request.outputs.clip }}
+      upload: ${{ steps.request.outputs.upload }}
+      privacy: ${{ steps.request.outputs.privacy }}
+      playlist: ${{ steps.request.outputs.playlist }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Descifrar la referencia (la transcripción guía el estilo del guion)
+        env:
+          VOICE_REF_PASSPHRASE: ${{ secrets.VOICE_REF_PASSPHRASE }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/voice"
+          gpg --batch --quiet --pinentry-mode loopback --passphrase-fd 0 \
+            -d youtube/voice/ref.tar.gpg <<< "$VOICE_REF_PASSPHRASE" | tar -x -C "$RUNNER_TEMP/voice"
+
+      # El pedido: o los inputs del dispatch, o youtube/request.json en un push.
+      # Así el workflow hace cualquier video sin tocar el YAML.
+      - name: Pedido
+        id: request
+        env:
+          IN_TOPIC: ${{ inputs.topic }}
+          IN_ANIME: ${{ inputs.anime }}
+          IN_MINUTES: ${{ inputs.minutes }}
+          IN_RUNNERS: ${{ inputs.runners }}
+          IN_UPLOAD: ${{ inputs.upload }}
+          IN_PRIVACY: ${{ inputs.privacy }}
+          IN_PLAYLIST: ${{ inputs.playlist }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          req = {}
+          if not os.environ.get("IN_TOPIC") and os.path.exists("youtube/request.json"):
+              req = json.load(open("youtube/request.json", encoding="utf-8"))
+          val = lambda k, env, d="": os.environ.get(env) or str(req.get(k, d) or d)
+          out = {
+              "TOPIC": val("topic", "IN_TOPIC"),
+              "ANIME": val("anime", "IN_ANIME", "Frieren"),
+              "MINUTES": val("minutes", "IN_MINUTES", "10"),
+              "RUNNERS": val("runners", "IN_RUNNERS", "3"),
+              "IG_MEDIA": str(req.get("igMediaId", "")),
+              "CLIP": str(req.get("clip", "")),
+          }
+          with open(os.environ["GITHUB_ENV"], "a") as e, open(os.environ["GITHUB_OUTPUT"], "a") as o:
+              for k, v in out.items():
+                  e.write(f"{k}={v}\n")
+              o.write(f"anime={out['ANIME']}\nclip={out['CLIP']}\n")
+              # Subida a YouTube: input del dispatch o "upload": true en request.json. Default apagada.
+              upload = os.environ.get("IN_UPLOAD") == "true" or req.get("upload") is True
+              o.write(f"upload={str(upload).lower()}\n")
+              o.write(f"privacy={os.environ.get('IN_PRIVACY') or req.get('privacy') or 'private'}\n")
+              o.write(f"playlist={os.environ.get('IN_PLAYLIST') or req.get('playlist') or ''}\n")
+          with open(os.path.join(os.environ["RUNNER_TEMP"], "sources.txt"), "w") as f:
+              f.write("\n".join(req.get("sources", [])))
+          print(json.dumps(out, ensure_ascii=False, indent=2))
+          PY
+
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        if: env.TOPIC != ''
+        with:
+          dotnet-version: '9.x'
+
+      # Lo que comentó la gente en el reel que originó el video. Best-effort: si el
+      # token no tiene permiso de comentarios, el guion se escribe sin ellos.
+      - name: Comentarios del reel
+        if: env.TOPIC != '' && env.IG_MEDIA != ''
+        continue-on-error: true
+        env:
+          Instagram__AccessToken: ${{ secrets.INSTAGRAM_ACCESS_TOKEN }}
+          Instagram__IgUserId: ${{ secrets.INSTAGRAM_IG_USER_ID }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/plan"
+          dotnet run --project scraper/AnimeIndex.Scraper -c Release -- --ig-comments "$IG_MEDIA" "$RUNNER_TEMP/plan/comments.json"
+
+      - name: Guion con Gemini
+        if: env.TOPIC != ''
+        env:
+          Ai__ApiKey: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          extra=()
+          while IFS= read -r url; do [ -n "$url" ] && extra+=(--source "$url"); done < "$RUNNER_TEMP/sources.txt"
+          [ -f "$RUNNER_TEMP/plan/comments.json" ] && extra+=(--comments "$RUNNER_TEMP/plan/comments.json")
+          dotnet run --project scraper/AnimeIndex.Scraper -c Release -- --youtube --plan-only \
+            --topic "$TOPIC" --anime "$ANIME" --minutes "$MINUTES" --out "$RUNNER_TEMP/plan" \
+            --voice-ref "$RUNNER_TEMP/voice/ref_largo.wav" --voice-ref-text "$RUNNER_TEMP/voice/ref_largo.txt" \
+            --glossary "$GITHUB_WORKSPACE/youtube/pronunciations.json" \
+            --guide "$GITHUB_WORKSPACE/youtube/GUIA_VIDEO.md" \
+            "${extra[@]}"
+
+      - name: Plan ya escrito
+        if: env.TOPIC == ''
+        run: mkdir -p "$RUNNER_TEMP/plan" && cp "$PLAN_FILE" "$RUNNER_TEMP/plan/plan.json"
+
+      - name: Repartir escenas
+        id: shards
+        run: |
+          scenes=$(python3 -c "import json;print(sum(1 for s in json.load(open('$RUNNER_TEMP/plan/plan.json'))['scenes'] if s.get('narration','').strip()))")
+          n=$(( RUNNERS < scenes ? RUNNERS : scenes ))
+          echo "list=$(python3 -c "import json;print(json.dumps(list(range($n))))")" >> "$GITHUB_OUTPUT"
+          echo "total=$n" >> "$GITHUB_OUTPUT"
+          echo "$scenes escenas en $n runners" >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: plan
+          path: |
+            ${{ runner.temp }}/plan/plan.json
+            ${{ runner.temp }}/plan/comments.json
+          if-no-files-found: warn
+          retention-days: 7
+
+  voice:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    strategy:
+      fail-fast: true
+      matrix:
+        shard: ${{ fromJson(needs.plan.outputs.shards) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # torch CPU primero: si no, qwen-tts arrastra la build con CUDA (~2.5 GB).
+      - name: Instalar Qwen3-TTS (CPU)
+        run: |
+          pip install --quiet torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+          pip install --quiet qwen-tts soundfile
+
+      - name: Cache del modelo
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-qwen3-tts-1.7b-base
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: plan
+          path: ${{ runner.temp }}/plan
+
+      - name: Descifrar la referencia de voz
+        env:
+          VOICE_REF_PASSPHRASE: ${{ secrets.VOICE_REF_PASSPHRASE }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/voice"
+          gpg --batch --quiet --pinentry-mode loopback --passphrase-fd 0 \
+            -d youtube/voice/ref.tar.gpg <<< "$VOICE_REF_PASSPHRASE" | tar -x -C "$RUNNER_TEMP/voice"
+
+      - name: Generar voz (runner ${{ matrix.shard }})
+        run: |
+          python youtube/tts_shard.py "$RUNNER_TEMP/plan/plan.json" \
+            "$RUNNER_TEMP/voice/ref_largo.wav" "$RUNNER_TEMP/voice/ref_largo.txt" \
+            "$RUNNER_TEMP/out" ${{ matrix.shard }} ${{ needs.plan.outputs.total }} 1.7B
+
+      - name: Cifrar las voces
+        env:
+          VOICE_REF_PASSPHRASE: ${{ secrets.VOICE_REF_PASSPHRASE }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/out"
+          tar -C "$RUNNER_TEMP/out" -cf voice.tar .
+          gpg --batch --quiet --pinentry-mode loopback --passphrase-fd 0 \
+            --symmetric --cipher-algo AES256 -o voice.tar.gpg voice.tar <<< "$VOICE_REF_PASSPHRASE"
+          rm -rf voice.tar "$RUNNER_TEMP/voice"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: voice-${{ matrix.shard }}
+          path: voice.tar.gpg
+          retention-days: 3
+
+  # Audio de control: cada término extranjero del guion dicho por la voz, para
+  # revisar la pronunciación. Corre en paralelo con la voz; no frena el video.
+  terms:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar Qwen3-TTS (CPU)
+        run: |
+          pip install --quiet torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+          pip install --quiet qwen-tts soundfile
+
+      - name: Cache del modelo
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-qwen3-tts-1.7b-base
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: plan
+          path: ${{ runner.temp }}/plan
+
+      - name: Descifrar la referencia de voz
+        env:
+          VOICE_REF_PASSPHRASE: ${{ secrets.VOICE_REF_PASSPHRASE }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/voice"
+          gpg --batch --quiet --pinentry-mode loopback --passphrase-fd 0 \
+            -d youtube/voice/ref.tar.gpg <<< "$VOICE_REF_PASSPHRASE" | tar -x -C "$RUNNER_TEMP/voice"
+
+      - name: Decir los términos
+        run: |
+          python youtube/terms_check.py "$RUNNER_TEMP/plan/plan.json" \
+            "$RUNNER_TEMP/voice/ref_largo.wav" "$RUNNER_TEMP/voice/ref_largo.txt" "$RUNNER_TEMP/terms" 1.7B
+          { echo "### Términos extranjeros"; echo '```'; cat "$RUNNER_TEMP/terms/terminos.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      # La lista va a la vista; el audio, cifrado como las voces (repo público).
+      - name: Cifrar el audio
+        env:
+          VOICE_REF_PASSPHRASE: ${{ secrets.VOICE_REF_PASSPHRASE }}
+        run: |
+          tar -C "$RUNNER_TEMP/terms" -cf terms.tar .
+          gpg --batch --quiet --pinentry-mode loopback --passphrase-fd 0 \
+            --symmetric --cipher-algo AES256 -o terms.tar.gpg terms.tar <<< "$VOICE_REF_PASSPHRASE"
+          rm -rf terms.tar "$RUNNER_TEMP/voice"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: terms
+          path: terms.tar.gpg
+          retention-days: 7
+
+  render:
+    needs: [plan, voice]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: '9.x'
+
+      - name: Instalar ffmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg > /dev/null
+
+      # CLIP elige qué plano del video fuente muestra cada descripción del storyboard.
+      - name: Instalar CLIP (CPU)
+        continue-on-error: true
+        run: |
+          pip install --quiet torch --index-url https://download.pytorch.org/whl/cpu
+          pip install --quiet open_clip_torch pillow
+
+      # faster-whisper da el segundo en que la voz dice cada palabra: la toma
+      # cambia cuando se NOMBRA algo (Scripts/word_times.py). Sin él, los tiempos
+      # se estiman por letras.
+      - name: Instalar faster-whisper (CPU)
+        continue-on-error: true
+        run: pip install --quiet faster-whisper
+
+      # ── Tráiler oficial (clips y fotogramas) ──────────────────────────────
+      # YouTube frena a yt-dlp en los runners: misma receta que news-cron.yml
+      # (ver ahí el porqué de cada paso). Sin tráiler el render sigue con
+      # imágenes — confirmado en la corrida 45484911273: "Failed to extract any
+      # player response" desde la IP del runner sin WARP.
+      - name: Instalar yt-dlp (nightly) y Deno
+        run: |
+          pipx install --pip-args=--pre "yt-dlp[default]"
+          curl -fsSL https://deno.land/install.sh | sh -s -- -y > /dev/null
+          echo "$HOME/.deno/bin" >> "$GITHUB_PATH"
+
+      - name: Proxy Cloudflare WARP (wireproxy)
+        env:
+          WARP_WIREGUARD_CONFIG: ${{ secrets.WARP_WIREGUARD_CONFIG }}
+        run: |
+          if [ -z "$WARP_WIREGUARD_CONFIG" ]; then echo "sin WARP — yt-dlp directo"; exit 0; fi
+          cd "$RUNNER_TEMP"
+          curl -sL -o wireproxy.tar.gz \
+            "https://github.com/whyvl/wireproxy/releases/download/v1.1.2/wireproxy_linux_amd64.tar.gz"
+          tar -xzf wireproxy.tar.gz
+          printf '%s\n\n[Socks5]\nBindAddress = 127.0.0.1:1080\n' "$WARP_WIREGUARD_CONFIG" > wp.conf
+          for attempt in 1 2 3; do
+            pkill -f '[w]ireproxy' 2>/dev/null || true
+            nohup ./wireproxy -c wp.conf > "wireproxy-$attempt.log" 2>&1 &
+            for _ in $(seq 1 30); do
+              if curl -s -m 5 --proxy socks5h://127.0.0.1:1080 ifconfig.me > /dev/null; then
+                echo "WARP arriba (intento $attempt)"
+                echo "YTDLP_PROXY=socks5h://127.0.0.1:1080" >> "$GITHUB_ENV"
+                exit 0
+              fi
+              sleep 1
+            done
+          done
+          echo "WARP no levantó — yt-dlp directo"
+
+      - name: Cookies de YouTube
+        env:
+          YOUTUBE_COOKIES: ${{ secrets.YOUTUBE_COOKIES }}
+        run: |
+          if [ -z "$YOUTUBE_COOKIES" ]; then echo "sin cookies"; exit 0; fi
+          printf '%s' "$YOUTUBE_COOKIES" > "$RUNNER_TEMP/yt-cookies.txt"
+          chmod 600 "$RUNNER_TEMP/yt-cookies.txt"
+          echo "YTDLP_COOKIES=$RUNNER_TEMP/yt-cookies.txt" >> "$GITHUB_ENV"
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: ${{ runner.temp }}/artifacts
+
+      - name: Juntar voces y referencia
+        env:
+          VOICE_REF_PASSPHRASE: ${{ secrets.VOICE_REF_PASSPHRASE }}
+        run: |
+          out="$RUNNER_TEMP/video"; mkdir -p "$out" "$RUNNER_TEMP/voice"
+          cp "$RUNNER_TEMP/artifacts/plan/plan.json" "$out/plan.json"
+          for f in "$RUNNER_TEMP"/artifacts/voice-*/voice.tar.gpg; do
+            gpg --batch --quiet --pinentry-mode loopback --passphrase-fd 0 -d "$f" <<< "$VOICE_REF_PASSPHRASE" | tar -x -C "$out"
+          done
+          gpg --batch --quiet --pinentry-mode loopback --passphrase-fd 0 \
+            -d youtube/voice/ref.tar.gpg <<< "$VOICE_REF_PASSPHRASE" | tar -x -C "$RUNNER_TEMP/voice"
+          ls "$out"
+
+      - name: Render
+        env:
+          ANIME: ${{ needs.plan.outputs.anime }}
+          CLIP: ${{ needs.plan.outputs.clip }}
+        run: |
+          extra=()
+          [ -n "$CLIP" ] && extra+=(--clip "$CLIP")
+          dotnet run --project scraper/AnimeIndex.Scraper -c Release -- --youtube \
+            --plan "$RUNNER_TEMP/video/plan.json" --anime "$ANIME" \
+            --voice-ref "$RUNNER_TEMP/voice/ref_largo.wav" --voice-ref-text "$RUNNER_TEMP/voice/ref_largo.txt" \
+            --glossary "$GITHUB_WORKSPACE/youtube/pronunciations.json" \
+            "${extra[@]}"
+          rm -rf "$RUNNER_TEMP/voice"
+          { echo "## Video listo"; echo; echo '```'; cat "$RUNNER_TEMP/video/youtube.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: video
+          path: |
+            ${{ runner.temp }}/video/video.mp4
+            ${{ runner.temp }}/video/thumbnail.jpg
+            ${{ runner.temp }}/video/youtube.txt
+          retention-days: 7
+
+  # Sube el video al canal: solo con el input upload o "upload": true en
+  # youtube/request.json (sin eso, un push no sube nada).
+  # Sin la auditoría de YouTube API Services el video queda PRIVADO aunque se
+  # pida otra cosa: revisarlo y publicarlo a mano en Studio.
+  # Cuota: 10.000 unidades/día; una subida ≈ 1.700 (insert + miniatura + playlist).
+  upload:
+    needs: [plan, render]
+    if: needs.plan.outputs.upload == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: '9.x'
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: video
+          path: ${{ runner.temp }}/video
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: plan
+          path: ${{ runner.temp }}/plan
+
+      - name: Subir a YouTube
+        env:
+          YouTube__ClientId: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YouTube__ClientSecret: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YouTube__RefreshToken: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+          PRIVACY: ${{ needs.plan.outputs.privacy }}
+          PLAYLIST: ${{ needs.plan.outputs.playlist }}
+        run: |
+          extra=()
+          [ -n "$PLAYLIST" ] && extra+=(--playlist "$PLAYLIST")
+          dotnet run --project scraper/AnimeIndex.Scraper -c Release -- --youtube-upload "$RUNNER_TEMP/video" \
+            --plan "$RUNNER_TEMP/plan/plan.json" --privacy "${PRIVACY:-private}" "${extra[@]}"
+          { echo "## Subido a YouTube"; echo; echo '```json'; cat "$RUNNER_TEMP/video/youtube-upload.json"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
