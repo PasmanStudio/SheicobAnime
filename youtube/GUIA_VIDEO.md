@@ -51,3 +51,11 @@ premio y año, cantidad de episodios, fecha exacta, nombre del estudio) antes qu
 frases generales ("fue un éxito enorme"). Cada dato concreto es una toma con
 referencia. En las placas (`card:`) va SOLO lo que dice la narración, en pocas
 palabras, con números en cifras ("10 episodios", "septiembre de 2022").
+
+## 4. El cierre es una idea o una pregunta, nunca "suscribite"
+
+La última frase del video es una idea fuerte sobre el tema o una pregunta
+concreta para comentarios ("¿Crees que Weak sabía lo de Talia?"). Nada de "dale
+me gusta", "suscribite", "activá la campanita" ni el nombre del canal: los
+últimos 15 s del video quedan con imagen limpia para la pantalla final de
+YouTube, que hace ese trabajo (se carga a mano en Studio: la API no la expone).
