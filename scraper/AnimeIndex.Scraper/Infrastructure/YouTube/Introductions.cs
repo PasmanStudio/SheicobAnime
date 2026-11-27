@@ -12,8 +12,11 @@ public sealed record IntroductionResult(IReadOnlyList<IReadOnlyList<ShotReferenc
 /// lo presenta ("…Weak Kingsley y Avida Yang" → ahí y nunca más). Cuando la voz lo
 /// vuelve a nombrar, esa toma pasa a metraje de la fuente de la escena (lo que se
 /// está contando), no a la misma imagen otra vez.
-///   - Logos, personajes y personas con "+": se muestran solo los que faltan;
-///     si ya estaban todos, metraje.
+///   - Logos, personajes y personas con "+": se muestran solo los que faltan.
+///     Si ya estaban todos: los logos van con metraje; los personajes y personas
+///     quedan marcados <see cref="ShotReference.Again"/> — un plano cualquiera no
+///     los muestra (el 27-nov David se nombraba 4 veces sobre un tráiler donde no
+///     aparece), así que el render busca un plano donde estén o repite su imagen.
 ///   - Tarjetas: la misma tarjeta (texto e imagen) no se repite. Si su imagen de
 ///     acompañamiento (un póster, un personaje) ya se mostró, la tarjeta va sola
 ///     sobre el arte; si no, esa imagen queda presentada con la tarjeta.
@@ -62,7 +65,15 @@ public static class IntroductionLedger
                 var names = r.Names.Count > 0 ? r.Names : [r.Value];
                 var fresh = names.Where(n => !shown.ContainsKey(Key(r.Kind, n))).ToList();
                 if (fresh.Count == 0)
-                    return (null, $"ya presentado en la escena {shown[Key(r.Kind, names[0])]}");
+                {
+                    var at = shown[Key(r.Kind, names[0])];
+                    // Una empresa nombrada otra vez va con metraje de la escena. Una
+                    // persona no: un plano al azar no la muestra (el render busca uno
+                    // donde aparezca o repite su imagen).
+                    return r.Kind == ShotKind.Logo
+                        ? (null, $"ya presentado en la escena {at}")
+                        : (r with { Again = true }, $"ya presentado en la escena {at}: plano donde aparece o su imagen otra vez");
+                }
                 foreach (var n in fresh) shown[Key(r.Kind, n)] = scene;
                 if (fresh.Count == names.Count) return (r, null);
                 var repeated = names.Except(fresh).ToList();
@@ -120,6 +131,6 @@ public static class IntroductionLedger
     {
         ShotKind.KeyArt => "keyart",
         ShotKind.Card => "card: " + string.Join(" | ", new[] { r.Value, r.Detail, r.Image }.Where(p => !string.IsNullOrEmpty(p))),
-        _ => $"{r.Kind.ToString().ToLowerInvariant()}: {r.Value}",
+        _ => $"{(r.Again ? "otra vez " : "")}{r.Kind.ToString().ToLowerInvariant()}: {r.Value}",
     };
 }

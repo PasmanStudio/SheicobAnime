@@ -36,6 +36,13 @@ public sealed partial record ShotReference(ShotKind Kind, string Value, string? 
         Value.Split('+', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
     /// <summary>
+    /// Personaje o persona que ya se presentó y la voz vuelve a nombrar: va con un
+    /// plano de los videos oficiales DONDE APARECE, o con su imagen otra vez. Nunca
+    /// con un plano cualquiera (ver <see cref="IntroductionLedger"/>).
+    /// </summary>
+    public bool Again { get; init; }
+
+    /// <summary>
     /// "poster: X" / "logo: A + B" / "card: título | subtítulo | poster: X" /
     /// "character: X" / "scene: ..." / "ai: ..." / "keyart". Sin prefijo, se
     /// interpreta como hasta ahora: escena. Público para tests.
@@ -49,10 +56,10 @@ public sealed partial record ShotReference(ShotKind Kind, string Value, string? 
         var rest = s[m.Length..].Trim();
         switch (m.Groups[1].Value.ToLowerInvariant())
         {
-            case "poster": return new(ShotKind.Poster, rest);
-            case "logo": return new(ShotKind.Logo, rest);
-            case "character": return new(ShotKind.Character, rest);
-            case "photo": return new(ShotKind.Photo, rest);
+            case "poster": return new(ShotKind.Poster, CleanNames(rest));
+            case "logo": return new(ShotKind.Logo, CleanNames(rest));
+            case "character": return new(ShotKind.Character, CleanNames(rest));
+            case "photo": return new(ShotKind.Photo, CleanNames(rest));
             case "ai": return new(ShotKind.Ai, rest);
             case "keyart": return new(ShotKind.KeyArt, rest);
             case "card":
@@ -62,6 +69,25 @@ public sealed partial record ShotReference(ShotKind Kind, string Value, string? 
                 return new(ShotKind.Card, texts.FirstOrDefault() ?? "", texts.Count > 1 ? texts[1] : null, image);
             default: return new(ShotKind.Scene, rest);
         }
+    }
+
+    /// <summary>
+    /// Gemini a veces repite el prefijo dentro de la lista y el mismo nombre dos veces
+    /// ("character: Weak Kingsley + character: Avida Yang + Avida Yang"): sin limpiar,
+    /// se buscaba un personaje llamado «character: Avida Yang» y la toma quedaba sin
+    /// imagen. Quita los prefijos de cada nombre y los repetidos, en el orden en que llegan.
+    /// </summary>
+    private static string CleanNames(string value)
+    {
+        var names = new List<string>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var raw in value.Split('+', StringSplitOptions.TrimEntries))
+        {
+            var name = raw;
+            while (Prefix().Match(name) is { Success: true } p) name = name[p.Length..].Trim();
+            if (name.Length > 0 && seen.Add(string.Join(' ', ShotTiming.Tokens(name)))) names.Add(name);
+        }
+        return string.Join(" + ", names);
     }
 
     [GeneratedRegex(@"^(poster|logo|card|character|photo|scene|ai|keyart)\s*:", RegexOptions.IgnoreCase)]
