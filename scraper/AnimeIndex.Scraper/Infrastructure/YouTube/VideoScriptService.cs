@@ -84,9 +84,10 @@ public sealed class VideoScriptService(GeminiClient gemini, ILogger<VideoScriptS
             Estructura: un gancho de 2 o 3 frases que haga quedarse a quien mira, el desarrollo
             en orden lógico (contexto, historia, datos curiosos, por qué importa, y una teoría o
             análisis propio cuando las fuentes den pie) y un cierre.
-            El CIERRE siempre: una pregunta concreta sobre el tema para que la gente comente
-            (por ejemplo "¿qué crees tú sobre esta teoría?" o "¿crees que X va a pasar?"), y
-            después pedir el like y la suscripción, en una o dos frases naturales.
+            El CIERRE termina con una idea fuerte sobre el tema o con una pregunta concreta para
+            que la gente comente (por ejemplo "¿crees que X va a pasar?"), y ahí se corta: la
+            última frase del video es esa idea o esa pregunta. PROHIBIDO pedir like, suscripción,
+            campanita o compartir, y nombrar el canal: de eso se encarga la pantalla final de YouTube.
             {{style}}
             {{audience}}
 

@@ -215,10 +215,15 @@ jobs:
           gpg --batch --quiet --pinentry-mode loopback --passphrase-fd 0 \
             -d youtube/voice/ref.tar.gpg <<< "$VOICE_REF_PASSPHRASE" | tar -x -C "$RUNNER_TEMP/voice"
 
+      # Molde de la voz: ref_voz (12 s de voz ya clonada, pareja; con ella no se
+      # notan los cortes entre escenas — prueba del 27-nov-2026). Si el tar todavía
+      # no la trae, la grabación original. ref_largo.txt sigue guiando el guion.
       - name: Generar voz (runner ${{ matrix.shard }})
         run: |
+          v="$RUNNER_TEMP/voice"; ref=ref_voz; [ -f "$v/ref_voz.wav" ] || ref=ref_largo
+          echo "Molde de voz: $ref"
           python youtube/tts_shard.py "$RUNNER_TEMP/plan/plan.json" \
-            "$RUNNER_TEMP/voice/ref_largo.wav" "$RUNNER_TEMP/voice/ref_largo.txt" \
+            "$v/$ref.wav" "$v/$ref.txt" \
             "$RUNNER_TEMP/out" ${{ matrix.shard }} ${{ needs.plan.outputs.total }} 1.7B
 
       - name: Cifrar las voces
@@ -276,8 +281,9 @@ jobs:
 
       - name: Decir los términos
         run: |
+          v="$RUNNER_TEMP/voice"; ref=ref_voz; [ -f "$v/ref_voz.wav" ] || ref=ref_largo
           python youtube/terms_check.py "$RUNNER_TEMP/plan/plan.json" \
-            "$RUNNER_TEMP/voice/ref_largo.wav" "$RUNNER_TEMP/voice/ref_largo.txt" "$RUNNER_TEMP/terms" 1.7B
+            "$v/$ref.wav" "$v/$ref.txt" "$RUNNER_TEMP/terms" 1.7B
           { echo "### Términos extranjeros"; echo '```'; cat "$RUNNER_TEMP/terms/terminos.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 
       # La lista va a la vista; el audio, cifrado como las voces (repo público).

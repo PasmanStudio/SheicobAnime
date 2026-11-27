@@ -77,6 +77,13 @@ public sealed partial class VideoRenderService(
     /// <summary>Colchón al final del video, después de la última frase.</summary>
     public const double EndTailSeconds = 1.0;
 
+    /// <summary>
+    /// Imagen limpia al final, sin voz ni subtítulos, para la pantalla final de
+    /// YouTube (que pide entre 5 y 20 s en los últimos 20 s del video). Los
+    /// elementos se cargan a mano en Studio: la API de YouTube no los expone.
+    /// </summary>
+    public const double EndScreenSeconds = 15.0;
+
     public async Task<string> RenderAsync(
         VideoPlan plan, VideoResearch? research, VideoRenderOptions opt, CancellationToken ct)
     {
@@ -162,8 +169,14 @@ public sealed partial class VideoRenderService(
             spans.Add(seconds + gap);
             elapsed += seconds + gap;
         }
+        // La pantalla final va después de la última escena: la voz se estira con
+        // silencio, pero no entra en spans (sus tomas son aparte, ver más abajo).
+        var spokenEnd = elapsed;
+        gaps[^1] += EndScreenSeconds;
+        elapsed += EndScreenSeconds;
         await RunAsync(opt.FfmpegPath, VoiceTrackArgs(voiceParts, gaps, Path.Combine(dir, "voice.wav")), dir, ct);
-        logger.LogInformation("Voz continua: {Scenes} escenas, {Secs:F1}s", plan.Scenes.Count, elapsed);
+        logger.LogInformation("Voz continua: {Scenes} escenas, {Secs:F1}s + {End:F0}s de pantalla final",
+            plan.Scenes.Count, spokenEnd, EndScreenSeconds);
 
         // ── 2. Imagen de cada escena → cuadro 1920x1080 ─────────────────────
         var frames = new List<string>();
@@ -316,6 +329,13 @@ public sealed partial class VideoRenderService(
         }
         logger.LogInformation("Tomas: {Total} ({Mix})", shots.Count,
             string.Join(", ", counts.Select(c => $"{c.Key}={c.Value}")));
+
+        // Pantalla final: la imagen de portada quieta, desenfocada y oscurecida,
+        // así los elementos de YouTube se leen encima. Sin voz ni subtítulos.
+        var endScreen = Path.Combine(dir, "shot_end.mp4");
+        var endFrames = (int)Math.Round(elapsed * Fps) - (int)Math.Round(spokenEnd * Fps);
+        await RunAsync(opt.FfmpegPath, EndScreenArgs(frames[0], endFrames, endScreen), dir, ct);
+        shotFiles.Add(endScreen);
 
         // ── 4. Unir tomas + voz + subtítulos ───────────────────────────────
         await File.WriteAllLinesAsync(Path.Combine(dir, "shots.txt"),
@@ -743,6 +763,24 @@ public sealed partial class VideoRenderService(
         return
         [
             "-y", "-i", image, "-vf", filter, "-frames:v", d, "-an",
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-r", Fps.ToString(CultureInfo.InvariantCulture), output,
+        ];
+    }
+
+    /// <summary>
+    /// Toma de la pantalla final: imagen quieta (sin zoompan, así nada se mueve
+    /// debajo de los elementos), desenfocada, oscurecida y con fundido desde negro.
+    /// Público para tests.
+    /// </summary>
+    public static List<string> EndScreenArgs(string image, int frames, string output)
+    {
+        var d = frames.ToString(CultureInfo.InvariantCulture);
+        return
+        [
+            "-y", "-loop", "1", "-i", image,
+            "-vf", "scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080," +
+                   $"gblur=sigma=12,eq=brightness=-0.18,fps={Fps},fade=t=in:st=0:d=0.6,format=yuv420p",
+            "-frames:v", d, "-an",
             "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-r", Fps.ToString(CultureInfo.InvariantCulture), output,
         ];
     }

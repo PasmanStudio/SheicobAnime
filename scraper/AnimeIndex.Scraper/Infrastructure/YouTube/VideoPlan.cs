@@ -95,12 +95,37 @@ public sealed class VideoPlan
         var plan = JsonSerializer.Deserialize<VideoPlan>(json, Json)
             ?? throw new InvalidOperationException("plan vacío");
         plan.Scenes = plan.Scenes.Where(s => !string.IsNullOrWhiteSpace(s.Narration)).ToList();
+        plan.StripCallToAction();
+        plan.Scenes = plan.Scenes.Where(s => !string.IsNullOrWhiteSpace(s.Narration)).ToList();
         if (plan.Scenes.Count == 0)
             throw new InvalidOperationException("el plan no tiene escenas con narración");
         return plan;
     }
 
     public string ToJson() => JsonSerializer.Serialize(this, Json);
+
+    /// <summary>Escenas del final donde se buscan pedidos de like o suscripción.</summary>
+    public const int ClosingScenes = 2;
+
+    private static readonly System.Text.RegularExpressions.Regex CallToAction = new(
+        @"suscr[ií]b|me gusta|\blikes?\b|campanita|Sheicob",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+    /// <summary>
+    /// El video cierra con una idea o una pregunta, sin "dale me gusta y suscribite
+    /// a Sheicob Anime": de eso se ocupa la pantalla final de YouTube (26-nov-2026).
+    /// El guion ya lo prohíbe, pero Gemini a veces lo agrega igual: acá se sacan las
+    /// frases de las últimas <see cref="ClosingScenes"/> escenas que lo piden. Corre
+    /// también al re-renderizar un plan viejo con --plan. Público para tests.
+    /// </summary>
+    public void StripCallToAction()
+    {
+        for (var i = Math.Max(0, Scenes.Count - ClosingScenes); i < Scenes.Count; i++)
+        {
+            var sentences = System.Text.RegularExpressions.Regex.Split(Scenes[i].Narration.Trim(), @"(?<=[.!?…])\s+");
+            Scenes[i].Narration = string.Join(" ", sentences.Where(s => !CallToAction.IsMatch(s))).Trim();
+        }
+    }
 }
 
 public sealed class VideoScene
