@@ -123,22 +123,33 @@ public sealed class VideoScriptService(GeminiClient gemini, ILogger<VideoScriptS
             Parte este guion en escenas de 1 a 3 frases (entre 6 y 15 segundos leídas en voz alta).
             Copia la narración TAL CUAL, sin resumir ni agregar nada: la suma de las escenas es el guion completo.
 
-            Para cada escena decide QUÉ SE VE mientras se dice, para que la imagen acompañe la frase:
-            - "visualQueries": de 1 a 4 descripciones EN INGLÉS de lo que debe verse (una cada
-              ~3,5 segundos de la escena, en orden). Se usan de dos formas:
-              · si la frase habla de UN personaje con nombre, pon SOLO su nombre completo
-                ("Weak Kingsley", "Lucy") y se muestra su imagen oficial;
-              · si no, describe la imagen con palabras visuales y concretas, sin nombres propios,
-                para buscarla entre los fotogramas de los videos oficiales: personas, acción,
-                lugar, colores ("a man and a woman embracing under neon lights", "a crowded
-                concert stage with pink lights", "a girl looking at the moon").
-            - "visual": la imagen de respaldo si la wiki no tiene nada. {{keyArtRule}}
-              Usa "ai" SOLO para ideas abstractas sin escena real (el paso del tiempo, una
-              emoción) y en no más de 1 de cada 6 escenas.
-            Para "ai" escribe "imagePrompt" EN INGLÉS: una imagen estilo ilustración anime,
-            cinematográfica, que ilustre la idea de la escena (lugar, objeto, emoción, época).
-            NUNCA nombres de personajes, series, estudios ni personas reales en el prompt, y
-            nada de texto dentro de la imagen. Que las escenas seguidas no se repitan.
+            Para cada escena decide QUÉ SE VE y CUÁNDO, en "shots": la imagen cambia en el
+            momento en que la voz DICE lo que se muestra, no cada tantos segundos. Recorre la
+            narración palabra por palabra y crea una toma por cada cosa que se nombra o afirma:
+            - "at": las 1 a 4 palabras de la narración desde donde va la toma, copiadas
+              EXACTAMENTE (mismas letras, tildes y orden; sin resumir ni traducir). Son las
+              palabras que NOMBRAN la cosa ("entre Studio Trigger", "ganó el Anime", "David Martínez").
+              La primera toma de la escena va con las primeras palabras de la escena.
+            - "show": qué se muestra, con UNO de estos prefijos:
+              · "poster: <título oficial>" cuando se nombra una serie, temporada, película o videojuego
+                ("poster: Cyberpunk: Edgerunners 2", "poster: Cyberpunk 2077");
+              · "logo: <empresa>" cuando se nombra un estudio, empresa o plataforma; si se nombran
+                juntas, en una sola toma con "+" ("logo: Studio Trigger + CD Projekt Red");
+              · "card: <dato corto> | <contexto> | <poster: o character: opcional>" cuando se dice un
+                premio, cifra, fecha, récord o anuncio: el dato en pocas palabras, como placa
+                ("card: Anime del Año | Crunchyroll Anime Awards 2023 | poster: Cyberpunk: Edgerunners",
+                "card: 10 episodios | Estreno: septiembre de 2022"). Usa SOLO datos que dice la narración;
+              · "character: <nombre completo>" cuando se nombra a un personaje ("character: Lucy");
+              · "scene: <descripción visual EN INGLÉS>" para lo que no tiene nombre: un lugar, una
+                acción, un ambiente. Palabras concretas que se vean (personas, acción, lugar, colores),
+                sin nombres propios: se busca entre los planos de los videos oficiales
+                ("futuristic city skyline at night", "a man and a woman embracing under neon lights");
+              · "ai: <prompt en inglés>" SOLO para una idea abstracta sin imagen real (el paso del
+                tiempo, una emoción), como mucho 1 de cada 6 escenas; sin nombres reales ni texto.
+            - Ritmo: una toma cada 2 a 4 segundos (unas 3 palabras por segundo). Dos tomas de una
+              escena no pueden arrancar a menos de 4 palabras de distancia: si dos cosas se nombran
+              juntas, van en una sola toma. Entre menciones, una toma "scene:" que ilustre la frase.
+            - "visual": la imagen de respaldo de la escena. {{keyArtRule}}
 
             Además escribe para YouTube: un título de menos de 70 caracteres que despierte
             curiosidad sin mentir, una descripción de 2 párrafos (sin links) y 8 a 12 tags.
@@ -166,7 +177,8 @@ public sealed class VideoScriptService(GeminiClient gemini, ILogger<VideoScriptS
               "tags": ["..."],
               "mood": "epic|dark|upbeat|chill|emotional",
               "foreignTerms": [ { "term": "Jujutsu Kaisen", "lang": "ja" }, { "term": "Weak Kingsley", "lang": "en", "say": "Uik Kingsli" } ],
-              "scenes": [ { "narration": "...", "visualQueries": ["..."], "visual": "ai|keyart", "imagePrompt": "..." } ]
+              "scenes": [ { "narration": "...", "visual": "ai|keyart",
+                            "shots": [ { "at": "palabras exactas", "show": "poster: ...|logo: ...|card: ...|character: ...|scene: ...|ai: ..." } ] } ]
             }
 
             GUION:
@@ -181,6 +193,10 @@ public sealed class VideoScriptService(GeminiClient gemini, ILogger<VideoScriptS
         plan.CheckTerms = ForeignTermsFrom(boardJson);
         logger.LogInformation("Storyboard ({Model}): {Scenes} escenas, título \"{Title}\"",
             board.Model, plan.Scenes.Count, plan.Title);
+        var shots = plan.Scenes.Sum(s => s.Shots?.Count ?? 0);
+        var lost = plan.Scenes.Sum(s => (s.Shots ?? []).Count(sh =>
+            ShotTiming.FindAnchor(s.Narration, new double[ShotTiming.Tokens(s.Narration).Count], sh.At) is null));
+        logger.LogInformation("Tomas ancladas: {Shots} ({Lost} con palabras que no están en la narración)", shots, lost);
         return plan;
     }
 

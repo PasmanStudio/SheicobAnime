@@ -63,6 +63,7 @@ public sealed record TrailerPool(string Path, List<(double Start, double Length)
 public sealed partial class VideoRenderService(
     IHttpClientFactory httpFactory,
     VisualSearchService visuals,
+    MentionImageService mentions,
     ILogger<VideoRenderService> logger)
 {
     private const int Fps = 30;
@@ -100,13 +101,16 @@ public sealed partial class VideoRenderService(
         // Tope de imágenes IA por video: a 1 cada 45 s, un video de 8 min con una
         // por escena tardaría ~45 min. Son el último recurso (la wiki va primero).
         var aiBudget = MaxAiImages;
+        // Con tomas ancladas cada imagen IA la pide su toma ("ai: ..."): no se
+        // genera una por escena.
+        var anchored = plan.Scenes.Any(s => s.Shots is { Count: > 0 });
         var imageJob = Task.Run(async () =>
         {
             for (var i = 0; i < plan.Scenes.Count; i++)
             {
                 try
                 {
-                    var wantsAi = !UsesKeyArt(plan.Scenes[i]) && aiBudget > 0;
+                    var wantsAi = !anchored && !UsesKeyArt(plan.Scenes[i]) && aiBudget > 0;
                     if (wantsAi) aiBudget--;
                     images[i].SetResult(!wantsAi
                         ? null
@@ -176,8 +180,12 @@ public sealed partial class VideoRenderService(
         await imageJob;
         var trailer = await trailerJob;
 
-        // ── 3. Tomas: independientes de la voz ─────────────────────────────
-        var shots = PlanShots(spans, opt.ShotSeconds);
+        // ── 3. Tomas ───────────────────────────────────────────────────────
+        // Con "shots" en el plan, cada toma arranca cuando la voz DICE sus
+        // palabras; sin ellos (planes viejos), tomas de duración fija.
+        var shots = anchored
+            ? await PlanAnchoredAsync(plan, voiceParts, spans, opt, dir, ct)
+            : PlanShots(spans, opt.ShotSeconds);
         var shotFiles = new List<string>();
         // Clips desde el principio del tráiler y fotogramas desde la mitad, y nunca
         // dos tomas seguidas del tráiler a menos de 8 s entre sí: un tráiler muestra
@@ -190,6 +198,7 @@ public sealed partial class VideoRenderService(
         string? lastPortrait = null;
         var counts = new Dictionary<ShotSource, int>();
         var matched = 0;
+        var aiLeft = new[] { MaxAiImages }; // imágenes IA que piden las tomas "ai: ..."
         // Qué fotograma de los videos oficiales muestra cada descripción del storyboard.
         var matches = trailer is null ? [] : await MatchFramesAsync(plan, trailer, opt, dir, ct);
         for (var k = 0; k < shots.Count; k++)
@@ -207,11 +216,39 @@ public sealed partial class VideoRenderService(
             (double Start, double Length) clip = default;
             (string Path, double Time) still = default;
             var resolved = false;
-            var queries = plan.Scenes[shot.Scene].VisualQueries;
-            var query = queries is { Count: > 0 } ? queries[shot.Slot % queries.Count] : null;
-            if (query is not null)
+            var gentle = false;
+            string? query;
+            if (anchored)
             {
-                portrait = await PickPortraitAsync(query, lastPortrait, dir, opt, ct);
+                // Relleno (Slot -1): clips del tráiler en rotación.
+                var specs = plan.Scenes[shot.Scene].Shots;
+                var spec = shot.Slot >= 0 && specs is { Count: > 0 } ? ShotReference.Parse(specs[shot.Slot].Show) : null;
+                // Lo que no se resuelva (o el relleno, Slot -1): clips del tráiler en rotación.
+                source = k % 2 == 0 ? ShotSource.TrailerClip : ShotSource.TrailerStill;
+                if (source is ShotSource.TrailerClip && (trailer?.Clips.Count ?? 0) == 0) source = ShotSource.TrailerStill;
+                if (source is ShotSource.TrailerStill && (trailer?.Stills.Count ?? 0) == 0) source = ShotSource.SceneImage;
+                query = spec is { Kind: ShotKind.Scene, Value.Length: > 0 } ? spec.Value : null;
+                if (spec is { Kind: not ShotKind.Scene })
+                {
+                    portrait = await MentionFrameAsync(spec, keyArt, dir, opt, aiLeft, ct);
+                    if (portrait is not null)
+                    {
+                        source = ShotSource.Portrait;
+                        resolved = true;
+                        gentle = true; // placas, logos, pósters y retratos: sin paneos que corten el texto
+                        lastPortrait = portrait;
+                    }
+                    else logger.LogWarning("Toma {K}: sin imagen para \"{Show}\" — va un clip", k + 1, specs![shot.Slot].Show);
+                }
+            }
+            else
+            {
+                var queries = plan.Scenes[shot.Scene].VisualQueries;
+                query = queries is { Count: > 0 } ? queries[shot.Slot % queries.Count] : null;
+            }
+            if (!resolved && query is not null)
+            {
+                portrait = anchored ? null : await PickPortraitAsync(query, lastPortrait, dir, opt, ct);
                 if (portrait is not null)
                 {
                     source = ShotSource.Portrait;
@@ -271,7 +308,7 @@ public sealed partial class VideoRenderService(
                 ShotSource.TrailerClip => ClipShotArgs(trailer!.Path, clip.Start, frameCount, flash, output,
                     slowdown: Math.Max(1, shot.Duration / clip.Length)),
                 ShotSource.TrailerStill => ImageShotArgs(still.Path, frameCount, k, flash, output),
-                ShotSource.Portrait => ImageShotArgs(portrait!, frameCount, k, flash, output),
+                ShotSource.Portrait => ImageShotArgs(portrait!, frameCount, gentle ? 0 : k, flash, output, gentle),
                 _ => ImageShotArgs(frames[shot.Scene], frameCount, k, flash, output),
             };
             await RunAsync(opt.FfmpegPath, args, dir, ct);
@@ -398,7 +435,10 @@ public sealed partial class VideoRenderService(
         VideoPlan plan, TrailerPool trailer, VideoRenderOptions opt, string dir, CancellationToken ct)
     {
         var queries = plan.Scenes.SelectMany(s => s.VisualQueries ?? [])
-            .Where(q => visuals.FindCharacter(q) is null).Distinct().ToList();
+            .Where(q => visuals.FindCharacter(q) is null)
+            .Concat(plan.Scenes.SelectMany(s => s.Shots ?? [])
+                .Select(s => ShotReference.Parse(s.Show)).Where(r => r.Kind == ShotKind.Scene && r.Value.Length > 0).Select(r => r.Value))
+            .Distinct().ToList();
         var result = new Dictionary<string, List<(int, float)>>();
         if (queries.Count == 0) return result;
 
@@ -425,6 +465,151 @@ public sealed partial class VideoRenderService(
         }
         return result;
     }
+
+    // ── Tomas ancladas a la narración ──────────────────────────────────────
+
+    /// <summary>
+    /// Tiempos reales de cada palabra (faster-whisper) → en qué segundo arranca
+    /// cada toma del storyboard. Deja shots_plan.txt con cada corte (escena,
+    /// segundo, palabras, qué se muestra) para revisar la sincronía sin ver el video.
+    /// </summary>
+    private async Task<List<VideoShot>> PlanAnchoredAsync(VideoPlan plan, IReadOnlyList<string> voiceParts,
+        IReadOnlyList<double> spans, VideoRenderOptions opt, string dir, CancellationToken ct)
+    {
+        var heard = await WordTimesAsync(voiceParts, opt, dir, ct);
+        var anchors = new List<IReadOnlyList<double?>>();
+        var report = new StringBuilder();
+        var sceneStart = 0.0;
+        var missing = 0;
+        for (var i = 0; i < plan.Scenes.Count; i++)
+        {
+            var scene = plan.Scenes[i];
+            var seconds = spans[i] - (i == plan.Scenes.Count - 1 ? EndTailSeconds : SceneGapSeconds);
+            var starts = ShotTiming.WordStarts(scene.Narration, heard.GetValueOrDefault(voiceParts[i]) ?? [], seconds);
+            var list = new List<double?>();
+            var from = 0;
+            foreach (var spec in scene.Shots ?? [])
+            {
+                var found = ShotTiming.FindAnchor(scene.Narration, starts, spec.At, from);
+                if (found is { } f) from = f.Word;
+                else if (list.Count > 0) missing++;
+                list.Add(found?.Time);
+                report.Append(CultureInfo.InvariantCulture,
+                    $"{i + 1,2} {sceneStart + (found?.Time ?? 0),7:F2}s  «{spec.At}»{(found is null && list.Count > 1 ? " (NO ENCONTRADO)" : "")} → {spec.Show}\n");
+            }
+            anchors.Add(list);
+            sceneStart += spans[i];
+        }
+        await File.WriteAllTextAsync(Path.Combine(dir, "shots_plan.txt"), report.ToString(), ct);
+        var shots = ShotTiming.PlanAnchoredShots(spans, anchors, opt.ShotSeconds);
+        logger.LogInformation("Tomas ancladas: {Shots} ({Named} con referencia, {Missing} anclas no encontradas, tiempos {Src})",
+            shots.Count, shots.Count(s => s.Slot >= 0), missing, heard.Count > 0 ? "de whisper" : "estimados por letras");
+        return shots;
+    }
+
+    /// <summary>
+    /// Corre Scripts/word_times.py sobre la voz de cada escena (ya recortada, la
+    /// que suena en el video). Si falla (sin faster-whisper), devuelve vacío y los
+    /// tiempos se estiman por letras.
+    /// </summary>
+    private async Task<Dictionary<string, List<(string Word, double Start)>>> WordTimesAsync(
+        IReadOnlyList<string> voiceParts, VideoRenderOptions opt, string dir, CancellationToken ct)
+    {
+        var result = new Dictionary<string, List<(string, double)>>();
+        var job = Path.Combine(dir, "word_times_job.json");
+        var output = Path.Combine(dir, "word_times.json");
+        await File.WriteAllTextAsync(job, System.Text.Json.JsonSerializer.Serialize(
+            new { files = voiceParts, language = "es", model = "base" }), ct);
+        try
+        {
+            var parts = opt.MatcherPython.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            var script = Path.Combine(AppContext.BaseDirectory, "Scripts", "word_times.py");
+            var sw = Stopwatch.StartNew();
+            await RunAsync(parts[0], parts.Skip(1).Concat(["-I", script, job, output]), dir, ct, TimeSpan.FromMinutes(30));
+            using var doc = System.Text.Json.JsonDocument.Parse(await File.ReadAllTextAsync(output, ct));
+            foreach (var file in doc.RootElement.EnumerateObject())
+                result[file.Name] = file.Value.EnumerateArray()
+                    .Select(w => (w[0].GetString() ?? "", w[1].GetDouble())).ToList();
+            logger.LogInformation("Whisper: tiempos de {Words} palabras en {Secs:F0}s",
+                result.Values.Sum(v => v.Count), sw.Elapsed.TotalSeconds);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception or IOException or System.Text.Json.JsonException)
+        {
+            logger.LogWarning("Whisper no disponible ({Msg}) — tiempos estimados por letras",
+                ex.Message.Length > 300 ? ex.Message[..300] : ex.Message);
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Referencia de una toma (póster, logo, tarjeta, personaje, IA, arte) →
+    /// cuadro 1920x1080 listo para la toma. Null si no hay imagen: la toma va
+    /// con un clip. Los cuadros quedan en caché en mentions/.
+    /// </summary>
+    private async Task<string?> MentionFrameAsync(ShotReference r, IReadOnlyList<string> keyArt, string dir,
+        VideoRenderOptions opt, int[] aiLeft, CancellationToken ct)
+    {
+        var key = $"{r.Kind}|{r.Value}|{r.Detail}|{r.Image}";
+        var hash = Convert.ToHexString(System.Security.Cryptography.SHA1.HashData(Encoding.UTF8.GetBytes(key)))[..12];
+        Directory.CreateDirectory(Path.Combine(dir, "mentions"));
+        var frame = Path.Combine(dir, "mentions", $"frame_{r.Kind.ToString().ToLowerInvariant()}_{hash}.jpg");
+        if (File.Exists(frame)) return frame;
+        var background = keyArt.FirstOrDefault();
+        try
+        {
+            switch (r.Kind)
+            {
+                case ShotKind.Logo:
+                    var logos = new List<(string, string?)>();
+                    foreach (var name in r.Names) logos.Add((name, await mentions.LogoAsync(name, dir, ct)));
+                    if (logos.Count == 0) return null;
+                    CardRenderer.RenderLogos(logos, background, frame);
+                    return frame;
+                case ShotKind.Card:
+                    if (r.Value.Length == 0) return null;
+                    var image = r.Image is null ? null : await RawMentionImageAsync(ShotReference.Parse(r.Image), keyArt, dir, ct);
+                    CardRenderer.RenderCard(r.Value, r.Detail, image, image ?? background, frame);
+                    return frame;
+                case ShotKind.Character or ShotKind.Photo:
+                    var people = new List<(string, string)>();
+                    foreach (var name in r.Names)
+                        if (await RawMentionImageAsync(r with { Value = name }, keyArt, dir, ct) is { } pic) people.Add((name, pic));
+                    if (people.Count == 0) return null;
+                    CardRenderer.RenderPortraits(people, background, frame);
+                    return frame;
+                case ShotKind.Ai:
+                    if (aiLeft[0] <= 0 || r.Value.Length == 0) return null;
+                    aiLeft[0]--;
+                    var raw = await GenerateImageAsync(new VideoScene { ImagePrompt = r.Value },
+                        BitConverter.ToUInt16(Convert.FromHexString(hash[..4])), Path.Combine(dir, "mentions"), "ai_" + hash, ct);
+                    if (raw is null) return null;
+                    await RunAsync(opt.FfmpegPath, FrameArgs(raw, frame, isAiImage: true), dir, ct);
+                    return frame;
+                default:
+                    var picture = await RawMentionImageAsync(r, keyArt, dir, ct);
+                    if (picture is null) return null;
+                    await RunAsync(opt.FfmpegPath, FrameArgs(picture, frame, isAiImage: false), dir, ct);
+                    return frame;
+            }
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or IOException or ArgumentException)
+        {
+            logger.LogWarning("Toma \"{Kind}: {Value}\" falló: {Msg}", r.Kind, r.Value, ex.Message);
+            return null;
+        }
+    }
+
+    /// <summary>Póster, personaje o arte oficial → la imagen tal cual (sin componer).</summary>
+    private async Task<string?> RawMentionImageAsync(ShotReference r, IReadOnlyList<string> keyArt, string dir, CancellationToken ct) =>
+        r.Kind switch
+        {
+            ShotKind.Poster => await mentions.PosterAsync(r.Value, dir, ct),
+            ShotKind.Character => await mentions.CharacterAsync(r.Value, dir, ct),
+            ShotKind.Photo => await mentions.PhotoAsync(r.Value, dir, ct),
+            ShotKind.Logo => await mentions.LogoAsync(r.Names.FirstOrDefault() ?? r.Value, dir, ct),
+            ShotKind.KeyArt => keyArt.LastOrDefault(), // la portada (vertical) antes que el banner
+            _ => null,
+        };
 
     // ── Voz ─────────────────────────────────────────────────────────────────
 
@@ -537,10 +722,13 @@ public sealed partial class VideoRenderService(
     /// imagen en dos tomas parezca otra. Se escala a 4K antes del zoompan para
     /// que no tiemble. Sin audio: la voz va aparte. Público para tests.
     /// </summary>
-    public static List<string> ImageShotArgs(string image, int frames, int variant, bool flash, string output)
+    public static List<string> ImageShotArgs(string image, int frames, int variant, bool flash, string output,
+        bool gentle = false)
     {
         var d = frames.ToString(CultureInfo.InvariantCulture);
-        var (z, x, y) = (variant % 6) switch
+        // Tarjetas, logos y pósters: un acercamiento leve y centrado, así el texto
+        // y los bordes no se salen del cuadro.
+        var (z, x, y) = gentle ? ($"1+0.04*on/{d}", "iw/2-(iw/zoom/2)", "ih/2-(ih/zoom/2)") : (variant % 6) switch
         {
             0 => ($"1+0.12*on/{d}", "iw/2-(iw/zoom/2)", "ih/2-(ih/zoom/2)"),
             1 => ($"1.15-0.12*on/{d}", "iw/2-(iw/zoom/2)", "ih/2-(ih/zoom/2)"),

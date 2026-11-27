@@ -123,4 +123,28 @@ public sealed class VideoScene
     /// Una por toma de ~3,5 s, en orden. Las resuelve <see cref="VisualSearchService"/>.
     /// </summary>
     public List<string>? VisualQueries { get; set; }
+
+    /// <summary>
+    /// Tomas ancladas a la narración (contrato desde el 26-nov-2026): cada una dice
+    /// QUÉ se muestra (<see cref="VideoShotSpec.Show"/>, una referencia con tipo) y
+    /// DESDE QUÉ PALABRAS (<see cref="VideoShotSpec.At"/>, copiadas de la narración).
+    /// El render corta cuando la voz dice esas palabras (tiempos reales de
+    /// Scripts/word_times.py). Si está, reemplaza a <see cref="VisualQueries"/>.
+    /// </summary>
+    public List<VideoShotSpec>? Shots { get; set; }
+}
+
+/// <summary>Una toma anclada: qué se ve y desde qué palabras de la narración.</summary>
+public sealed class VideoShotSpec
+{
+    /// <summary>Las primeras 1 a 4 palabras, copiadas TAL CUAL de la narración, desde donde va la toma.</summary>
+    public string At { get; set; } = "";
+
+    /// <summary>
+    /// Qué se ve, con prefijo de tipo (ver <see cref="ShotReference"/>):
+    /// "poster: Cyberpunk: Edgerunners", "logo: Studio Trigger + CD Projekt Red",
+    /// "card: Anime del Año | Crunchyroll Anime Awards 2023", "character: Lucy",
+    /// "scene: a city skyline at night with neon lights", "ai: ...", "keyart".
+    /// </summary>
+    public string Show { get; set; } = "";
 }

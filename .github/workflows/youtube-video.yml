@@ -292,6 +292,13 @@ jobs:
           pip install --quiet torch --index-url https://download.pytorch.org/whl/cpu
           pip install --quiet open_clip_torch pillow
 
+      # faster-whisper da el segundo en que la voz dice cada palabra: la toma
+      # cambia cuando se NOMBRA algo (Scripts/word_times.py). Sin él, los tiempos
+      # se estiman por letras.
+      - name: Instalar faster-whisper (CPU)
+        continue-on-error: true
+        run: pip install --quiet faster-whisper
+
       # ── Tráiler oficial (clips y fotogramas) ──────────────────────────────
       # YouTube frena a yt-dlp en los runners: misma receta que news-cron.yml
       # (ver ahí el porqué de cada paso). Sin tráiler el render sigue con

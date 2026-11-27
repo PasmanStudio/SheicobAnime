@@ -69,6 +69,8 @@ if (args.Contains("--youtube"))
         ytBuilder.Services.AddScoped<AnimeIndex.Scraper.Infrastructure.YouTube.VideoResearchService>();
         ytBuilder.Services.AddScoped<AnimeIndex.Scraper.Infrastructure.YouTube.VideoScriptService>();
         ytBuilder.Services.AddScoped<AnimeIndex.Scraper.Infrastructure.YouTube.VisualSearchService>();
+        ytBuilder.Services.AddScoped<AnimeIndex.Scraper.Infrastructure.YouTube.MentionImageService>();
+        ytBuilder.Services.AddScoped<AnimeIndex.Scraper.Infrastructure.YouTube.MentionDetector>();
         ytBuilder.Services.AddScoped<AnimeIndex.Scraper.Infrastructure.YouTube.VideoRenderService>();
 
         await using var ytScope = ytBuilder.Build().Services.CreateAsyncScope();
@@ -161,6 +163,16 @@ if (args.Contains("--youtube"))
         if (plan.Pronunciations.Count > 0)
             Log.Information("Pronunciación: {N} términos ({Sample})", plan.Pronunciations.Count,
                 string.Join(", ", plan.Pronunciations.Take(6).Select(p => $"{p.Key}→{p.Value}")));
+
+        // Lo que se nombra, se ve: reconoce en la narración cada nombre, fecha, cifra y
+        // cita, y le asigna su toma anclada (completa lo que Gemini no marcó).
+        // Deja mentions_report.md. --no-mentions lo apaga.
+        if (!args.Contains("--no-mentions"))
+        {
+            Directory.CreateDirectory(outDir);
+            await sp.GetRequiredService<AnimeIndex.Scraper.Infrastructure.YouTube.MentionDetector>()
+                .AnnotateAsync(plan, anime, Path.GetFullPath(outDir), ytCts.Token);
+        }
 
         // --plan-only: solo el guion (primer job del workflow youtube-video.yml;
         // la voz la generan después varios runners en paralelo).

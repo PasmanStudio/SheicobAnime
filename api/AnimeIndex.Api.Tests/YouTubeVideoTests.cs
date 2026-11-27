@@ -324,4 +324,231 @@ public class YouTubeVideoTests
             "[0:a]apad=pad_dur=0.2[a0];[1:a]apad=pad_dur=1[a1];[a0][a1]concat=n=2:v=0:a=1[out]", filter);
         Assert.Equal("voice.wav", args[^1]);
     }
+
+    // ── Tomas ancladas a la narración ──────────────────────────────────────
+
+    [Fact]
+    public void ShotReference_ParsesEachKind()
+    {
+        Assert.Equal(new ShotReference(ShotKind.Poster, "Cyberpunk: Edgerunners 2"), ShotReference.Parse("poster: Cyberpunk: Edgerunners 2"));
+        var logo = ShotReference.Parse("logo: Studio Trigger + CD Projekt Red");
+        Assert.Equal(ShotKind.Logo, logo.Kind);
+        Assert.Equal(["Studio Trigger", "CD Projekt Red"], logo.Names);
+        Assert.Equal(new ShotReference(ShotKind.Card, "Anime del Año", "Crunchyroll Anime Awards 2023", "poster: Cyberpunk: Edgerunners"),
+            ShotReference.Parse("card: Anime del Año | Crunchyroll Anime Awards 2023 | poster: Cyberpunk: Edgerunners"));
+        Assert.Equal(new ShotReference(ShotKind.Card, "10 episodios", null, null), ShotReference.Parse("card: 10 episodios"));
+        Assert.Equal(ShotKind.Character, ShotReference.Parse("Character: Lucy").Kind);
+        Assert.Equal(ShotKind.KeyArt, ShotReference.Parse("keyart").Kind);
+        // Sin prefijo: descripción de escena, como los planes viejos.
+        Assert.Equal(new ShotReference(ShotKind.Scene, "a city at night"), ShotReference.Parse("a city at night"));
+    }
+
+    [Fact]
+    public void WordStarts_AlignsWhisperTimesWithTheNarration()
+    {
+        // Whisper real de la escena 5 de Cyberpunk: escribe "10" y "2022" en cifras.
+        const string narration = "Esta miniserie de diez episodios, estrenada en septiembre de dos mil veintidós, fue una colaboración maestra entre Studio Trigger y CD Projekt Red.";
+        (string, double)[] heard =
+        [
+            ("Esta", 0.0), ("miniserie", 0.2), ("de", 0.7), ("10", 0.8), ("episodios", 1.1), ("estrenada", 1.8),
+            ("en", 2.3), ("septiembre", 2.5), ("de", 3.0), ("2022", 3.1), ("fue", 4.1), ("una", 4.4),
+            ("colaboración", 4.6), ("maestra", 5.2), ("entre", 5.8), ("Studio", 6.1), ("Trigger", 6.5),
+            ("y", 7.0), ("CD", 7.3), ("Projekt", 7.4), ("Red.", 7.9),
+        ];
+        var starts = ShotTiming.WordStarts(narration, heard, 8.4);
+
+        Assert.Equal(5.8, ShotTiming.FindAnchor(narration, starts, "entre Studio Trigger")!.Value.Time, 3);
+        Assert.Equal(7.3, ShotTiming.FindAnchor(narration, starts, "CD Projekt Red")!.Value.Time, 3);
+        // "dos mil veintidós" no está en whisper: queda entre "de" (3.0) y "fue" (4.1).
+        Assert.InRange(ShotTiming.FindAnchor(narration, starts, "dos mil")!.Value.Time, 3.0, 4.1);
+        Assert.True(starts.Zip(starts.Skip(1)).All(p => p.First <= p.Second));
+    }
+
+    [Fact]
+    public void WordStarts_WithoutWhisper_EstimatesByLetters()
+    {
+        var starts = ShotTiming.WordStarts("uno dos tres cuatro", [], 8);
+        Assert.Equal(0, starts[0]);
+        Assert.True(starts[3] > starts[2] && starts[3] < 8);
+    }
+
+    [Fact]
+    public void FindAnchor_IgnoresAccentsAndPunctuation_AndSearchesForward()
+    {
+        const string narration = "¿Recuerdas cuando Cyberpunk: Edgerunners llegó a Netflix? Netflix lo estrenó.";
+        var starts = Enumerable.Range(0, ShotTiming.Tokens(narration).Count).Select(i => (double)i).ToArray();
+        Assert.Equal(4, ShotTiming.FindAnchor(narration, starts, "llego a netflix")!.Value.Word);
+        var first = ShotTiming.FindAnchor(narration, starts, "Netflix")!.Value;
+        Assert.Equal(6, first.Word);
+        Assert.Equal(7, ShotTiming.FindAnchor(narration, starts, "Netflix", first.Word + 1)!.Value.Word);
+        Assert.Null(ShotTiming.FindAnchor(narration, starts, "Crunchyroll"));
+    }
+
+    [Fact]
+    public void PlanAnchoredShots_CutsAtTheAnchors_DropsTooShort_AndFillsLongHolds()
+    {
+        // Escena 1 (8,4 s): tarjeta al inicio, logos en 6,1 s.
+        // Escena 2 (10 s): la toma 0 duraría 0,35 s → se descarta y la 1 arranca con la escena; la 2 no tiene ancla.
+        var shots = ShotTiming.PlanAnchoredShots([8.4, 10.0],
+        [
+            [0.0, 6.1],
+            [0.0, 0.5, null],
+        ]);
+
+        Assert.Equal(0, shots[0].Slot);
+        Assert.Equal(0, shots[0].Start, 3);
+        Assert.Equal(1, shots[1].Slot);
+        Assert.Equal(6.1 - ShotTiming.LeadSeconds, shots[1].Start, 3);
+        var scene2 = shots.Where(s => s.Scene == 1).ToList();
+        Assert.Equal(1, scene2[0].Slot);
+        Assert.Equal(8.4, scene2[0].Start, 3);
+        Assert.Equal(3.5, scene2[0].Duration, 3);
+        Assert.All(scene2.Skip(1), s => Assert.Equal(-1, s.Slot));
+        // Sin huecos ni solapes, y cubre todo.
+        for (var i = 1; i < shots.Count; i++)
+            Assert.Equal(shots[i - 1].Start + shots[i - 1].Duration, shots[i].Start, 6);
+        Assert.Equal(18.4, shots[^1].Start + shots[^1].Duration, 6);
+    }
+
+    [Theory]
+    [InlineData("Cyberpunk: Edgerunners 2", "Cyberpunk: Edgerunners 2", true)]
+    [InlineData("Cyberpunk: Edgerunners", "Cyberpunk: Edgerunners II", false)]
+    [InlineData("Frieren", "Sousou no Frieren", true)]
+    [InlineData("Cyberpunk 2077", "Cyberpunk: Edgerunners", false)]
+    [InlineData("Cyberpunk: Edgerunners", "Cyberpunk: Edgerunners 2", false)]
+    public void SameTitle_OnlyAcceptsTheRequestedWork(string wanted, string found, bool same) =>
+        Assert.Equal(same, MentionImageService.SameTitle(wanted, found));
+
+    [Fact]
+    public void InfoboxImage_ReadsTheLogoField()
+    {
+        const string wikitext = "{{Infobox company\n| name = Trigger\n| logo = Trigger Logo.svg\n| logo_size = 200px\n| image = [[File:Office.jpg|thumb]]\n}}";
+        Assert.Equal("Trigger Logo.svg", MentionImageService.InfoboxImage(wikitext, "logo"));
+        Assert.Equal("Office.jpg", MentionImageService.InfoboxImage(wikitext, "image"));
+        Assert.Null(MentionImageService.InfoboxImage(wikitext, "cover"));
+    }
+
+    [Fact]
+    public void VideoPlan_ParsesAnchoredShots()
+    {
+        var plan = VideoPlan.Parse("""
+            { "title": "t", "scenes": [ { "narration": "Hola Netflix.", "shots": [ { "at": "Hola", "show": "logo: Netflix" } ] } ] }
+            """);
+        Assert.Equal("logo: Netflix", plan.Scenes[0].Shots![0].Show);
+        Assert.Contains("\"shots\"", plan.ToJson());
+    }
+
+    // ── Detector de menciones ──────────────────────────────────────────────
+
+    [Theory]
+    [InlineData("dos mil veintidós", 2022, 3)]
+    [InlineData("setenta y siete", 77, 3)]
+    [InlineData("dos mil setenta y siete episodios", 2077, 5)]
+    [InlineData("diez episodios", 10, 1)]
+    [InlineData("veinte de octubre", 20, 1)]
+    [InlineData("2023", 2023, 1)]
+    public void NumberAt_ReadsSpokenNumbers(string text, long value, int length)
+    {
+        var n = SpanishText.NumberAt(SpanishText.Words(text), 0);
+        Assert.Equal((value, length), n);
+    }
+
+    [Fact]
+    public void NumberAt_ArticlesAreNotNumbers() =>
+        Assert.Null(SpanishText.NumberAt(SpanishText.Words("una nueva leyenda"), 0));
+
+    [Fact]
+    public void FindCandidates_FindsNamesDatesCountsAndAwards()
+    {
+        var lower = new HashSet<string> { "esta", "su", "fue", "ganó" };
+        var scene5 = MentionDetector.FindCandidates(
+            "Esta miniserie de diez episodios, estrenada en septiembre de dos mil veintidós, fue una colaboración maestra entre Studio Trigger y CD Projekt Red.", lower);
+        Assert.Equal(
+            ["Count:10 episodios", "Date:Septiembre de 2022", "Name:Studio Trigger", "Name:CD Projekt Red"],
+            scene5.Select(c => $"{c.Kind}:{c.Text}"));
+
+        var scene7 = MentionDetector.FindCandidates(
+            "Su éxito fue tan rotundo que ganó el Anime del Año en los Crunchyroll Anime Awards de dos mil veintitrés, y revitalizó al videojuego Cyberpunk dos mil setenta y siete.", lower);
+        Assert.Contains(scene7, c => c.Text == "Anime del Año");
+        Assert.Contains(scene7, c => c.Text == "Crunchyroll Anime Awards" && c.Year == 2023);
+        Assert.Contains(scene7, c => c.Text == "Cyberpunk 2077");
+        Assert.DoesNotContain(scene7, c => c.Text == "Su");
+
+        var dates = MentionDetector.FindCandidates("Se estrenó el veinte de octubre de dos mil veintiséis, con Cyberpunk: Edgerunners Dos.", lower);
+        Assert.Contains(dates, c => c.Kind == CandidateKind.Date && c.Text == "20 de octubre de 2026");
+        Assert.Contains(dates, c => c.Kind == CandidateKind.Name && c.Text == "Cyberpunk: Edgerunners 2");
+    }
+
+    [Fact]
+    public void FindCandidates_SentenceStartIsANameOnlyIfNeverLowercase()
+    {
+        var lower = new HashSet<string> { "vemos" };
+        var found = MentionDetector.FindCandidates("Vemos a Weak. Avida era cantante. 'Watson' suena.", lower);
+        Assert.Equal(["Weak", "Avida", "Watson"], found.Select(c => c.Text));
+    }
+
+    [Fact]
+    public void FindCandidates_MultiWordQuotesBecomeCards()
+    {
+        var found = MentionDetector.FindCandidates("Muchos dijeron 'gracias, CD Projekt Red, ahora todo duele'.", new HashSet<string> { "muchos" });
+        Assert.Contains(found, c => c.Kind == CandidateKind.Quote && c.Text.StartsWith("gracias"));
+    }
+
+    [Theory]
+    [InlineData("Avida", "Avida Yang")]
+    [InlineData("Talia", "Talia Yang")]
+    [InlineData("Weak Kingsley", "Weak Kingsley")]
+    [InlineData("Yang", null)] // dos personajes comparten el apellido
+    [InlineData("Night City", null)]
+    public void CharacterNamed_MatchesFirstOrLastName(string name, string? expected) =>
+        Assert.Equal(expected, MentionDetector.CharacterNamed(name, ["Weak Kingsley", "Avida Yang", "Talia Yang"]));
+
+    [Fact]
+    public void MergeShots_KeepsGeminiShots_AddsMissingMentions_JoinsNamesSaidTogether()
+    {
+        var scene = new VideoScene
+        {
+            Narration = "Esta miniserie fue una colaboración maestra entre Studio Trigger y CD Projekt Red, y lo cambió todo para siempre en la industria del anime.",
+            Shots = [new VideoShotSpec { At = "Esta miniserie", Show = "poster: Cyberpunk: Edgerunners" }],
+            VisualQueries = ["CD Projekt Red logo", "a crowd cheering at a concert"],
+        };
+        var words = SpanishText.Words(scene.Narration);
+        var shots = MentionDetector.MergeShots(scene, words,
+        [
+            (7, "logo: Studio Trigger", "company"),
+            (10, "logo: CD Projekt Red", "company"),
+        ]);
+
+        Assert.Equal("poster: Cyberpunk: Edgerunners", shots[0].Show);
+        Assert.Equal("logo: Studio Trigger + CD Projekt Red", shots[1].Show);
+        Assert.Equal("Studio Trigger y", shots[1].At);
+        // Hueco largo al final → relleno con la descripción visual (no con "CD Projekt Red logo").
+        Assert.Equal("scene: a crowd cheering at a concert", shots[^1].Show);
+    }
+
+    [Theory]
+    [InlineData("a red rose on the ground", true)]
+    [InlineData("CD Projekt Red logo", false)]
+    [InlineData("Weak Kingsley embracing Avida Yang", false)]
+    [InlineData("a trophy for 'Anime of the Year'", false)]
+    public void IsVisualDescription_OnlyKeepsWhatClipCanSee(string query, bool visual) =>
+        Assert.Equal(visual, MentionDetector.IsVisualDescription(query));
+
+    [Theory]
+    [InlineData("{{Infobox company\n| name = Trigger", "company")]
+    [InlineData("{{Infobox video game\n| title = Cyberpunk 2077", "work")]
+    [InlineData("{{Infobox musical artist\n| name = Petite Meller", "person")]
+    [InlineData("{{Infobox award\n| name = Crunchyroll Anime Awards", "award")]
+    [InlineData("Sin infobox.", "")]
+    public void InfoboxKind_MapsTheTemplate(string wikitext, string kind) =>
+        Assert.Equal(kind, MentionImageService.InfoboxKind(wikitext));
+
+    [Theory]
+    [InlineData("CD Projekt", "CD Projekt Red", true)]
+    [InlineData("Studio Trigger", "Studio Trigger", true)]
+    [InlineData("Militech", "Cyberpunk 2077", false)]
+    [InlineData("Kai Ikarashi", "Cyberpunk: Edgerunners 2", false)]
+    [InlineData("Oslo", "Oslo (band)", true)]
+    public void TitleIsName_RejectsArticlesAboutSomethingElse(string name, string title, bool same) =>
+        Assert.Equal(same, MentionImageService.TitleIsName(name, title));
 }
