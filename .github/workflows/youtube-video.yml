@@ -4,7 +4,9 @@
 #   voice  → Qwen3-TTS 1.7B en CPU, escenas repartidas en N runners en paralelo
 #            (benchmark 24-nov-2026: 12,3 s por s de audio en 4 CPU → un video de
 #            10 min tarda ~2 h en 1 runner y ~15 min en 8)
-#   render → imágenes, FFmpeg y subtítulos → video.mp4 para revisar (no se sube a YouTube)
+#   render → imágenes, FFmpeg y subtítulos → video.mp4 para revisar
+#   upload → al canal, PRIVADO, solo con "upload": true en youtube/request.json
+#            (o el input del dispatch). Secrets YOUTUBE_CLIENT_ID/SECRET/REFRESH_TOKEN.
 #
 # La grabación de referencia va CIFRADA (youtube/voice/ref.tar.gpg; clave en el
 # secret VOICE_REF_PASSPHRASE) y las voces intermedias viajan cifradas entre
@@ -29,6 +31,18 @@ on:
       runners:
         description: 'Runners en paralelo para la voz'
         default: '8'
+      upload:
+        description: 'Subir el video al canal de YouTube'
+        type: boolean
+        default: false
+      privacy:
+        description: 'Visibilidad (sin auditoría de la API, YouTube fuerza privado igual)'
+        type: choice
+        options: [private, unlisted, public]
+        default: private
+      playlist:
+        description: 'Playlist del canal (vacío = deducida del título)'
+        required: false
   push:
     branches: [feat/youtube-tts-bench]
     paths: [youtube/**, scraper/AnimeIndex.Scraper/Infrastructure/YouTube/**, .github/workflows/youtube-video.yml]
@@ -52,6 +66,9 @@ jobs:
       total: ${{ steps.shards.outputs.total }}
       anime: ${{ steps.request.outputs.anime }}
       clip: ${{ steps.request.outputs.clip }}
+      upload: ${{ steps.request.outputs.upload }}
+      privacy: ${{ steps.request.outputs.privacy }}
+      playlist: ${{ steps.request.outputs.playlist }}
     steps:
       - uses: actions/checkout@v4
 
@@ -72,6 +89,9 @@ jobs:
           IN_ANIME: ${{ inputs.anime }}
           IN_MINUTES: ${{ inputs.minutes }}
           IN_RUNNERS: ${{ inputs.runners }}
+          IN_UPLOAD: ${{ inputs.upload }}
+          IN_PRIVACY: ${{ inputs.privacy }}
+          IN_PLAYLIST: ${{ inputs.playlist }}
         run: |
           python3 - <<'PY'
           import json, os
@@ -91,6 +111,11 @@ jobs:
               for k, v in out.items():
                   e.write(f"{k}={v}\n")
               o.write(f"anime={out['ANIME']}\nclip={out['CLIP']}\n")
+              # Subida a YouTube: input del dispatch o "upload": true en request.json. Default apagada.
+              upload = os.environ.get("IN_UPLOAD") == "true" or req.get("upload") is True
+              o.write(f"upload={str(upload).lower()}\n")
+              o.write(f"privacy={os.environ.get('IN_PRIVACY') or req.get('privacy') or 'private'}\n")
+              o.write(f"playlist={os.environ.get('IN_PLAYLIST') or req.get('playlist') or ''}\n")
           with open(os.path.join(os.environ["RUNNER_TEMP"], "sources.txt"), "w") as f:
               f.write("\n".join(req.get("sources", [])))
           print(json.dumps(out, ensure_ascii=False, indent=2))
@@ -383,3 +408,44 @@ jobs:
             ${{ runner.temp }}/video/thumbnail.jpg
             ${{ runner.temp }}/video/youtube.txt
           retention-days: 7
+
+  # Sube el video al canal: solo con el input upload o "upload": true en
+  # youtube/request.json (sin eso, un push no sube nada).
+  # Sin la auditoría de YouTube API Services el video queda PRIVADO aunque se
+  # pida otra cosa: revisarlo y publicarlo a mano en Studio.
+  # Cuota: 10.000 unidades/día; una subida ≈ 1.700 (insert + miniatura + playlist).
+  upload:
+    needs: [plan, render]
+    if: needs.plan.outputs.upload == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: '9.x'
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: video
+          path: ${{ runner.temp }}/video
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: plan
+          path: ${{ runner.temp }}/plan
+
+      - name: Subir a YouTube
+        env:
+          YouTube__ClientId: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YouTube__ClientSecret: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YouTube__RefreshToken: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+          PRIVACY: ${{ needs.plan.outputs.privacy }}
+          PLAYLIST: ${{ needs.plan.outputs.playlist }}
+        run: |
+          extra=()
+          [ -n "$PLAYLIST" ] && extra+=(--playlist "$PLAYLIST")
+          dotnet run --project scraper/AnimeIndex.Scraper -c Release -- --youtube-upload "$RUNNER_TEMP/video" \
+            --plan "$RUNNER_TEMP/plan/plan.json" --privacy "${PRIVACY:-private}" "${extra[@]}"
+          { echo "## Subido a YouTube"; echo; echo '```json'; cat "$RUNNER_TEMP/video/youtube-upload.json"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
