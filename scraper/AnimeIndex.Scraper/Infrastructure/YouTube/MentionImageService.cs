@@ -130,6 +130,37 @@ public sealed partial class MentionImageService(IHttpClientFactory httpFactory, 
         }
     }
 
+    /// <summary>
+    /// Elenco de una serie con su retrato oficial (AniList, hasta 25 por rol y
+    /// popularidad), bajado a mentions/ con la misma caché que <see cref="CharacterAsync"/>.
+    /// Sirve de referencia para encontrar en el metraje a un personaje: un plano es
+    /// suyo si se parece más a él que a cualquier otro del elenco.
+    /// </summary>
+    public async Task<List<(string Name, string Path)>> SeriesCastAsync(string series, string dir, CancellationToken ct)
+    {
+        var cast = new List<(string, string)>();
+        try
+        {
+            using var doc = await AniListAsync(
+                "query ($s: String) { Media(search: $s, type: ANIME) { characters(perPage: 25, sort: [ROLE, FAVOURITES_DESC]) { nodes { name { full } image { large } } } } }",
+                series, ct);
+            if (doc is null || doc.RootElement.GetProperty("data").GetProperty("Media").ValueKind != JsonValueKind.Object) return cast;
+            foreach (var n in doc.RootElement.GetProperty("data").GetProperty("Media").GetProperty("characters").GetProperty("nodes").EnumerateArray())
+            {
+                var name = n.GetProperty("name").GetProperty("full").GetString() ?? "";
+                var url = n.GetProperty("image").GetProperty("large").GetString();
+                if (name.Length == 0 || url is null || url.Contains("default.jpg", StringComparison.Ordinal)) continue;
+                if (await CachedAsync("character", name, dir, ct, () => Task.FromResult<string?>(url)) is { } path)
+                    cast.Add((name, path));
+            }
+        }
+        catch (Exception ex) when (ex is HttpRequestException or JsonException or TaskCanceledException or KeyNotFoundException or InvalidOperationException && !ct.IsCancellationRequested)
+        {
+            logger.LogWarning("Elenco de '{Series}' no disponible: {Msg}", series, ex.Message);
+        }
+        return cast;
+    }
+
     private async Task<bool> AniListExactSeriesAsync(string name, CancellationToken ct)
     {
         using var doc = await AniListAsync(

@@ -215,7 +215,9 @@ public sealed partial class VideoRenderService(
         var matched = 0;
         var aiLeft = new[] { MaxAiImages }; // imágenes IA que piden las tomas "ai: ..."
         // Qué fotograma de los videos oficiales muestra cada descripción del storyboard.
-        var matches = footage.IsEmpty ? [] : await MatchFramesAsync(plan, footage, opt, dir, ct);
+        // Y en qué planos aparece cada personaje que se vuelve a nombrar.
+        var faces = footage.IsEmpty ? [] : await CastFacesAsync(plan, intro, dir, ct);
+        var matches = footage.IsEmpty ? [] : await MatchFramesAsync(plan, footage, faces, opt, dir, ct);
         for (var k = 0; k < shots.Count; k++)
         {
             var shot = shots[k];
@@ -235,6 +237,8 @@ public sealed partial class VideoRenderService(
             var resolved = false;
             var gentle = false;
             string? query;
+            string? seen = null; // personaje nombrado otra vez que aparece en el plano elegido
+            var repeated = false; // su imagen otra vez: no hubo plano nuevo donde aparezca
             if (anchored)
             {
                 // Lo ya presentado y el relleno (Slot -1) van con metraje.
@@ -242,7 +246,33 @@ public sealed partial class VideoRenderService(
                 source = k % 2 == 0 ? ShotSource.TrailerClip : ShotSource.TrailerStill;
                 if (footage.IsEmpty) source = ShotSource.SceneImage;
                 query = spec is { Kind: ShotKind.Scene, Value.Length: > 0 } ? spec.Value : null;
-                if (spec is { Kind: not ShotKind.Scene })
+                if (spec is { Again: true })
+                {
+                    // Ya presentado: un plano NUEVO donde aparezca (de cualquier fuente,
+                    // no solo la de la escena); si no hay, su imagen otra vez, con
+                    // movimiento. Nunca un plano cualquiera.
+                    if (spec.Kind == ShotKind.Character)
+                        foreach (var name in spec.Names)
+                            if (matches.TryGetValue(FaceKey(name), out var ranked)
+                                && footage.PickMatched(ranked, [], MinCastMargin, shot.Duration) is { } found)
+                            {
+                                pick = found;
+                                source = found.AsClip ? ShotSource.TrailerClip : ShotSource.TrailerStill;
+                                resolved = true;
+                                seen = name;
+                                break;
+                            }
+                    if (!resolved && await MentionFrameAsync(spec with { Again = false }, keyArt, dir, opt, aiLeft, ct) is { } again)
+                    {
+                        portrait = again;
+                        source = ShotSource.Portrait;
+                        resolved = true;
+                        lastPortrait = again;
+                        repeated = true; // con paneo (gentle = false): no se ve igual que la primera vez
+                    }
+                    if (!resolved) logger.LogWarning("Toma {K}: sin plano ni imagen para \"{Show}\" — va un clip", k + 1, IntroductionLedger.Describe(spec));
+                }
+                else if (spec is { Kind: not ShotKind.Scene })
                 {
                     portrait = await MentionFrameAsync(spec, keyArt, dir, opt, aiLeft, ct);
                     if (portrait is not null)
@@ -294,8 +324,9 @@ public sealed partial class VideoRenderService(
             director.AppendLine(source switch
             {
                 ShotSource.TrailerClip or ShotSource.TrailerStill =>
-                    $"{pick!.Pool.Id} @{pick.Segment.Time:F1}s {(pick.AsClip ? "clip" : "fotograma")}{(query is not null && resolved ? $" ← CLIP «{query}»" : "")}",
-                ShotSource.Portrait => Path.GetFileName(portrait),
+                    $"{pick!.Pool.Id} @{pick.Segment.Time:F1}s {(pick.AsClip ? "clip" : "fotograma")}" +
+                    (seen is not null ? $" ← aparece «{seen}»" : query is not null && resolved ? $" ← CLIP «{query}»" : ""),
+                ShotSource.Portrait => Path.GetFileName(portrait) + (repeated ? " (otra vez: sin plano nuevo donde aparezca)" : ""),
                 _ => "imagen de la escena",
             });
 
@@ -542,6 +573,65 @@ public sealed partial class VideoRenderService(
     public const float MinFrameMatch = 0.27f;
 
     /// <summary>
+    /// Un plano muestra a un personaje si se parece a su retrato más que a cualquier
+    /// otro retrato del elenco (margen &gt; 0; ver Scripts/frame_match.py). Medido el
+    /// 27-nov-2026 con el tráiler de la T1 de Edgerunners contra el elenco de AniList
+    /// (25 retratos): 3 de 3 planos aceptados correctos, pero encuentra pocos (3 de
+    /// 19 planos claros de David y Lucy). Con un elenco de 4 la precisión caía a
+    /// 0,3–0,5: por eso se compara contra el elenco entero de la serie.
+    /// </summary>
+    public const float MinCastMargin = 0f;
+
+    private static string FaceKey(string name) => "face:" + name;
+
+    /// <summary>
+    /// Retratos de referencia para buscar en el metraje a los personajes que se
+    /// vuelven a nombrar: el elenco de AniList de cada serie con póster en el plan,
+    /// más el retrato de cada nombrado que no esté en ese elenco. Clave: el nombre
+    /// tal como lo escribe el plan para los nombrados; el de AniList para el resto.
+    /// </summary>
+    private async Task<Dictionary<string, string>> CastFacesAsync(VideoPlan plan, IntroductionResult intro, string dir, CancellationToken ct)
+    {
+        var faces = new Dictionary<string, string>(StringComparer.Ordinal);
+        var wanted = intro.Specs.SelectMany(s => s).OfType<ShotReference>()
+            .Where(r => r is { Again: true, Kind: ShotKind.Character }).SelectMany(r => r.Names).Distinct().ToList();
+        if (wanted.Count == 0) return faces;
+
+        var series = plan.Scenes.SelectMany(s => s.Shots ?? []).Select(s => ShotReference.Parse(s.Show))
+            .Where(r => r.Kind == ShotKind.Poster && r.Value.Length > 0).Select(r => r.Value)
+            .DistinctBy(v => string.Join(' ', ShotTiming.Tokens(v))).Take(3).ToList();
+        var cast = new List<(string Name, string Path)>();
+        foreach (var s in series)
+            foreach (var c in await mentions.SeriesCastAsync(s, dir, ct))
+                if (!cast.Any(x => x.Path == c.Path)) cast.Add(c);
+
+        foreach (var name in wanted)
+        {
+            var match = cast.FirstOrDefault(c => SameCharacter(name, c.Name));
+            var path = match.Path ?? await mentions.CharacterAsync(name, dir, ct);
+            if (path is not null) faces[name] = path;
+        }
+        foreach (var (name, path) in cast)
+            if (!faces.ContainsValue(path)) faces.TryAdd(name, path);
+        logger.LogInformation("Personajes nombrados otra vez: {Wanted} — {Found} con retrato, contra un elenco de {Cast}",
+            wanted.Count, wanted.Count(faces.ContainsKey), faces.Count);
+        return faces;
+    }
+
+    /// <summary>
+    /// "David Martínez" = "David Martinez"; "Lucy Kushinada" = "Lucy" (AniList a veces
+    /// guarda solo el nombre de pila): el mismo primer nombre y uno contiene al otro.
+    /// Público para tests.
+    /// </summary>
+    public static bool SameCharacter(string a, string b)
+    {
+        var x = ShotTiming.Tokens(MentionImageService.WithoutAccents(a));
+        var y = ShotTiming.Tokens(MentionImageService.WithoutAccents(b));
+        if (x.Count == 0 || y.Count == 0 || x[0] != y[0]) return false;
+        return x.All(y.Contains) || y.All(x.Contains);
+    }
+
+    /// <summary>
     /// Si la toma nombra a un personaje, su retrato oficial normalizado a
     /// 1920x1080 (fondo desenfocado: los retratos son verticales). No repite el
     /// mismo retrato en dos tomas seguidas. Null si la toma no es un personaje.
@@ -577,7 +667,8 @@ public sealed partial class VideoRenderService(
     /// Si falla (sin torch, sin modelo), el video sigue con la rotación de siempre.
     /// </summary>
     private async Task<Dictionary<string, List<(int Index, float Score)>>> MatchFramesAsync(
-        VideoPlan plan, FootageLibrary footage, VideoRenderOptions opt, string dir, CancellationToken ct)
+        VideoPlan plan, FootageLibrary footage, IReadOnlyDictionary<string, string> faces,
+        VideoRenderOptions opt, string dir, CancellationToken ct)
     {
         var queries = plan.Scenes.SelectMany(s => s.VisualQueries ?? [])
             .Where(q => visuals.FindCharacter(q) is null)
@@ -585,14 +676,14 @@ public sealed partial class VideoRenderService(
                 .Select(s => ShotReference.Parse(s.Show)).Where(r => r.Kind == ShotKind.Scene && r.Value.Length > 0).Select(r => r.Value))
             .Distinct().ToList();
         var result = new Dictionary<string, List<(int, float)>>();
-        if (queries.Count == 0) return result;
+        if (queries.Count == 0 && faces.Count == 0) return result;
 
         var job = Path.Combine(dir, "frame_match_job.json");
         var output = Path.Combine(dir, "frame_match.json");
         // Todos los puntajes (top = todos los fotogramas): después cada toma se queda
         // con los de la fuente de su escena.
         await File.WriteAllTextAsync(job, System.Text.Json.JsonSerializer.Serialize(
-            new { frames = footage.Stills.Select(s => s.Segment.Still), queries, top = footage.Stills.Count }), ct);
+            new { frames = footage.Stills.Select(s => s.Segment.Still), queries, top = footage.Stills.Count, faces }), ct);
         try
         {
             var parts = opt.MatcherPython.Split(' ', StringSplitOptions.RemoveEmptyEntries);

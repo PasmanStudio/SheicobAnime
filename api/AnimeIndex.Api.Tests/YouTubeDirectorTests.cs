@@ -102,10 +102,75 @@ public class YouTubeDirectorTests
         Assert.NotNull(result.Specs[0][1]);
         Assert.Null(result.Specs[1][0]);                       // póster repetido → metraje
         Assert.Equal(ShotKind.Scene, result.Specs[1][1]!.Kind);  // las escenas no se registran
-        Assert.Null(result.Specs[2][0]);                       // los dos ya presentados
+        Assert.True(result.Specs[2][0]!.Again);                // los dos ya presentados: plano donde aparecen, nunca uno cualquiera
+        Assert.Equal("Weak Kingsley + Avida Yang", result.Specs[2][0]!.Value);
         Assert.Equal("Talia Yang", result.Specs[2][1]!.Value);  // solo la que falta
+        Assert.False(result.Specs[2][1]!.Again);
         Assert.Equal(3, result.Changes.Count);
         Assert.Contains("escena 1", result.Changes[0].Reason);
+        Assert.Equal("otra vez character: Weak Kingsley + Avida Yang", result.Changes[1].Now);
+    }
+
+    [Fact]
+    public void Ledger_ACharacterNamedAgainNeverFallsToRandomFootage()
+    {
+        // Render 46052409761: 4 tomas "character: David Martínez" y solo la primera
+        // lo mostraba; las otras tres iban a un tráiler de la T2 donde no aparece.
+        var plan = Shots(
+            [("David", "character: David Martínez")],
+            [("David", "character: David Martínez"), ("Netflix", "logo: Netflix")],
+            [("David", "character: david martinez"), ("Netflix", "logo: Netflix")]);
+
+        var result = IntroductionLedger.Apply(plan);
+
+        Assert.False(result.Specs[0][0]!.Again);
+        Assert.True(result.Specs[1][0]!.Again);
+        Assert.True(result.Specs[2][0]!.Again);                 // con otra escritura es el mismo
+        Assert.Equal("David Martínez", result.Specs[1][0]!.Value);
+        Assert.Null(result.Specs[2][1]);                         // un logo repetido sí va con metraje
+    }
+
+    [Theory]
+    [InlineData("character: Weak Kingsley + character: Avida Yang + Avida Yang", "Weak Kingsley + Avida Yang")]
+    [InlineData("character: character: Lucy", "Lucy")]
+    [InlineData("character: David Martínez + david martinez", "David Martínez")]
+    [InlineData("logo: Netflix + logo: Studio Trigger", "Netflix + Studio Trigger")]
+    [InlineData("poster: Cyberpunk: Edgerunners", "Cyberpunk: Edgerunners")]   // "Cyberpunk:" no es un prefijo
+    [InlineData("photo: photo: Hideo Kojima", "Hideo Kojima")]
+    public void Parse_CleansRepeatedPrefixesAndNames(string show, string value)
+    {
+        var r = ShotReference.Parse(show);
+        Assert.Equal(value, r.Value);
+        Assert.DoesNotContain(r.Names, n => n.Contains(':') && !n.StartsWith("Cyberpunk", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Parse_CardImageWithRepeatedPrefixesIsCleanedToo()
+    {
+        var card = ShotReference.Parse("card: El equipo | character: Lucy + character: David Martinez");
+        Assert.Equal("Lucy + David Martinez", ShotReference.Parse(card.Image!).Value);
+    }
+
+    [Theory]
+    [InlineData("David Martínez", "David Martinez", true)]
+    [InlineData("Lucy Kushinada", "Lucy", true)]
+    [InlineData("Lucy", "Lucyna Kushinada", false)]
+    [InlineData("Gloria Martinez", "David Martinez", false)]
+    [InlineData("Rebecca", "Rebecca", true)]
+    public void SameCharacter_MatchesAccentsAndFirstNames(string a, string b, bool same) =>
+        Assert.Equal(same, VideoRenderService.SameCharacter(a, b));
+
+    [Fact]
+    public void Library_ARepeatedCharacterCanComeFromAnySource()
+    {
+        var library = new FootageLibrary([Pool("s2-trailer", (10, 0)), Pool("s1-trailer", (40, 1))]);
+        // Índices en Stills: 0 s2@10, 1 s1@40. Margen del retrato: solo s1@40 es de David.
+        var david = new List<(int, float)> { (1, 0.03f), (0, -0.02f) };
+
+        var pick = library.PickMatched(david, [], VideoRenderService.MinCastMargin, 2);
+
+        Assert.Equal("s1-trailer", pick!.Pool.Id);
+        Assert.Null(library.PickMatched(david, [], VideoRenderService.MinCastMargin, 2)); // usado; el otro no es suyo
     }
 
     [Fact]
