@@ -110,8 +110,12 @@ if (args.Contains("--youtube"))
         AnimeIndex.Scraper.Infrastructure.YouTube.VideoResearch? found = null;
 
         // Wiki de la serie (descubierta desde el nombre) y personajes de AniList:
-        // de ahí salen las imágenes de cada toma y artículos para el guion.
-        if (anime is not null || topic is not null)
+        // de ahí salen las imágenes de cada toma y artículos para el guion. Un plan
+        // con tomas ancladas ya no la usa (las imágenes salen de AniList, Wikipedia y
+        // el metraje oficial): re-renderizarlo con --plan no la consulta.
+        var planNeedsWiki = planPath is null || !System.Text.RegularExpressions.Regex.IsMatch(
+            await File.ReadAllTextAsync(planPath), "\"shots\"\\s*:\\s*\\[\\s*\\{");
+        if ((anime is not null || topic is not null) && planNeedsWiki)
             await visuals.InitAsync(new[] { anime, topic }.OfType<string>(), anime, ytCts.Token);
 
         // --clip <url>: video fuente para los clips (el del reel, un PV, un MV);

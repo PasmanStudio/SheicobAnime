@@ -18,6 +18,14 @@ public sealed class VideoPlan
     public List<string> Sources { get; set; } = [];
 
     /// <summary>
+    /// Videos oficiales de donde sale el metraje (tráileres, teasers, videoclip),
+    /// cada uno con su tema. Cada escena muestra planos de la fuente de lo que se
+    /// está contando (<see cref="FootageRouter"/>). Null = el tráiler de AniList
+    /// (o el de --clip), como antes.
+    /// </summary>
+    public List<FootageSource>? Footage { get; set; }
+
+    /// <summary>
     /// Tono de la música de fondo: epic | dark | upbeat | chill | emotional (los
     /// moods de la biblioteca de los reels). Lo elige Gemini; null → "dark", que
     /// le queda bien a las teorías.
@@ -132,6 +140,13 @@ public sealed class VideoScene
     /// Scripts/word_times.py). Si está, reemplaza a <see cref="VisualQueries"/>.
     /// </summary>
     public List<VideoShotSpec>? Shots { get; set; }
+
+    /// <summary>
+    /// Ids de <see cref="VideoPlan.Footage"/> de donde sale el metraje de esta
+    /// escena. Opcional: sin esto se elige por lo que dice la narración. Sirve para
+    /// corregir a mano ("no habrá segunda temporada" habla de la primera).
+    /// </summary>
+    public List<string>? Footage { get; set; }
 }
 
 /// <summary>Una toma anclada: qué se ve y desde qué palabras de la narración.</summary>

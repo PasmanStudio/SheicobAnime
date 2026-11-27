@@ -91,3 +91,5 @@ test-output/
 
 # Videos del prototipo --youtube
 youtube-output/
+# Metraje bajado por el video largo de YouTube (videos oficiales): nunca al repo.
+**/footage/

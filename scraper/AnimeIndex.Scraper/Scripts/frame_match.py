@@ -6,8 +6,11 @@ fotograma de los videos fuente (tráiler, PV, el videoclip del reel) y devuelve
 los más parecidos. Así un clip deja de ser al azar y acompaña la frase.
 
 Uso: python frame_match.py <job.json> <salida.json>
-  job:    {"frames": ["ruta1.jpg", ...], "queries": ["descripción", ...]}
-  salida: {"descripción": [[índice_fotograma, puntaje], ...]}  (los 10 mejores, de mayor a menor)
+  job:    {"frames": ["ruta1.jpg", ...], "queries": ["descripción", ...], "top": 10}
+  salida: {"descripción": [[índice_fotograma, puntaje], ...]}  (los "top" mejores, de mayor a menor)
+
+"top" es opcional (10). Con varias fuentes de metraje se piden todos: cada toma
+se queda después con los fotogramas de la fuente de su escena.
 
 El puntaje es la similitud coseno de CLIP (~0,15 = nada que ver, ~0,30 = muy parecido).
 """
@@ -24,6 +27,7 @@ MODEL, PRETRAINED = "ViT-B-32", "laion2b_s34b_b79k"
 def main():
     job = json.load(open(sys.argv[1], encoding="utf-8"))
     frames, queries = job["frames"], job["queries"]
+    top = max(1, int(job.get("top", 10)))
     if not frames or not queries:
         json.dump({}, open(sys.argv[2], "w", encoding="utf-8"))
         return
@@ -48,7 +52,7 @@ def main():
 
     out = {}
     for q, row in zip(queries, sims):
-        ranked = sorted(enumerate(row), key=lambda x: -x[1])[:10]
+        ranked = sorted(enumerate(row), key=lambda x: -x[1])[:top]
         out[q] = [[i, round(s, 4)] for i, s in ranked]
     json.dump(out, open(sys.argv[2], "w", encoding="utf-8"), ensure_ascii=False, indent=1)
     print(f"frame_match: {len(queries)} descripciones × {len(frames)} fotogramas", flush=True)

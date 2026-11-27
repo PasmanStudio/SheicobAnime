@@ -37,8 +37,6 @@ public sealed record VideoShot(int Scene, int Slot, double Start, double Duratio
 /// <summary>De dónde sale la imagen de una toma.</summary>
 public enum ShotSource { SceneImage, TrailerClip, TrailerStill, Portrait }
 
-/// <summary>Tráiler oficial bajado y cortado: tramos usables como clip y fotogramas sueltos.</summary>
-public sealed record TrailerPool(string Path, List<(double Start, double Length)> Clips, List<(string Path, double Time)> Stills);
 
 /// <summary>
 /// <see cref="VideoPlan"/> → video.mp4 horizontal 1080p, con el ritmo de los
@@ -88,8 +86,9 @@ public sealed partial class VideoRenderService(
         var subtitles = new List<(string Srt, TimeSpan Offset)>();
         var keyArtTurn = 0;
 
-        // El tráiler se baja y se corta en paralelo con la voz.
-        var trailerJob = PrepareTrailerAsync(research, opt, dir, ct);
+        // El metraje (tráiler de AniList o las fuentes del plan) se baja y se corta
+        // en paralelo con la voz.
+        var footageJob = PrepareFootageAsync(plan, research, opt, dir, ct);
 
         // Pollinations da 1 imagen cada 45 s por IP: se generan en segundo plano,
         // en orden, mientras el loop hace voz y segmentos de las escenas previas.
@@ -178,7 +177,7 @@ public sealed partial class VideoRenderService(
             frames.Add(frame);
         }
         await imageJob;
-        var trailer = await trailerJob;
+        var footage = await footageJob;
 
         // ── 3. Tomas ───────────────────────────────────────────────────────
         // Con "shots" en el plan, cada toma arranca cuando la voz DICE sus
@@ -187,46 +186,42 @@ public sealed partial class VideoRenderService(
             ? await PlanAnchoredAsync(plan, voiceParts, spans, opt, dir, ct)
             : PlanShots(spans, opt.ShotSeconds);
         var shotFiles = new List<string>();
-        // Clips desde el principio del tráiler y fotogramas desde la mitad, y nunca
-        // dos tomas seguidas del tráiler a menos de 8 s entre sí: un tráiler muestra
-        // la misma escena en varios cortes y salían dos tomas iguales (el árbol de
-        // Frieren, 24-nov-2026).
-        var clipTurn = 0;
-        var stillTurn = (trailer?.Stills.Count ?? 0) / 2;
-        double? lastTrailerTime = null;
-        var usedTrailerMoments = new HashSet<double>(); // por segmento: clip y fotograma comparten el plano
+        // De qué fuentes sale el metraje de cada escena, y qué ya se presentó: lo
+        // que se vuelve a nombrar va con metraje (ver director.md).
+        var routes = FootageRouter.Route(plan, FootageSources(plan, footage));
+        var intro = IntroductionLedger.Apply(plan);
+        var director = DirectorReport(plan, routes, intro);
         string? lastPortrait = null;
         var counts = new Dictionary<ShotSource, int>();
         var matched = 0;
         var aiLeft = new[] { MaxAiImages }; // imágenes IA que piden las tomas "ai: ..."
         // Qué fotograma de los videos oficiales muestra cada descripción del storyboard.
-        var matches = trailer is null ? [] : await MatchFramesAsync(plan, trailer, opt, dir, ct);
+        var matches = footage.IsEmpty ? [] : await MatchFramesAsync(plan, footage, opt, dir, ct);
         for (var k = 0; k < shots.Count; k++)
         {
             var shot = shots[k];
             var startFrame = (int)Math.Round(shot.Start * Fps);
             var frameCount = Math.Max(1, (int)Math.Round((shot.Start + shot.Duration) * Fps) - startFrame);
             var flash = k > 0 && k % 4 == 0; // flash blanco cada ~4 cortes, como la referencia
-            var source = ChooseShotSource(shot, k, trailer?.Clips.Count ?? 0, trailer?.Stills.Count ?? 0);
+            var segments = footage.Stills.Count;
+            var source = ChooseShotSource(shot, k, segments, segments);
+            var group = routes[shot.Scene].Ids;
 
             // Lo que dice la toma manda. Si nombra a un personaje: su retrato
             // oficial. Si describe una imagen: el plano de los videos oficiales que
-            // CLIP encontró más parecido (como clip si dura lo suficiente).
+            // CLIP encontró más parecido (como clip si dura lo suficiente), de la
+            // fuente de lo que se está contando.
             string? portrait = null;
-            (double Start, double Length) clip = default;
-            (string Path, double Time) still = default;
+            FootagePick? pick = null;
             var resolved = false;
             var gentle = false;
             string? query;
             if (anchored)
             {
-                // Relleno (Slot -1): clips del tráiler en rotación.
-                var specs = plan.Scenes[shot.Scene].Shots;
-                var spec = shot.Slot >= 0 && specs is { Count: > 0 } ? ShotReference.Parse(specs[shot.Slot].Show) : null;
-                // Lo que no se resuelva (o el relleno, Slot -1): clips del tráiler en rotación.
+                // Lo ya presentado y el relleno (Slot -1) van con metraje.
+                var spec = shot.Slot >= 0 && shot.Slot < intro.Specs[shot.Scene].Count ? intro.Specs[shot.Scene][shot.Slot] : null;
                 source = k % 2 == 0 ? ShotSource.TrailerClip : ShotSource.TrailerStill;
-                if (source is ShotSource.TrailerClip && (trailer?.Clips.Count ?? 0) == 0) source = ShotSource.TrailerStill;
-                if (source is ShotSource.TrailerStill && (trailer?.Stills.Count ?? 0) == 0) source = ShotSource.SceneImage;
+                if (footage.IsEmpty) source = ShotSource.SceneImage;
                 query = spec is { Kind: ShotKind.Scene, Value.Length: > 0 } ? spec.Value : null;
                 if (spec is { Kind: not ShotKind.Scene })
                 {
@@ -238,7 +233,7 @@ public sealed partial class VideoRenderService(
                         gentle = true; // placas, logos, pósters y retratos: sin paneos que corten el texto
                         lastPortrait = portrait;
                     }
-                    else logger.LogWarning("Toma {K}: sin imagen para \"{Show}\" — va un clip", k + 1, specs![shot.Slot].Show);
+                    else logger.LogWarning("Toma {K}: sin imagen para \"{Show}\" — va un clip", k + 1, IntroductionLedger.Describe(spec));
                 }
             }
             else
@@ -255,59 +250,42 @@ public sealed partial class VideoRenderService(
                     lastPortrait = portrait;
                     resolved = true;
                 }
-                else if (matches.TryGetValue(query, out var ranked))
+                else if (matches.TryGetValue(query, out var ranked)
+                         && footage.PickMatched(ranked, group, MinFrameMatch, shot.Duration) is { } best)
                 {
-                    foreach (var (idx, score) in ranked)
-                    {
-                        if (score < MinFrameMatch) break;
-                        var time = trailer!.Stills[idx].Time;
-                        if (usedTrailerMoments.Contains(time)) continue;
-                        usedTrailerMoments.Add(time);
-                        lastTrailerTime = time;
-                        if (trailer.Clips[idx].Length >= shot.Duration * 0.6)
-                        {
-                            source = ShotSource.TrailerClip;
-                            clip = trailer.Clips[idx];
-                        }
-                        else
-                        {
-                            source = ShotSource.TrailerStill;
-                            still = trailer.Stills[idx];
-                        }
-                        resolved = true;
-                        matched++;
-                        break;
-                    }
+                    pick = best;
+                    source = best.AsClip ? ShotSource.TrailerClip : ShotSource.TrailerStill;
+                    resolved = true;
+                    matched++;
                 }
             }
 
-            // Sin coincidencia: rotación de antes. Un clip sirve si cubre al menos
-            // el 60% de la toma (el resto con cámara lenta); si no, un fotograma.
-            // Clips y fotogramas se identifican por el centro de su plano, así no
-            // se repite un plano como clip y después como fotograma.
-            if (!resolved && source == ShotSource.TrailerClip)
+            // Sin coincidencia: el siguiente plano sin usar de la fuente de la
+            // escena. Un clip sirve si cubre al menos el 60% de la toma (el resto con
+            // cámara lenta); si no, su fotograma. Un plano usado como clip tampoco
+            // vuelve como fotograma (ni desde otra fuente que lo repita).
+            if (!resolved && source is ShotSource.TrailerClip or ShotSource.TrailerStill)
             {
-                var fits = trailer!.Clips.Where(c => c.Length >= shot.Duration * 0.6).ToList();
-                var pick = PickAwayFrom(fits.Select(c => c.Start + c.Length / 2).ToList(), ref clipTurn,
-                    lastTrailerTime, used: usedTrailerMoments);
-                if (pick >= 0) { clip = fits[pick]; lastTrailerTime = clip.Start + clip.Length / 2; }
-                else source = trailer.Stills.Count > 0 ? ShotSource.TrailerStill : ShotSource.SceneImage;
-            }
-            if (!resolved && source == ShotSource.TrailerStill)
-            {
-                var pick = PickAwayFrom(trailer!.Stills.Select(s => s.Time).ToList(), ref stillTurn,
-                    lastTrailerTime, used: usedTrailerMoments);
-                still = trailer.Stills[pick];
-                lastTrailerTime = still.Time;
+                pick = footage.PickFiller(group, source == ShotSource.TrailerClip, shot.Duration);
+                source = pick is null ? ShotSource.SceneImage
+                    : pick.AsClip ? ShotSource.TrailerClip : ShotSource.TrailerStill;
             }
             counts[source] = counts.GetValueOrDefault(source) + 1;
+            director.Append(CultureInfo.InvariantCulture, $"{k + 1,3} {shot.Start,7:F2}s  esc {shot.Scene + 1,2}  ");
+            director.AppendLine(source switch
+            {
+                ShotSource.TrailerClip or ShotSource.TrailerStill =>
+                    $"{pick!.Pool.Id} @{pick.Segment.Time:F1}s {(pick.AsClip ? "clip" : "fotograma")}{(query is not null && resolved ? $" ← CLIP «{query}»" : "")}",
+                ShotSource.Portrait => Path.GetFileName(portrait),
+                _ => "imagen de la escena",
+            });
 
             var output = Path.Combine(dir, $"shot_{(k + 1).ToString("000", CultureInfo.InvariantCulture)}.mp4");
             var args = source switch
             {
-                ShotSource.TrailerClip => ClipShotArgs(trailer!.Path, clip.Start, frameCount, flash, output,
-                    slowdown: Math.Max(1, shot.Duration / clip.Length)),
-                ShotSource.TrailerStill => ImageShotArgs(still.Path, frameCount, k, flash, output),
+                ShotSource.TrailerClip => ClipShotArgs(pick!.Pool.Path, pick.Segment.Start, frameCount, flash, output,
+                    slowdown: Math.Max(1, shot.Duration / pick.Segment.Length)),
+                ShotSource.TrailerStill => ImageShotArgs(pick!.Segment.Still, frameCount, k, flash, output),
                 ShotSource.Portrait => ImageShotArgs(portrait!, frameCount, gentle ? 0 : k, flash, output, gentle),
                 _ => ImageShotArgs(frames[shot.Scene], frameCount, k, flash, output),
             };
@@ -316,6 +294,9 @@ public sealed partial class VideoRenderService(
         }
         logger.LogInformation("Tomas: {Total} ({Mix})", shots.Count,
             string.Join(", ", counts.Select(c => $"{c.Key}={c.Value}")));
+        await File.WriteAllTextAsync(Path.Combine(dir, "director.md"), director.Append("```\n").ToString(), ct);
+        logger.LogInformation("Dirección: {Changes} menciones ya presentadas pasan a metraje — ver director.md",
+            intro.Changes.Count);
 
         // ── 4. Unir tomas + voz + subtítulos ───────────────────────────────
         await File.WriteAllLinesAsync(Path.Combine(dir, "shots.txt"),
@@ -432,7 +413,7 @@ public sealed partial class VideoRenderService(
     /// Si falla (sin torch, sin modelo), el video sigue con la rotación de siempre.
     /// </summary>
     private async Task<Dictionary<string, List<(int Index, float Score)>>> MatchFramesAsync(
-        VideoPlan plan, TrailerPool trailer, VideoRenderOptions opt, string dir, CancellationToken ct)
+        VideoPlan plan, FootageLibrary footage, VideoRenderOptions opt, string dir, CancellationToken ct)
     {
         var queries = plan.Scenes.SelectMany(s => s.VisualQueries ?? [])
             .Where(q => visuals.FindCharacter(q) is null)
@@ -444,8 +425,10 @@ public sealed partial class VideoRenderService(
 
         var job = Path.Combine(dir, "frame_match_job.json");
         var output = Path.Combine(dir, "frame_match.json");
+        // Todos los puntajes (top = todos los fotogramas): después cada toma se queda
+        // con los de la fuente de su escena.
         await File.WriteAllTextAsync(job, System.Text.Json.JsonSerializer.Serialize(
-            new { frames = trailer.Stills.Select(s => s.Path), queries }), ct);
+            new { frames = footage.Stills.Select(s => s.Segment.Still), queries, top = footage.Stills.Count }), ct);
         try
         {
             var parts = opt.MatcherPython.Split(' ', StringSplitOptions.RemoveEmptyEntries);
@@ -456,7 +439,7 @@ public sealed partial class VideoRenderService(
                 result[q.Name] = q.Value.EnumerateArray()
                     .Select(p => (p[0].GetInt32(), (float)p[1].GetDouble())).ToList();
             logger.LogInformation("CLIP: {Queries} descripciones contra {Frames} fotogramas del video fuente",
-                queries.Count, trailer.Stills.Count);
+                queries.Count, footage.Stills.Count);
         }
         catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception or IOException or System.Text.Json.JsonException)
         {
@@ -767,25 +750,77 @@ public sealed partial class VideoRenderService(
     }
 
     /// <summary>
-    /// Baja el tráiler oficial (YouTube, vía yt-dlp) y lo corta por cambios de
-    /// plano: los tramos de 1,2 s o más son clips posibles y de cada uno sale un
-    /// fotograma. Se descartan los primeros 2 s y los últimos 6 s (logos,
-    /// fechas, créditos). Si algo falla, el video sale igual solo con imágenes.
+    /// Fuentes de metraje del video: las del plan (<see cref="VideoPlan.Footage"/>)
+    /// o, en planes sin manifiesto, el tráiler de AniList / --clip como "trailer".
     /// </summary>
-    private async Task<TrailerPool?> PrepareTrailerAsync(VideoResearch? research, VideoRenderOptions opt, string dir, CancellationToken ct)
+    private static List<FootageSource> FootageSources(VideoPlan plan, FootageLibrary? footage = null) =>
+        plan.Footage is { Count: > 0 }
+            ? plan.Footage
+            : (footage?.Pools ?? []).Select(p => new FootageSource { Id = p.Id, Kind = p.Kind }).ToList();
+
+    /// <summary>
+    /// Baja (si hace falta) y corta cada fuente de metraje. Un plano que aparece en
+    /// dos fuentes (el teaser y el tráiler repiten planos) queda como el mismo
+    /// momento: usado en una, usado en las dos. Una fuente que falla se saltea.
+    /// </summary>
+    private async Task<FootageLibrary> PrepareFootageAsync(VideoPlan plan, VideoResearch? research,
+        VideoRenderOptions opt, string dir, CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(research?.TrailerUrl)) return null;
+        var pools = new List<FootagePool>();
+        var kept = new List<(float[] Signature, int Moment, string Pool)>();
+        if (plan.Footage is { Count: > 0 })
+        {
+            Directory.CreateDirectory(Path.Combine(dir, "footage"));
+            foreach (var source in plan.Footage)
+            {
+                // El id es nombre de archivo y la url va a yt-dlp: se validan para que
+                // un plan mal escrito no escriba fuera de footage/ ni pase opciones.
+                if (!FootageSource.IsValidId(source.Id) || source.Url is { Length: > 0 } u && !FootageSource.IsValidUrl(u))
+                {
+                    logger.LogWarning("Metraje \"{Id}\" ignorado: id [a-z0-9-] y url https:// obligatorios", source.Id);
+                    continue;
+                }
+                var file = source.File is { Length: > 0 } ? Path.GetFullPath(Path.Combine(dir, source.File)) : null;
+                if (file is not null && !file.StartsWith(dir + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+                {
+                    logger.LogWarning("Metraje \"{Id}\": file fuera de la carpeta del video — se ignora", source.Id);
+                    file = null;
+                }
+                if (await PreparePoolAsync(source.Id, source.Kind, source.Url, file,
+                        Path.Combine(dir, "footage"), source.Id, kept, opt, ct) is { } pool)
+                    pools.Add(pool);
+            }
+        }
+        else if (!string.IsNullOrWhiteSpace(research?.TrailerUrl)
+                 && await PreparePoolAsync("trailer", "trailer", research.TrailerUrl, null, dir, "trailer", kept, opt, ct) is { } pool)
+            pools.Add(pool);
+        return new FootageLibrary(pools);
+    }
+
+    /// <summary>
+    /// Baja un video oficial (YouTube, vía yt-dlp) y lo corta por cambios de
+    /// plano: los tramos de <see cref="MinSegmentSeconds"/> o más son planos posibles y de cada uno sale un
+    /// fotograma. En tráileres y teasers se descartan el principio y el final
+    /// (logos, fechas, créditos); en videoclips, solo los bordes. Si algo falla,
+    /// null: el video sale con las otras fuentes, o solo con imágenes.
+    /// </summary>
+    private async Task<FootagePool?> PreparePoolAsync(string id, string kind, string? url, string? file, string folder,
+        string name, List<(float[] Signature, int Moment, string Pool)> kept, VideoRenderOptions opt, CancellationToken ct)
+    {
         try
         {
-            var path = Directory.GetFiles(dir, "trailer.*").FirstOrDefault(f => !f.EndsWith(".part", StringComparison.Ordinal));
+            var path = file is not null && File.Exists(file) ? file
+                : Directory.GetFiles(folder, $"{name}.*").FirstOrDefault(f =>
+                    !f.EndsWith(".part", StringComparison.Ordinal) && !f.EndsWith(".jpg", StringComparison.Ordinal));
             if (path is null)
             {
+                if (string.IsNullOrWhiteSpace(url)) throw new InvalidOperationException("sin archivo ni url");
                 var parts = opt.YtDlpCommand.Split(' ', StringSplitOptions.RemoveEmptyEntries);
                 var ytArgs = parts.Skip(1).Concat(
                 [
                     "-q", "--no-warnings", "--no-playlist",
                     "-f", "bv*[ext=mp4][height<=1080]/bv*[height<=1080]/best[height<=1080]",
-                    "-o", "trailer.%(ext)s",
+                    "-o", $"{name}.%(ext)s",
                 ]).ToList();
                 // En GitHub Actions: proxy WARP y cookies (los pone el workflow,
                 // igual que en news-cron) y node como respaldo de deno para el
@@ -796,53 +831,90 @@ public sealed partial class VideoRenderService(
                     ytArgs.AddRange(["--cookies", cookies]);
                 if (Environment.GetEnvironmentVariable("GITHUB_ACTIONS") == "true")
                     ytArgs.AddRange(["--js-runtimes", "node"]);
-                ytArgs.Add(research.TrailerUrl!);
-                await RunAsync(parts[0], ytArgs, dir, ct, TimeSpan.FromMinutes(5));
-                path = Directory.GetFiles(dir, "trailer.*").First(f => !f.EndsWith(".part", StringComparison.Ordinal));
+                ytArgs.AddRange(["--", url]); // "--": la url nunca se lee como opción
+                await RunAsync(parts[0], ytArgs, folder, ct, TimeSpan.FromMinutes(5));
+                path = Directory.GetFiles(folder, $"{name}.*").First(f =>
+                    !f.EndsWith(".part", StringComparison.Ordinal) && !f.EndsWith(".jpg", StringComparison.Ordinal));
             }
 
             var duration = await ProbeDurationAsync(opt, path, ct);
             var (_, err) = await RunFullAsync(opt.FfmpegPath,
                 ["-hide_banner", "-i", path, "-vf", "scale=320:-2,select='gt(scene,0.3)',showinfo", "-an", "-f", "null", "-"],
-                dir, ct, TimeSpan.FromMinutes(5));
+                folder, ct, TimeSpan.FromMinutes(5));
             var cuts = new List<double> { 0 };
             cuts.AddRange(ShowInfoTime().Matches(err).Select(m => double.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture)));
             cuts.Add(duration);
 
-            var pool = new TrailerPool(path, [], []);
-            var kept = new List<float[]>();
-            for (var i = 0; i + 1 < cuts.Count && pool.Clips.Count < 80; i++)
+            // Los créditos del staff (texto en japonés encima de la imagen) se
+            // concentran al principio y al final de un tráiler: visto en el de
+            // Frieren. Un videoclip cuenta su historia de punta a punta.
+            var musicVideo = kind is "mv" or "opening" or "ending";
+            var (head, tail) = musicVideo ? (3.0, 6.0) : (Math.Max(2, duration * 0.15), Math.Max(6, duration * 0.10));
+            var pool = new FootagePool(id, kind, path, []);
+            var own = new List<float[]>();
+            for (var i = 0; i + 1 < cuts.Count && pool.Segments.Count < 80; i++)
             {
                 var (a, b) = (cuts[i] + 0.15, cuts[i + 1] - 0.15);
-                // Los créditos del staff (texto en japonés encima de la imagen) se
-                // concentran al principio y al final: visto en el tráiler de Frieren.
-                if (a < Math.Max(2, duration * 0.15) || b > duration - Math.Max(6, duration * 0.10) || b - a < 1.2) continue;
+                if (a < head || b > duration - tail || b - a < MinSegmentSeconds) continue;
 
-                var still = Path.Combine(dir, $"trailer_seg_{i:000}.jpg");
+                var still = Path.Combine(folder, $"{name}_seg_{i:000}.jpg");
                 if (!File.Exists(still))
                     await RunAsync(opt.FfmpegPath,
                         ["-y", "-ss", ((a + b) / 2).ToString("0.###", CultureInfo.InvariantCulture), "-i", path,
-                         "-frames:v", "1", "-q:v", "2", still], dir, ct);
+                         "-frames:v", "1", "-q:v", "2", still], folder, ct);
 
                 // Un tráiler vuelve varias veces al mismo lugar: si este plano se
-                // parece a uno ya elegido, se descarta (si no, salen dos tomas iguales).
+                // parece a uno ya elegido de la misma fuente, se descarta (si no, salen
+                // dos tomas iguales). Si se parece a uno de OTRA fuente, comparte su momento.
                 var signature = ImageSignature(still);
-                if (signature is null || kept.Any(k => SignatureDistance(k, signature) < SimilarSignature)) continue;
-                kept.Add(signature);
-                pool.Clips.Add((a, b - a));
-                pool.Stills.Add((still, (a + b) / 2));
+                if (signature is null || own.Any(k => SignatureDistance(k, signature) < SimilarSignature)) continue;
+                own.Add(signature);
+                var twin = kept.FirstOrDefault(k => k.Pool != id && SignatureDistance(k.Signature, signature) < SimilarSignature);
+                var moment = twin.Signature is not null ? twin.Moment : kept.Count;
+                kept.Add((signature, moment, id));
+                pool.Segments.Add(new FootageSegment(a, b - a, still, (a + b) / 2, moment));
             }
-            logger.LogInformation("Tráiler: {Secs:F0}s, {Clips} clips y {Stills} fotogramas usables",
-                duration, pool.Clips.Count, pool.Stills.Count);
-            return pool.Clips.Count == 0 ? null : pool;
+            logger.LogInformation("Metraje {Id} ({Kind}): {Secs:F0}s, {Segments} planos usables",
+                id, kind, duration, pool.Segments.Count);
+            return pool.Segments.Count == 0 ? null : pool;
         }
-        catch (Exception ex) when (ex is InvalidOperationException or InvalidDataException or System.ComponentModel.Win32Exception)
+        catch (Exception ex) when (ex is InvalidOperationException or InvalidDataException or IOException or System.ComponentModel.Win32Exception)
         {
-            logger.LogWarning("Sin tráiler ({Url}): {Msg} — el video sale solo con imágenes",
-                research.TrailerUrl, ex.Message.Length > 300 ? ex.Message[..300] : ex.Message);
+            logger.LogWarning("Sin metraje {Id} ({Url}): {Msg}",
+                id, url, ex.Message.Length > 300 ? ex.Message[..300] : ex.Message);
             return null;
         }
     }
+
+    /// <summary>
+    /// Arranque de director.md: de qué fuente sale cada escena y por qué, y qué
+    /// menciones pasaron a metraje porque ya se habían presentado. El loop de
+    /// tomas agrega después una línea por toma.
+    /// </summary>
+    private static StringBuilder DirectorReport(VideoPlan plan, IReadOnlyList<FootageRoute> routes, IntroductionResult intro)
+    {
+        var sb = new StringBuilder("# Dirección\n\n## Fuente de cada escena\n\n");
+        for (var i = 0; i < plan.Scenes.Count; i++)
+        {
+            var text = plan.Scenes[i].Narration;
+            sb.Append(CultureInfo.InvariantCulture,
+                $"- {i + 1}: **{string.Join(" + ", routes[i].Ids)}** ({routes[i].Reason}) — {(text.Length > 70 ? text[..70] + "…" : text)}\n");
+        }
+        sb.Append("\n## Presentaciones repetidas\n\n");
+        foreach (var c in intro.Changes)
+            sb.Append(CultureInfo.InvariantCulture,
+                $"- esc {c.Scene} «{c.At}»: `{c.Original}` → {(c.Now is null ? "metraje" : $"`{c.Now}`")} ({c.Reason})\n");
+        if (intro.Changes.Count == 0) sb.Append("- ninguna\n");
+        sb.Append("\n## Tomas\n\n```\n");
+        return sb;
+    }
+
+    /// <summary>
+    /// Plano más corto que se guarda. Los tráileres nuevos cortan muy rápido (el de
+    /// Edgerunners 2: 8 de 140 planos pasan de 1,2 s): un plano corto sirve como
+    /// fotograma, y como clip solo si cubre el 60% de la toma.
+    /// </summary>
+    public const double MinSegmentSeconds = 0.6;
 
     [GeneratedRegex(@"pts_time:([\d.]+)")]
     private static partial Regex ShowInfoTime();
