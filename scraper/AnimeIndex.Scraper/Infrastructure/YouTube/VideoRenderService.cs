@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -339,7 +339,7 @@ public sealed partial class VideoRenderService(
 
         var duration = TimeSpan.FromSeconds(elapsed);
         await File.WriteAllTextAsync(Path.Combine(dir, "youtube.txt"), Metadata(plan, duration, credits), ct);
-        File.Copy(frames[0], Path.Combine(dir, "thumbnail.jpg"), overwrite: true);
+        await RenderThumbnailsAsync(plan, keyArt, dir, ct);
         logger.LogInformation("Video listo: {Path} ({Duration:mm\\:ss})", final, duration);
         return final;
     }
@@ -375,6 +375,95 @@ public sealed partial class VideoRenderService(
             logger.LogWarning("Sin música de fondo: {Msg}", ex.Message);
             return (null, []);
         }
+    }
+
+    /// <summary>Solo las miniaturas (modo --thumbnail-only: para iterar el diseño sin renderizar el video).</summary>
+    public async Task RenderThumbnailsAsync(VideoPlan plan, VideoResearch? research, string outputDir, CancellationToken ct)
+    {
+        Directory.CreateDirectory(outputDir);
+        var dir = Path.GetFullPath(outputDir);
+        await RenderThumbnailsAsync(plan, await DownloadKeyArtAsync(research, dir, ct), dir, ct);
+    }
+
+    /// <summary>
+    /// Las variantes de miniatura (<see cref="ThumbnailPlanner"/>): fondo de arte
+    /// oficial, personajes recortados con <see cref="AnimeCutout"/> y el gancho.
+    /// Deja thumbnail_report.txt con los chequeos. Si algo falla, queda una miniatura
+    /// sin personajes en vez de cortar el render.
+    /// </summary>
+    private async Task RenderThumbnailsAsync(VideoPlan plan, IReadOnlyList<string> keyArt, string dir, CancellationToken ct)
+    {
+        var variants = ThumbnailPlanner.Variants(plan);
+        var report = new StringBuilder();
+        using var background = keyArt.Select(p => SkiaSharp.SKBitmap.Decode(p)).FirstOrDefault(b => b is not null);
+        var subjects = new List<ThumbnailSubject>();
+        try
+        {
+            var http = httpFactory.CreateClient("youtube-research");
+            AnimeCutout? cutout = null;
+            try
+            {
+                cutout = await AnimeCutout.LoadAsync(http, null, ct);
+            }
+            catch (Exception ex) when (ex is HttpRequestException or IOException or Microsoft.ML.OnnxRuntime.OnnxRuntimeException)
+            {
+                logger.LogWarning("Recorte de personajes no disponible ({Msg}): retratos enmarcados", ex.Message);
+            }
+            using (cutout)
+            {
+                foreach (var name in variants[0].Characters)
+                {
+                    // Primero AniList (retrato oficial); si no está (temporadas nuevas), la wiki,
+                    // como las tomas "character:" del video.
+                    string? raw = null;
+                    if (visuals.FindCharacter(name) is { } candidate)
+                    {
+                        var hash = Convert.ToHexString(System.Security.Cryptography.SHA1.HashData(Encoding.UTF8.GetBytes(candidate.Url)))[..12];
+                        raw = Path.Combine(dir, $"portrait_{hash}.img");
+                        if (!File.Exists(raw))
+                            await File.WriteAllBytesAsync(raw, await http.GetByteArrayAsync(candidate.Url, ct), ct);
+                    }
+                    raw ??= await mentions.CharacterAsync(name, dir, ct);
+                    if (raw is null) { report.AppendLine($"personaje sin imagen: {name}"); continue; }
+                    var bitmap = SkiaSharp.SKBitmap.Decode(raw);
+                    if (bitmap is null) continue;
+                    if (cutout is not null)
+                    {
+                        var (cut, coverage) = cutout.Cut(bitmap);
+                        report.AppendLine($"{name}: recorte cubre {coverage:P0} de la imagen");
+                        // Muy poco = no encontró al personaje; casi todo = no separó el fondo.
+                        if (coverage is > 0.08 and < 0.92) { bitmap.Dispose(); subjects.Add(new(cut, true)); continue; }
+                        cut.Dispose();
+                    }
+                    subjects.Add(new(bitmap, false));
+                }
+            }
+        }
+        catch (Exception ex) when (ex is HttpRequestException or IOException or TaskCanceledException && !ct.IsCancellationRequested)
+        {
+            logger.LogWarning("Personajes para la miniatura no disponibles: {Msg}", ex.Message);
+        }
+
+        try
+        {
+            foreach (var v in variants)
+            {
+                var result = ThumbnailRenderer.Render(new ThumbnailSpec(background, subjects, v.Text), Path.Combine(dir, v.File));
+                // Si el texto no se lee en el feed, se prueba con las dos primeras palabras.
+                if (!result.Ok && v.Text is { } text && text.Split(' ').Length > 2)
+                    result = ThumbnailRenderer.Render(new ThumbnailSpec(background, subjects,
+                        string.Join(' ', text.Split(' ').Take(2))), Path.Combine(dir, v.File));
+                report.AppendLine($"{v.File}: {string.Join(" + ", v.Characters.DefaultIfEmpty("sin personajes"))} · " +
+                    $"«{v.Text ?? "sin texto"}» · letra {result.FontSize:F0}px, mayúscula en el feed {result.FeedCapHeight:F1}px" +
+                    (result.Ok ? "" : " · " + string.Join("; ", result.Warnings)));
+            }
+        }
+        finally
+        {
+            foreach (var s in subjects) s.Image.Dispose();
+        }
+        await File.WriteAllTextAsync(Path.Combine(dir, "thumbnail_report.txt"), report.ToString(), ct);
+        logger.LogInformation("Miniaturas: {Files}\n{Report}", string.Join(", ", variants.Select(v => v.File)), report.ToString().TrimEnd());
     }
 
     /// <summary>

@@ -338,7 +338,8 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/huggingface
-          key: hf-models-clip-wav2vec2-es-v1
+          # v2: suma isnetis.onnx (recorte de personajes de la miniatura, ~176 MB).
+          key: hf-models-clip-wav2vec2-es-isnetis-v2
 
       # Si no cargan, el render saldría con tiempos estimados: mejor en rojo.
       - name: Verificar CLIP y alineador
@@ -426,7 +427,8 @@ jobs:
           name: video
           path: |
             ${{ runner.temp }}/video/video.mp4
-            ${{ runner.temp }}/video/thumbnail.jpg
+            ${{ runner.temp }}/video/thumbnail*.jpg
+            ${{ runner.temp }}/video/thumbnail_report.txt
             ${{ runner.temp }}/video/youtube.txt
           retention-days: 7
 

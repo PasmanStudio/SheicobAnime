@@ -48,6 +48,9 @@ public sealed class VideoPlan
     /// </summary>
     public List<string> CheckTerms { get; set; } = [];
 
+    /// <summary>Qué va en la miniatura (lo propone Gemini con el storyboard). Null en planes viejos: se deduce.</summary>
+    public VideoThumbnail? Thumbnail { get; set; }
+
     /// <summary>
     /// Narración → texto para la voz: reemplaza cada término del glosario como
     /// palabra completa, los más largos primero ("Jujutsu Kaisen" antes que
@@ -172,6 +175,18 @@ public sealed class VideoScene
     /// corregir a mano ("no habrá segunda temporada" habla de la primera).
     /// </summary>
     public List<string>? Footage { get; set; }
+}
+
+/// <summary>
+/// La miniatura: el gancho (1 a 4 palabras que COMPLETAN el título, no lo
+/// repiten; la palabra a resaltar entre asteriscos) y los 1 o 2 personajes que
+/// van recortados. <see cref="Alternative"/> es el segundo gancho para la variante B.
+/// </summary>
+public sealed class VideoThumbnail
+{
+    public string? Text { get; set; }
+    public string? Alternative { get; set; }
+    public List<string> Characters { get; set; } = [];
 }
 
 /// <summary>Una toma anclada: qué se ve y desde qué palabras de la narración.</summary>

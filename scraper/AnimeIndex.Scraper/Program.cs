@@ -178,6 +178,14 @@ if (args.Contains("--youtube"))
                 .AnnotateAsync(plan, anime, Path.GetFullPath(outDir), ytCts.Token);
         }
 
+        // --thumbnail-only: solo las miniaturas del plan (para iterar el diseño).
+        if (args.Contains("--thumbnail-only"))
+        {
+            await sp.GetRequiredService<AnimeIndex.Scraper.Infrastructure.YouTube.VideoRenderService>()
+                .RenderThumbnailsAsync(plan, found, outDir, ytCts.Token);
+            return;
+        }
+
         // --plan-only: solo el guion (primer job del workflow youtube-video.yml;
         // la voz la generan después varios runners en paralelo).
         if (args.Contains("--plan-only"))
