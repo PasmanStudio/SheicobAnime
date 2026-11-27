@@ -70,12 +70,12 @@ public sealed partial record ShotReference(ShotKind Kind, string Value, string? 
 
 /// <summary>
 /// Cuándo se dice cada palabra y, con eso, cuándo empieza cada toma.
-/// La fuente de los tiempos es faster-whisper sobre la voz ya generada
-/// (Scripts/word_times.py); de whisper solo se usan los TIEMPOS: el texto es la
-/// narración del plan, alineada palabra por palabra (whisper escribe "2022"
-/// donde la narración dice "dos mil veintidós", o "Edgar Onnors" por
-/// "Edgerunners": lo que no coincide se interpola entre vecinos que sí).
-/// Sin whisper, los tiempos se estiman por la cantidad de letras.
+/// La fuente de los tiempos es la alineación forzada del texto que leyó la voz
+/// (narración con el glosario aplicado) contra el audio ya generado
+/// (Scripts/word_times.py, wav2vec2 CTC). Ese texto se vuelve a alinear acá con la
+/// narración palabra por palabra: donde el glosario cambió la escritura
+/// ("Edgerunners" → "Edyeránners") lo que no coincide se interpola entre vecinos
+/// que sí. Sin alineación, los tiempos se estiman por la cantidad de letras.
 /// </summary>
 public static partial class ShotTiming
 {
@@ -101,7 +101,7 @@ public static partial class ShotTiming
 
     /// <summary>
     /// Segundo en que empieza cada palabra de la narración, alineando con las
-    /// palabras de whisper (texto, inicio). Alineación por programación dinámica
+    /// palabras que alineó la voz (texto, inicio). Alineación por programación dinámica
     /// con coincidencia aproximada; lo no alineado se interpola por letras.
     /// Público para tests.
     /// </summary>

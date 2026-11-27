@@ -316,19 +316,36 @@ jobs:
       - name: Instalar ffmpeg
         run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg > /dev/null
 
-      # CLIP elige qué plano del video fuente muestra cada descripción del storyboard.
-      - name: Instalar CLIP (CPU)
-        continue-on-error: true
-        run: |
-          pip install --quiet torch --index-url https://download.pytorch.org/whl/cpu
-          pip install --quiet open_clip_torch pillow
+      # Python propio: sin setup-python, pip instalaba en ~/.local y los scripts
+      # (que corren con `python -I`, que ignora ese site-packages) no veían nada:
+      # CLIP y los tiempos por palabra fallaban en silencio en cada render.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
 
-      # faster-whisper da el segundo en que la voz dice cada palabra: la toma
-      # cambia cuando se NOMBRA algo (Scripts/word_times.py). Sin él, los tiempos
-      # se estiman por letras.
-      - name: Instalar faster-whisper (CPU)
-        continue-on-error: true
-        run: pip install --quiet faster-whisper
+      # CLIP elige qué plano del video fuente muestra cada descripción del storyboard.
+      # wav2vec2 (transformers) da el segundo en que la voz dice cada palabra, por
+      # alineación forzada del texto conocido: la toma cambia cuando se NOMBRA algo
+      # (Scripts/word_times.py).
+      - name: Instalar CLIP y alineador (CPU)
+        run: |
+          # torch y torchvision juntos del mismo índice: si open_clip trae torchvision
+          # de PyPI, no coincide con el torch de CPU ("operator torchvision::nms does not exist").
+          # torch >= 2.6: torch.load con weights_only por defecto (el modelo de voz es .bin pickle).
+          python -m pip install --quiet "torch>=2.6" torchvision --index-url https://download.pytorch.org/whl/cpu
+          # transformers fijo en la versión probada en el render 46052409761.
+          python -m pip install --quiet open_clip_torch pillow "transformers==4.57.6" numpy
+
+      - name: Caché de modelos (CLIP, wav2vec2)
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          # v2: suma isnetis.onnx (recorte de personajes de la miniatura, ~176 MB).
+          key: hf-models-clip-wav2vec2-es-isnetis-v2
+
+      # Si no cargan, el render saldría con tiempos estimados: mejor en rojo.
+      - name: Verificar CLIP y alineador
+        run: python -I -c "import open_clip, torch, transformers, numpy; print('torch', torch.__version__, '| transformers', transformers.__version__)"
 
       # ── Tráiler oficial (clips y fotogramas) ──────────────────────────────
       # YouTube frena a yt-dlp en los runners: misma receta que news-cron.yml
@@ -402,6 +419,7 @@ jobs:
             --plan "$RUNNER_TEMP/video/plan.json" --anime "$ANIME" \
             --voice-ref "$RUNNER_TEMP/voice/ref_largo.wav" --voice-ref-text "$RUNNER_TEMP/voice/ref_largo.txt" \
             --glossary "$GITHUB_WORKSPACE/youtube/pronunciations.json" \
+            --require-word-times \
             "${extra[@]}"
           rm -rf "$RUNNER_TEMP/voice"
           { echo "## Video listo"; echo; echo '```'; cat "$RUNNER_TEMP/video/youtube.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
@@ -411,7 +429,8 @@ jobs:
           name: video
           path: |
             ${{ runner.temp }}/video/video.mp4
-            ${{ runner.temp }}/video/thumbnail.jpg
+            ${{ runner.temp }}/video/thumbnail*.jpg
+            ${{ runner.temp }}/video/thumbnail_report.txt
             ${{ runner.temp }}/video/youtube.txt
           retention-days: 7
 

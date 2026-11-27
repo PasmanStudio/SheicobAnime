@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -25,6 +25,7 @@ public sealed record VideoRenderOptions(
     string QwenBackend = "kaggle",
     string YtDlpCommand = "yt-dlp",
     string MatcherPython = "python",
+    bool RequireWordTimes = false,
     double ShotSeconds = 3.5,
     double MusicVolume = VideoMusic.DefaultVolume)
 {
@@ -173,7 +174,12 @@ public sealed partial class VideoRenderService(
         var spokenEnd = elapsed;
         gaps[^1] += EndScreenSeconds;
         elapsed += EndScreenSeconds;
-        await RunAsync(opt.FfmpegPath, VoiceTrackArgs(voiceParts, gaps, Path.Combine(dir, "voice.wav")), dir, ct);
+        // Unida en código, muestra por muestra (ver AudioMix): el concat de ffmpeg
+        // no es el lugar donde pueda perderse una palabra.
+        var voiceTrack = AudioMix.Join(voiceParts.Select(PcmAudio.Read).ToList(), gaps);
+        voiceTrack.Write(Path.Combine(dir, "voice.wav"));
+        if (Math.Abs(voiceTrack.Seconds - elapsed) > 0.05)
+            throw new InvalidOperationException($"La voz unida dura {voiceTrack.Seconds:F2}s y debería durar {elapsed:F2}s");
         logger.LogInformation("Voz continua: {Scenes} escenas, {Secs:F1}s + {End:F0}s de pantalla final",
             plan.Scenes.Count, spokenEnd, EndScreenSeconds);
 
@@ -327,11 +333,13 @@ public sealed partial class VideoRenderService(
         await File.WriteAllTextAsync(Path.Combine(dir, "subs.srt"), MergeSrt(subtitles), new UTF8Encoding(false), ct);
         var final = Path.Combine(dir, "video.mp4");
         var (musicBed, credits) = await PrepareMusicAsync(plan, opt, dir, ct);
-        await RunAsync(opt.FfmpegPath, FinalMuxArgs(musicBed, opt.MusicVolume, elapsed), dir, ct);
+        var audio = await MixAudioAsync(musicBed, opt, elapsed, dir, ct);
+        await RunAsync(opt.FfmpegPath, FinalMuxArgs(audio, elapsed), dir, ct);
+        await CheckAudioGapsAsync(opt, final, dir, ct);
 
         var duration = TimeSpan.FromSeconds(elapsed);
         await File.WriteAllTextAsync(Path.Combine(dir, "youtube.txt"), Metadata(plan, duration, credits), ct);
-        File.Copy(frames[0], Path.Combine(dir, "thumbnail.jpg"), overwrite: true);
+        await RenderThumbnailsAsync(plan, keyArt, dir, ct);
         logger.LogInformation("Video listo: {Path} ({Duration:mm\\:ss})", final, duration);
         return final;
     }
@@ -369,27 +377,163 @@ public sealed partial class VideoRenderService(
         }
     }
 
+    /// <summary>Solo las miniaturas (modo --thumbnail-only: para iterar el diseño sin renderizar el video).</summary>
+    public async Task RenderThumbnailsAsync(VideoPlan plan, VideoResearch? research, string outputDir, CancellationToken ct)
+    {
+        Directory.CreateDirectory(outputDir);
+        var dir = Path.GetFullPath(outputDir);
+        await RenderThumbnailsAsync(plan, await DownloadKeyArtAsync(research, dir, ct), dir, ct);
+    }
+
     /// <summary>
-    /// Mux final: tomas + subtítulos quemados + voz, y la música en loop debajo
-    /// si hay. Rutas relativas a propósito: en Windows "C:" rompe el filtro de
-    /// subtítulos. Público para tests.
+    /// Las variantes de miniatura (<see cref="ThumbnailPlanner"/>): fondo de arte
+    /// oficial, personajes recortados con <see cref="AnimeCutout"/> y el gancho.
+    /// Deja thumbnail_report.txt con los chequeos. Si algo falla, queda una miniatura
+    /// sin personajes en vez de cortar el render.
     /// </summary>
-    public static List<string> FinalMuxArgs(string? musicBed, double musicVolume, double duration)
+    private async Task RenderThumbnailsAsync(VideoPlan plan, IReadOnlyList<string> keyArt, string dir, CancellationToken ct)
+    {
+        var variants = ThumbnailPlanner.Variants(plan);
+        var report = new StringBuilder();
+        using var background = keyArt.Select(p => SkiaSharp.SKBitmap.Decode(p)).FirstOrDefault(b => b is not null);
+        var subjects = new List<ThumbnailSubject>();
+        try
+        {
+            var http = httpFactory.CreateClient("youtube-research");
+            AnimeCutout? cutout = null;
+            try
+            {
+                cutout = await AnimeCutout.LoadAsync(http, null, ct);
+            }
+            catch (Exception ex) when (ex is HttpRequestException or IOException or Microsoft.ML.OnnxRuntime.OnnxRuntimeException
+                                           or TaskCanceledException && !ct.IsCancellationRequested)
+            {
+                logger.LogWarning("Recorte de personajes no disponible ({Msg}): retratos enmarcados", ex.Message);
+            }
+            using (cutout)
+            {
+                foreach (var name in variants[0].Characters)
+                {
+                    // Primero AniList (retrato oficial); si no está (temporadas nuevas), la wiki,
+                    // como las tomas "character:" del video.
+                    string? raw = null;
+                    if (visuals.FindCharacter(name) is { } candidate)
+                    {
+                        var hash = Convert.ToHexString(System.Security.Cryptography.SHA1.HashData(Encoding.UTF8.GetBytes(candidate.Url)))[..12];
+                        raw = Path.Combine(dir, $"portrait_{hash}.img");
+                        if (!File.Exists(raw))
+                            await File.WriteAllBytesAsync(raw, await http.GetByteArrayAsync(candidate.Url, ct), ct);
+                    }
+                    raw ??= await mentions.CharacterAsync(name, dir, ct);
+                    if (raw is null) { report.AppendLine($"personaje sin imagen: {name}"); continue; }
+                    var bitmap = SkiaSharp.SKBitmap.Decode(raw);
+                    if (bitmap is null) continue;
+                    if (cutout is not null)
+                    {
+                        var (cut, coverage) = cutout.Cut(bitmap);
+                        report.AppendLine($"{name}: recorte cubre {coverage:P0} de la imagen");
+                        // Muy poco = no encontró al personaje; casi todo = no separó el fondo.
+                        if (coverage is > 0.08 and < 0.92) { bitmap.Dispose(); subjects.Add(new(cut, true)); continue; }
+                        cut.Dispose();
+                    }
+                    subjects.Add(new(bitmap, false));
+                }
+            }
+        }
+        catch (Exception ex) when (ex is HttpRequestException or IOException or TaskCanceledException && !ct.IsCancellationRequested)
+        {
+            logger.LogWarning("Personajes para la miniatura no disponibles: {Msg}", ex.Message);
+        }
+
+        try
+        {
+            foreach (var v in variants)
+            {
+                var result = ThumbnailRenderer.Render(new ThumbnailSpec(background, subjects, v.Text), Path.Combine(dir, v.File));
+                // Si el texto no se lee en el feed, se prueba con las dos primeras palabras.
+                if (!result.Ok && v.Text is { } text && text.Split(' ').Length > 2)
+                    result = ThumbnailRenderer.Render(new ThumbnailSpec(background, subjects,
+                        string.Join(' ', text.Split(' ').Take(2))), Path.Combine(dir, v.File));
+                report.AppendLine($"{v.File}: {string.Join(" + ", v.Characters.DefaultIfEmpty("sin personajes"))} · " +
+                    $"«{v.Text ?? "sin texto"}» · letra {result.FontSize:F0}px, mayúscula en el feed {result.FeedCapHeight:F1}px" +
+                    (result.Ok ? "" : " · " + string.Join("; ", result.Warnings)));
+            }
+        }
+        finally
+        {
+            foreach (var s in subjects) s.Image.Dispose();
+        }
+        await File.WriteAllTextAsync(Path.Combine(dir, "thumbnail_report.txt"), report.ToString(), ct);
+        logger.LogInformation("Miniaturas: {Files}\n{Report}", string.Join(", ", variants.Select(v => v.File)), report.ToString().TrimEnd());
+    }
+
+    /// <summary>
+    /// Audio final en WAV: voz (48 kHz estéreo) + música con ducking, mezclados
+    /// en código (<see cref="AudioMix"/>), y llevado a −14 LUFS con loudnorm en dos
+    /// pasadas. ffmpeg solo hace pasos de una entrada (remuestrear, recortar la
+    /// música, loudnorm); después de cada uno se verifica el largo.
+    /// </summary>
+    private async Task<string> MixAudioAsync(string? musicBed, VideoRenderOptions opt, double duration, string dir, CancellationToken ct)
     {
         var inv = CultureInfo.InvariantCulture;
-        var args = new List<string> { "-y", "-i", "visuals.mp4", "-i", "voice.wav" };
-        if (musicBed is not null) args.AddRange(["-stream_loop", "-1", "-i", musicBed]);
+        var frames = (int)Math.Round(duration * 48000);
+        await RunAsync(opt.FfmpegPath, ["-y", "-i", "voice.wav", "-ar", "48000", "-ac", "2", "-c:a", "pcm_s16le", "voice48.wav"], dir, ct);
+        var voice = PcmAudio.Read(Path.Combine(dir, "voice48.wav"));
+        if (Math.Abs(voice.Frames - frames) > 4800)
+            throw new InvalidOperationException($"La voz a 48 kHz dura {voice.Seconds:F2}s y debería durar {duration:F2}s");
+        voice = AudioMix.Fit(voice, frames);
 
-        var filter = "[0:v]subtitles=subs.srt:force_style='FontName=Arial,FontSize=15,Bold=1,Outline=2,Shadow=0,MarginV=28'[vout]";
-        filter += musicBed is null
-            ? ";[1:a]aformat=sample_rates=48000:channel_layouts=stereo[aout]"
-            : ";" + VideoMusic.MixFilter(musicVolume, duration);
-        args.AddRange(["-filter_complex", filter, "-map", "[vout]", "-map", "[aout]",
-            "-t", duration.ToString("0.###", inv),
-            "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
-            "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", "video.mp4"]);
-        return args;
+        PcmAudio? music = null;
+        if (musicBed is not null && opt.MusicVolume > 0)
+        {
+            await RunAsync(opt.FfmpegPath, ["-y", "-stream_loop", "-1", "-i", musicBed, "-t", duration.ToString("0.###", inv),
+                "-ar", "48000", "-ac", "2", "-c:a", "pcm_s16le", "music_fit.wav"], dir, ct);
+            music = AudioMix.Fit(PcmAudio.Read(Path.Combine(dir, "music_fit.wav")), frames);
+        }
+        AudioMix.Mix(voice, music, opt.MusicVolume).Write(Path.Combine(dir, "mix.wav"));
+
+        var (_, err) = await RunFullAsync(opt.FfmpegPath, AudioMix.LoudnessMeasureArgs("mix.wav"), dir, ct);
+        var measured = AudioMix.ParseLoudness(err);
+        await RunAsync(opt.FfmpegPath, AudioMix.LoudnessApplyArgs("mix.wav", "mix_norm.wav", measured), dir, ct);
+        var normalized = PcmAudio.Read(Path.Combine(dir, "mix_norm.wav"));
+        if (Math.Abs(normalized.Frames - frames) > 4800)
+            throw new InvalidOperationException($"El audio normalizado dura {normalized.Seconds:F2}s y debería durar {duration:F2}s");
+        logger.LogInformation("Audio: {In} LUFS → {Target} LUFS (pico {Tp} dBTP), {Secs:F1}s sin huecos",
+            measured.GetValueOrDefault("input_i"), AudioMix.TargetLufs, measured.GetValueOrDefault("input_tp"), normalized.Seconds);
+        return "mix_norm.wav";
     }
+
+    /// <summary>
+    /// El AAC del video no puede tener huecos de timestamps: cada hueco es voz
+    /// que no suena. Si aparece alguno, el render falla en vez de entregar un
+    /// video con palabras comidas.
+    /// </summary>
+    private async Task CheckAudioGapsAsync(VideoRenderOptions opt, string video, string dir, CancellationToken ct)
+    {
+        var csv = await RunAsync(opt.FfprobePath,
+            ["-v", "error", "-select_streams", "a", "-show_entries", "packet=pts_time", "-of", "csv=p=0", video], dir, ct);
+        var gaps = AudioMix.PtsGaps(AudioMix.ParsePts(csv));
+        if (gaps.Count > 0)
+            throw new InvalidOperationException(
+                $"El audio del video tiene {gaps.Count} huecos ({gaps.Sum(g => g.To - g.From):F1}s): " +
+                string.Join(", ", gaps.Take(5).Select(g => $"{g.From:F2}→{g.To:F2}")));
+        logger.LogInformation("Audio del video verificado: sin huecos");
+    }
+
+    /// <summary>
+    /// Mux final: tomas + subtítulos quemados + el audio ya mezclado (sin filtros
+    /// de audio: solo se codifica). Rutas relativas a propósito: en Windows "C:"
+    /// rompe el filtro de subtítulos. Público para tests.
+    /// </summary>
+    public static List<string> FinalMuxArgs(string audio, double duration) =>
+    [
+        "-y", "-i", "visuals.mp4", "-i", audio,
+        "-filter_complex", "[0:v]subtitles=subs.srt:force_style='FontName=Arial,FontSize=15,Bold=1,Outline=2,Shadow=0,MarginV=28'[vout]",
+        "-map", "[vout]", "-map", "1:a",
+        "-t", duration.ToString("0.###", CultureInfo.InvariantCulture),
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", "video.mp4",
+    ];
 
     /// <summary>Imágenes IA como máximo por video (Pollinations: 1 cada 45 s).</summary>
     public const int MaxAiImages = 10;
@@ -472,14 +616,16 @@ public sealed partial class VideoRenderService(
     // ── Tomas ancladas a la narración ──────────────────────────────────────
 
     /// <summary>
-    /// Tiempos reales de cada palabra (faster-whisper) → en qué segundo arranca
+    /// Tiempos reales de cada palabra (alineación forzada) → en qué segundo arranca
     /// cada toma del storyboard. Deja shots_plan.txt con cada corte (escena,
     /// segundo, palabras, qué se muestra) para revisar la sincronía sin ver el video.
     /// </summary>
     private async Task<List<VideoShot>> PlanAnchoredAsync(VideoPlan plan, IReadOnlyList<string> voiceParts,
         IReadOnlyList<double> spans, VideoRenderOptions opt, string dir, CancellationToken ct)
     {
-        var heard = await WordTimesAsync(voiceParts, opt, dir, ct);
+        // Lo que la voz LEYÓ (con el glosario aplicado), no la narración: es lo que suena.
+        var spoken = plan.Scenes.Select(s => VideoPlan.ForSpeech(s.Narration, plan.Pronunciations)).ToList();
+        var heard = await WordTimesAsync(voiceParts, spoken, opt, dir, ct);
         var anchors = new List<IReadOnlyList<double?>>();
         var report = new StringBuilder();
         var sceneStart = 0.0;
@@ -506,40 +652,47 @@ public sealed partial class VideoRenderService(
         await File.WriteAllTextAsync(Path.Combine(dir, "shots_plan.txt"), report.ToString(), ct);
         var shots = ShotTiming.PlanAnchoredShots(spans, anchors, opt.ShotSeconds);
         logger.LogInformation("Tomas ancladas: {Shots} ({Named} con referencia, {Missing} anclas no encontradas, tiempos {Src})",
-            shots.Count, shots.Count(s => s.Slot >= 0), missing, heard.Count > 0 ? "de whisper" : "estimados por letras");
+            shots.Count, shots.Count(s => s.Slot >= 0), missing, heard.Count > 0 ? "alineados con la voz" : "estimados por letras");
         return shots;
     }
 
     /// <summary>
-    /// Corre Scripts/word_times.py sobre la voz de cada escena (ya recortada, la
-    /// que suena en el video). Si falla (sin faster-whisper), devuelve vacío y los
-    /// tiempos se estiman por letras.
+    /// Corre Scripts/word_times.py: alineación forzada del texto que leyó la voz
+    /// (<paramref name="spoken"/>) contra el audio de cada escena (ya recortado, el
+    /// que suena en el video). Si falla, devuelve vacío y los tiempos se estiman por
+    /// letras — salvo con <see cref="VideoRenderOptions.RequireWordTimes"/>, que corta el render.
     /// </summary>
     private async Task<Dictionary<string, List<(string Word, double Start)>>> WordTimesAsync(
-        IReadOnlyList<string> voiceParts, VideoRenderOptions opt, string dir, CancellationToken ct)
+        IReadOnlyList<string> voiceParts, IReadOnlyList<string> spoken, VideoRenderOptions opt, string dir, CancellationToken ct)
     {
         var result = new Dictionary<string, List<(string, double)>>();
         var job = Path.Combine(dir, "word_times_job.json");
         var output = Path.Combine(dir, "word_times.json");
         await File.WriteAllTextAsync(job, System.Text.Json.JsonSerializer.Serialize(
-            new { files = voiceParts, language = "es", model = "base" }), ct);
+            new { files = voiceParts, texts = spoken }), ct);
         try
         {
             var parts = opt.MatcherPython.Split(' ', StringSplitOptions.RemoveEmptyEntries);
             var script = Path.Combine(AppContext.BaseDirectory, "Scripts", "word_times.py");
             var sw = Stopwatch.StartNew();
-            await RunAsync(parts[0], parts.Skip(1).Concat(["-I", script, job, output]), dir, ct, TimeSpan.FromMinutes(30));
+            var (_, err) = await RunFullAsync(parts[0], parts.Skip(1).Concat(["-I", script, job, output]), dir, ct, TimeSpan.FromMinutes(30));
+            // Por escena: palabras alineadas y confianza (marca las dudosas).
+            foreach (var line in err.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                if (line.StartsWith("voice_", StringComparison.Ordinal) || line.StartsWith("word_times:", StringComparison.Ordinal))
+                    logger.LogInformation("Alineado {Line}", line);
             using var doc = System.Text.Json.JsonDocument.Parse(await File.ReadAllTextAsync(output, ct));
             foreach (var file in doc.RootElement.EnumerateObject())
                 result[file.Name] = file.Value.EnumerateArray()
                     .Select(w => (w[0].GetString() ?? "", w[1].GetDouble())).ToList();
-            logger.LogInformation("Whisper: tiempos de {Words} palabras en {Secs:F0}s",
+            logger.LogInformation("Alineación forzada: tiempos de {Words} palabras en {Secs:F0}s",
                 result.Values.Sum(v => v.Count), sw.Elapsed.TotalSeconds);
         }
         catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception or IOException or System.Text.Json.JsonException)
         {
-            logger.LogWarning("Whisper no disponible ({Msg}) — tiempos estimados por letras",
-                ex.Message.Length > 300 ? ex.Message[..300] : ex.Message);
+            var msg = ex.Message.Length > 600 ? ex.Message[^600..] : ex.Message;
+            if (opt.RequireWordTimes)
+                throw new InvalidOperationException($"Sin tiempos por palabra (--require-word-times): {msg}", ex);
+            logger.LogWarning("Alineación no disponible ({Msg}) — tiempos estimados por letras", msg);
         }
         return result;
     }
@@ -630,25 +783,8 @@ public sealed partial class VideoRenderService(
         "silenceremove=start_periods=1:start_threshold=-55dB:start_silence=0.10," +
         "areverse,silenceremove=start_periods=1:start_threshold=-55dB:start_silence=0.15," +
         "afade=t=in:d=0.06,areverse,afade=t=in:d=0.03",
-        "-ar", "24000", "-ac", "1", output,
+        "-ar", "24000", "-ac", "1", "-c:a", "pcm_s16le", output,
     ];
-
-    /// <summary>
-    /// Une las voces de todas las escenas en una sola pista, con el silencio
-    /// indicado después de cada una. Público para tests.
-    /// </summary>
-    public static List<string> VoiceTrackArgs(IReadOnlyList<string> parts, IReadOnlyList<double> gaps, string output)
-    {
-        var args = new List<string> { "-y" };
-        foreach (var p in parts) { args.Add("-i"); args.Add(p); }
-        var filter = new StringBuilder();
-        for (var i = 0; i < parts.Count; i++)
-            filter.Append($"[{i}:a]apad=pad_dur={gaps[i].ToString("0.###", CultureInfo.InvariantCulture)}[a{i}];");
-        for (var i = 0; i < parts.Count; i++) filter.Append($"[a{i}]");
-        filter.Append($"concat=n={parts.Count}:v=0:a=1[out]");
-        args.AddRange(["-filter_complex", filter.ToString(), "-map", "[out]", "-ar", "24000", "-ac", "1", output]);
-        return args;
-    }
 
     // ── Tomas ───────────────────────────────────────────────────────────────
 

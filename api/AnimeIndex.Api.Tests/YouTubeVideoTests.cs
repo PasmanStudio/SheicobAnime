@@ -334,20 +334,92 @@ public class YouTubeVideoTests
     }
 
     [Fact]
-    public void FinalMuxArgs_DucksLoopedMusicUnderTheVoice()
+    public void FinalMuxArgs_OnlyEncodesTheMixedAudio()
     {
-        var args = VideoRenderService.FinalMuxArgs("music.wav", 0.12, 300);
+        var args = VideoRenderService.FinalMuxArgs("mix_norm.wav", 300);
 
-        Assert.Equal("-1", args[args.IndexOf("-stream_loop") + 1]);
+        Assert.Equal("mix_norm.wav", args[args.IndexOf("-i", args.IndexOf("-i") + 1) + 1]);
+        Assert.Equal("1:a", args[args.LastIndexOf("-map") + 1]);
+        // Sin filtros de audio en el mux: ahí el ffmpeg 6.1 del runner comía voz.
         var filter = args[args.IndexOf("-filter_complex") + 1];
-        Assert.Contains("volume=0.12", filter);
-        Assert.Contains("[music][key]sidechaincompress=threshold=0.02:ratio=3:attack=150:release=2000", filter);
-        Assert.Contains("afade=t=out:st=297:d=3", filter);
-        Assert.Contains("amix=inputs=2:duration=first:normalize=0[aout]", filter);
+        Assert.DoesNotContain("amix", filter);
+        Assert.DoesNotContain("-stream_loop", args);
+        Assert.Equal("300", args[args.IndexOf("-t") + 1]);
+    }
 
-        var silent = VideoRenderService.FinalMuxArgs(null, 0.12, 300);
-        Assert.DoesNotContain("-stream_loop", silent);
-        Assert.DoesNotContain("sidechaincompress", silent[silent.IndexOf("-filter_complex") + 1]);
+    [Fact]
+    public void AudioMix_Join_KeepsEverySampleAndAddsTheGaps()
+    {
+        var a = new PcmAudio(24000, 1, [1, 2, 3]);
+        var b = new PcmAudio(24000, 1, [4, 5]);
+        var joined = AudioMix.Join([a, b], [1.0 / 24000, 2.0 / 24000]);
+
+        Assert.Equal(new short[] { 1, 2, 3, 0, 4, 5, 0, 0 }, joined.Samples);
+        Assert.Throws<InvalidOperationException>(() => AudioMix.Join([a, new PcmAudio(48000, 1, [1])], [0, 0]));
+    }
+
+    [Fact]
+    public void AudioMix_Mix_DucksMusicWhileTheVoiceSpeaks()
+    {
+        const int rate = 1000;
+        var frames = 10 * rate;
+        // Voz: silencio 0–4 s, habla 4–6 s, silencio 6–10 s. Música constante.
+        var voice = new short[frames];
+        for (var i = 4 * rate; i < 6 * rate; i++) voice[i] = (short)(i % 2 == 0 ? 8000 : -8000);
+        var music = Enumerable.Repeat((short)10000, frames).ToArray();
+
+        var mixed = AudioMix.Mix(new PcmAudio(rate, 1, voice), new PcmAudio(rate, 1, music), 0.5);
+
+        Assert.Equal(frames, mixed.Frames);
+        var quiet = mixed.Samples[3 * rate];          // sin voz, después del fundido de entrada
+        var under = mixed.Samples[6 * rate - 1] - voice[6 * rate - 1]; // música debajo de la voz
+        Assert.Equal(5000, quiet);
+        Assert.InRange(under, 1, 3000);               // bajó (ducking)
+        Assert.Equal(0, mixed.Samples[^1]);           // fundido de salida
+        Assert.Same(voice, AudioMix.Mix(new PcmAudio(rate, 1, voice), null, 0.5).Samples);
+    }
+
+    [Fact]
+    public void PcmAudio_RoundTripsThroughWav()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"pcm_{Guid.NewGuid():N}.wav");
+        try
+        {
+            new PcmAudio(48000, 2, [1, -1, 300, -300]).Write(path);
+            var read = PcmAudio.Read(path);
+            Assert.Equal((48000, 2), (read.SampleRate, read.Channels));
+            Assert.Equal(new short[] { 1, -1, 300, -300 }, read.Samples);
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public void AudioMix_PtsGaps_FindsMissingAudio()
+    {
+        // Paquetes AAC de 1024 muestras a 48 kHz (21,33 ms); falta un tramo de 0,88 s.
+        var pts = Enumerable.Range(0, 50).Select(i => i * 0.021333).ToList();
+        pts.AddRange(Enumerable.Range(0, 50).Select(i => 50 * 0.021333 + 0.88 + i * 0.021333));
+
+        var gaps = AudioMix.PtsGaps(pts);
+
+        Assert.Single(gaps);
+        Assert.Equal(0.88 + 0.021333, gaps[0].To - gaps[0].From, 3);
+        Assert.Empty(AudioMix.PtsGaps(pts.Take(50).ToList()));
+        Assert.Equal([0.5, 1.25], AudioMix.ParsePts("0.500000\n1.250000\n\n"));
+    }
+
+    [Fact]
+    public void AudioMix_Loudness_TwoPassesInLinearMode()
+    {
+        const string stderr = "... [Parsed_loudnorm_0 @ 0x1]\n{\n\t\"input_i\" : \"-22.10\",\n\t\"input_tp\" : \"-1.60\",\n" +
+                              "\t\"input_lra\" : \"4.10\",\n\t\"input_thresh\" : \"-32.20\",\n\t\"target_offset\" : \"0.30\"\n}\n";
+        var measured = AudioMix.ParseLoudness(stderr);
+        var args = AudioMix.LoudnessApplyArgs("mix.wav", "out.wav", measured);
+        var filter = args[args.IndexOf("-af") + 1];
+
+        Assert.Contains("I=-14", filter);
+        Assert.Contains("measured_I=-22.10:measured_TP=-1.60:measured_LRA=4.10:measured_thresh=-32.20:offset=0.30:linear=true", filter);
+        Assert.Contains("print_format=json", AudioMix.LoudnessMeasureArgs("mix.wav")[5]);
     }
 
     [Fact]
@@ -359,17 +431,6 @@ public class YouTubeVideoTests
         Assert.Contains("start_threshold=-55dB:start_silence=0.15", filter); // final
         Assert.DoesNotContain("d=0.01", filter); // fundidos de 10 ms → click
         Assert.Equal(0, VideoRenderService.SceneGapSeconds);
-    }
-
-    [Fact]
-    public void VoiceTrackArgs_PadsEachSceneAndConcatsInOrder()
-    {
-        var args = VideoRenderService.VoiceTrackArgs(["v1.wav", "v2.wav"], [0.2, 1.0], "voice.wav");
-
-        var filter = args[args.IndexOf("-filter_complex") + 1];
-        Assert.Equal(
-            "[0:a]apad=pad_dur=0.2[a0];[1:a]apad=pad_dur=1[a1];[a0][a1]concat=n=2:v=0:a=1[out]", filter);
-        Assert.Equal("voice.wav", args[^1]);
     }
 
     // ── Tomas ancladas a la narración ──────────────────────────────────────
@@ -409,6 +470,23 @@ public class YouTubeVideoTests
         // "dos mil veintidós" no está en whisper: queda entre "de" (3.0) y "fue" (4.1).
         Assert.InRange(ShotTiming.FindAnchor(narration, starts, "dos mil")!.Value.Time, 3.0, 4.1);
         Assert.True(starts.Zip(starts.Skip(1)).All(p => p.First <= p.Second));
+    }
+
+    [Fact]
+    public void WordStarts_UsesForcedAlignmentOfTheSpokenText_WithGlossaryRespellings()
+    {
+        // La voz leyó la narración con el glosario aplicado ("Agumon" → "Águmon",
+        // "Greymon" → "Greimon"); el alineado devuelve las palabras de ESE texto.
+        const string narration = "La digievolución de Agumon es Greymon, y eso lo cambia todo.";
+        (string, double)[] heard =
+        [
+            ("La", 0.05), ("digievolución", 0.2), ("de", 1.1), ("Águmon", 1.3), ("es", 1.95),
+            ("Greimon,", 2.15), ("y", 2.9), ("eso", 3.0), ("lo", 3.3), ("cambia", 3.45), ("todo.", 3.9),
+        ];
+        var starts = ShotTiming.WordStarts(narration, heard, 4.5);
+
+        Assert.Equal(1.3, ShotTiming.FindAnchor(narration, starts, "Agumon")!.Value.Time, 3);
+        Assert.Equal(2.15, ShotTiming.FindAnchor(narration, starts, "Greymon")!.Value.Time, 3);
     }
 
     [Fact]

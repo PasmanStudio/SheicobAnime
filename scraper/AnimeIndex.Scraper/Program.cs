@@ -178,6 +178,14 @@ if (args.Contains("--youtube"))
                 .AnnotateAsync(plan, anime, Path.GetFullPath(outDir), ytCts.Token);
         }
 
+        // --thumbnail-only: solo las miniaturas del plan (para iterar el diseño).
+        if (args.Contains("--thumbnail-only"))
+        {
+            await sp.GetRequiredService<AnimeIndex.Scraper.Infrastructure.YouTube.VideoRenderService>()
+                .RenderThumbnailsAsync(plan, found, outDir, ytCts.Token);
+            return;
+        }
+
         // --plan-only: solo el guion (primer job del workflow youtube-video.yml;
         // la voz la generan después varios runners en paralelo).
         if (args.Contains("--plan-only"))
@@ -202,6 +210,8 @@ if (args.Contains("--youtube"))
             YtDlpCommand: YtArg(args, "--yt-dlp") ?? "yt-dlp",
             // Python con torch + open_clip para elegir fotogramas por descripción (Scripts/frame_match.py).
             MatcherPython: YtArg(args, "--matcher-python") ?? "python",
+            // En CI: sin tiempos reales por palabra el render falla, en vez de estimar por letras.
+            RequireWordTimes: args.Contains("--require-word-times"),
             // ~3,5 s para videos largos; el Short de referencia corta cada 1–1,5 s.
             ShotSeconds: double.TryParse(YtArg(args, "--shot-seconds"), System.Globalization.NumberStyles.Float,
                 System.Globalization.CultureInfo.InvariantCulture, out var shotSecs) ? Math.Clamp(shotSecs, 0.8, 15) : 3.5,

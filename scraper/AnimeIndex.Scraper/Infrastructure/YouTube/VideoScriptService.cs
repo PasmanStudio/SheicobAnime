@@ -155,6 +155,16 @@ public sealed class VideoScriptService(GeminiClient gemini, ILogger<VideoScriptS
             Además escribe para YouTube: un título de menos de 70 caracteres que despierte
             curiosidad sin mentir, una descripción de 2 párrafos (sin links) y 8 a 12 tags.
 
+            MINIATURA: en "thumbnail" va lo que se ve en la miniatura, junto al título.
+            - "characters": 1 o 2 personajes con nombre que son el centro del video (nombre completo,
+              como en "character:"); vacío si el video no es sobre personajes.
+            - "text": el gancho, 1 a 4 palabras EN MAYÚSCULAS que COMPLETAN el título sin repetirlo
+              (si el título dice "el secreto de X", el gancho no vuelve a decir "secreto"): una
+              pregunta corta, una tensión o un dato fuerte ("¿AMOR O TRAICIÓN?", "ANTES DE TODO",
+              "NADIE LO VIO"). Marca UNA palabra entre asteriscos para resaltarla en amarillo
+              ("ANTES DE *TODO*"). Tiene que estar respaldado por el guion: nada que el video no muestre.
+            - "alternative": otro gancho distinto, con las mismas reglas (para probar cuál funciona mejor).
+
             MÚSICA DE FONDO: en "mood" elige UNO según el tono del video: epic (acción, anuncios
             grandes), dark (teorías, misterio, polémicas), upbeat (curiosidades, comedia),
             chill (slice of life, notas tranquilas), emotional (drama, despedidas, homenajes).
@@ -177,6 +187,7 @@ public sealed class VideoScriptService(GeminiClient gemini, ILogger<VideoScriptS
               "description": "...",
               "tags": ["..."],
               "mood": "epic|dark|upbeat|chill|emotional",
+              "thumbnail": { "characters": ["..."], "text": "...", "alternative": "..." },
               "foreignTerms": [ { "term": "Jujutsu Kaisen", "lang": "ja" }, { "term": "Weak Kingsley", "lang": "en", "say": "Uik Kingsli" } ],
               "scenes": [ { "narration": "...", "visual": "ai|keyart",
                             "shots": [ { "at": "palabras exactas", "show": "poster: ...|logo: ...|card: ...|character: ...|scene: ...|ai: ..." } ] } ]
