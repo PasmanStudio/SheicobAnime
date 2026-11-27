@@ -20,6 +20,10 @@ public sealed record YouTubeUploadResult(string VideoId, string PrivacyStatus, b
 /// 3 y 4 son best-effort: si fallan se loguea y el video queda subido igual.
 /// Mientras el proyecto de Google Cloud no pase la auditoría de YouTube API
 /// Services, YouTube fuerza privado todo lo que sube la API.
+/// La PANTALLA FINAL no se puede cargar por API (la v3 no tiene recurso de end
+/// screens ni de tarjetas): el video deja los últimos 15 s limpios
+/// (<see cref="VideoRenderService.EndScreenSeconds"/>) y los elementos se
+/// agregan a mano en Studio → Editor → Pantalla final → "Importar del video".
 /// </summary>
 public sealed class YouTubeUploadService(
     IHttpClientFactory httpFactory, YouTubeSettings settings, ILogger<YouTubeUploadService> logger)
@@ -47,6 +51,8 @@ public sealed class YouTubeUploadService(
 
         var videoId = await InsertVideoAsync(http, token, videoPath, resource, ct);
         logger.LogInformation("Subido: https://youtu.be/{Id} ({Privacy})", videoId, resource.Status.PrivacyStatus);
+        logger.LogInformation("Falta la pantalla final (no hay API): Studio → Editor → Pantalla final, sobre los últimos {S:F0} s",
+            VideoRenderService.EndScreenSeconds);
 
         var thumb = thumbnailPath is not null && await TrySetThumbnailAsync(http, token, videoId, thumbnailPath, ct);
         var added = playlist is not null ? await TryAddToPlaylistAsync(http, token, videoId, playlist, ct) : null;

@@ -66,6 +66,53 @@ public class YouTubeVideoTests
     }
 
     [Fact]
+    public void VideoPlan_Parse_DropsLikeAndSubscribeFromTheClosing()
+    {
+        // El cierre real de cyberpunk-full (26-nov-2026), más una escena del medio
+        // que dice "me gusta" y no se toca: solo se limpian las últimas escenas.
+        const string json = """
+            { "title": "T", "scenes": [
+                { "narration": "A los fans les dijo: me gusta este final.", "visual": "ai" },
+                { "narration": "¿Crees que esto cambia tu perspectiva sobre Weak?", "visual": "keyart" },
+                { "narration": "Déjanos tus comentarios aquí abajo, queremos leer tu opinión. Y si te ha gustado este análisis, no olvides darle un buen 'me gusta' y suscribirte a Sheicob Anime para no perderte ningún video.", "visual": "keyart" } ] }
+            """;
+
+        var plan = VideoPlan.Parse(json);
+
+        Assert.Equal(
+        [
+            "A los fans les dijo: me gusta este final.",
+            "¿Crees que esto cambia tu perspectiva sobre Weak?",
+            "Déjanos tus comentarios aquí abajo, queremos leer tu opinión.",
+        ], plan.Scenes.Select(s => s.Narration));
+    }
+
+    [Fact]
+    public void VideoPlan_Parse_DropsAClosingSceneThatOnlyAsksToSubscribe()
+    {
+        const string json = """
+            { "title": "T", "scenes": [
+                { "narration": "¿Qué opinas tú?", "visual": "ai" },
+                { "narration": "Suscríbete y activa la campanita.", "visual": "keyart" } ] }
+            """;
+
+        Assert.Equal(["¿Qué opinas tú?"], VideoPlan.Parse(json).Scenes.Select(s => s.Narration));
+    }
+
+    [Fact]
+    public void EndScreenArgs_StillBlurredImageWithExactFrames()
+    {
+        var args = VideoRenderService.EndScreenArgs("frame_01.jpg", 450, "shot_end.mp4");
+
+        var filter = args[args.IndexOf("-vf") + 1];
+        Assert.Equal("450", args[args.IndexOf("-frames:v") + 1]);
+        Assert.Contains("gblur", filter);
+        Assert.DoesNotContain("zoompan", filter); // nada se mueve debajo de los elementos
+        Assert.Contains("-an", args);
+        Assert.Equal(450, (int)(VideoRenderService.EndScreenSeconds * 30));
+    }
+
+    [Fact]
     public void VideoPlan_Parse_RejectsPlanWithoutScenes() =>
         Assert.Throws<InvalidOperationException>(() => VideoPlan.Parse("""{ "title": "T", "scenes": [] }"""));
 
