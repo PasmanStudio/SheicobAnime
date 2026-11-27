@@ -13,7 +13,9 @@ namespace AnimeIndex.Scraper.Infrastructure.YouTube;
 /// </summary>
 public sealed class AnimeCutout : IDisposable
 {
-    public const string ModelUrl = "https://huggingface.co/skytnt/anime-seg/resolve/main/isnetis.onnx";
+    // Revisión fija y hash verificado: si el archivo cambia en Hugging Face, no entra sin aviso.
+    public const string ModelUrl = "https://huggingface.co/skytnt/anime-seg/resolve/493cb60893f47441b26ec4fb9a306bce9e342982/isnetis.onnx";
+    public const string ModelSha256 = "f15622d853e8260172812b657053460e20806f04b9e05147d49af7bed31a6e99";
     private const int Size = 1024;
     private readonly InferenceSession _session;
 
@@ -36,7 +38,17 @@ public sealed class AnimeCutout : IDisposable
             await using (var src = await http.GetStreamAsync(ModelUrl, ct))
             await using (var dst = File.Create(tmp))
                 await src.CopyToAsync(dst, ct);
+            if (!HashMatches(tmp))
+            {
+                File.Delete(tmp);
+                throw new IOException("isnetis.onnx no coincide con el SHA-256 esperado");
+            }
             File.Move(tmp, modelPath, overwrite: true);
+        }
+        else if (!HashMatches(modelPath))
+        {
+            File.Delete(modelPath); // caché vieja o corrupta: se vuelve a bajar en la próxima corrida
+            throw new IOException("isnetis.onnx en caché no coincide con el SHA-256 esperado");
         }
         return new AnimeCutout(modelPath);
     }
@@ -107,6 +119,13 @@ public sealed class AnimeCutout : IDisposable
         var bottom = Ramp(height - 1 - y, height * 0.22f);
         var f = side * top * bottom;
         return f * f * (3 - 2 * f); // suave (smoothstep)
+    }
+
+    private static bool HashMatches(string path)
+    {
+        using var stream = File.OpenRead(path);
+        return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(stream))
+            .Equals(ModelSha256, StringComparison.OrdinalIgnoreCase);
     }
 
     public void Dispose() => _session.Dispose();
