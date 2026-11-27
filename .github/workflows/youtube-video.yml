@@ -329,7 +329,9 @@ jobs:
       # (Scripts/word_times.py).
       - name: Instalar CLIP y alineador (CPU)
         run: |
-          python -m pip install --quiet torch --index-url https://download.pytorch.org/whl/cpu
+          # torch y torchvision juntos del mismo índice: si open_clip trae torchvision
+          # de PyPI, no coincide con el torch de CPU ("operator torchvision::nms does not exist").
+          python -m pip install --quiet torch torchvision --index-url https://download.pytorch.org/whl/cpu
           python -m pip install --quiet open_clip_torch pillow "transformers>=4.46,<5" numpy
 
       - name: Caché de modelos (CLIP, wav2vec2)
