@@ -25,6 +25,7 @@ public sealed record VideoRenderOptions(
     string QwenBackend = "kaggle",
     string YtDlpCommand = "yt-dlp",
     string MatcherPython = "python",
+    bool RequireWordTimes = false,
     double ShotSeconds = 3.5,
     double MusicVolume = VideoMusic.DefaultVolume)
 {
@@ -472,14 +473,16 @@ public sealed partial class VideoRenderService(
     // ── Tomas ancladas a la narración ──────────────────────────────────────
 
     /// <summary>
-    /// Tiempos reales de cada palabra (faster-whisper) → en qué segundo arranca
+    /// Tiempos reales de cada palabra (alineación forzada) → en qué segundo arranca
     /// cada toma del storyboard. Deja shots_plan.txt con cada corte (escena,
     /// segundo, palabras, qué se muestra) para revisar la sincronía sin ver el video.
     /// </summary>
     private async Task<List<VideoShot>> PlanAnchoredAsync(VideoPlan plan, IReadOnlyList<string> voiceParts,
         IReadOnlyList<double> spans, VideoRenderOptions opt, string dir, CancellationToken ct)
     {
-        var heard = await WordTimesAsync(voiceParts, opt, dir, ct);
+        // Lo que la voz LEYÓ (con el glosario aplicado), no la narración: es lo que suena.
+        var spoken = plan.Scenes.Select(s => VideoPlan.ForSpeech(s.Narration, plan.Pronunciations)).ToList();
+        var heard = await WordTimesAsync(voiceParts, spoken, opt, dir, ct);
         var anchors = new List<IReadOnlyList<double?>>();
         var report = new StringBuilder();
         var sceneStart = 0.0;
@@ -506,40 +509,47 @@ public sealed partial class VideoRenderService(
         await File.WriteAllTextAsync(Path.Combine(dir, "shots_plan.txt"), report.ToString(), ct);
         var shots = ShotTiming.PlanAnchoredShots(spans, anchors, opt.ShotSeconds);
         logger.LogInformation("Tomas ancladas: {Shots} ({Named} con referencia, {Missing} anclas no encontradas, tiempos {Src})",
-            shots.Count, shots.Count(s => s.Slot >= 0), missing, heard.Count > 0 ? "de whisper" : "estimados por letras");
+            shots.Count, shots.Count(s => s.Slot >= 0), missing, heard.Count > 0 ? "alineados con la voz" : "estimados por letras");
         return shots;
     }
 
     /// <summary>
-    /// Corre Scripts/word_times.py sobre la voz de cada escena (ya recortada, la
-    /// que suena en el video). Si falla (sin faster-whisper), devuelve vacío y los
-    /// tiempos se estiman por letras.
+    /// Corre Scripts/word_times.py: alineación forzada del texto que leyó la voz
+    /// (<paramref name="spoken"/>) contra el audio de cada escena (ya recortado, el
+    /// que suena en el video). Si falla, devuelve vacío y los tiempos se estiman por
+    /// letras — salvo con <see cref="VideoRenderOptions.RequireWordTimes"/>, que corta el render.
     /// </summary>
     private async Task<Dictionary<string, List<(string Word, double Start)>>> WordTimesAsync(
-        IReadOnlyList<string> voiceParts, VideoRenderOptions opt, string dir, CancellationToken ct)
+        IReadOnlyList<string> voiceParts, IReadOnlyList<string> spoken, VideoRenderOptions opt, string dir, CancellationToken ct)
     {
         var result = new Dictionary<string, List<(string, double)>>();
         var job = Path.Combine(dir, "word_times_job.json");
         var output = Path.Combine(dir, "word_times.json");
         await File.WriteAllTextAsync(job, System.Text.Json.JsonSerializer.Serialize(
-            new { files = voiceParts, language = "es", model = "base" }), ct);
+            new { files = voiceParts, texts = spoken }), ct);
         try
         {
             var parts = opt.MatcherPython.Split(' ', StringSplitOptions.RemoveEmptyEntries);
             var script = Path.Combine(AppContext.BaseDirectory, "Scripts", "word_times.py");
             var sw = Stopwatch.StartNew();
-            await RunAsync(parts[0], parts.Skip(1).Concat(["-I", script, job, output]), dir, ct, TimeSpan.FromMinutes(30));
+            var (_, err) = await RunFullAsync(parts[0], parts.Skip(1).Concat(["-I", script, job, output]), dir, ct, TimeSpan.FromMinutes(30));
+            // Por escena: palabras alineadas y confianza (marca las dudosas).
+            foreach (var line in err.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                if (line.StartsWith("voice_", StringComparison.Ordinal) || line.StartsWith("word_times:", StringComparison.Ordinal))
+                    logger.LogInformation("Alineado {Line}", line);
             using var doc = System.Text.Json.JsonDocument.Parse(await File.ReadAllTextAsync(output, ct));
             foreach (var file in doc.RootElement.EnumerateObject())
                 result[file.Name] = file.Value.EnumerateArray()
                     .Select(w => (w[0].GetString() ?? "", w[1].GetDouble())).ToList();
-            logger.LogInformation("Whisper: tiempos de {Words} palabras en {Secs:F0}s",
+            logger.LogInformation("Alineación forzada: tiempos de {Words} palabras en {Secs:F0}s",
                 result.Values.Sum(v => v.Count), sw.Elapsed.TotalSeconds);
         }
         catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception or IOException or System.Text.Json.JsonException)
         {
-            logger.LogWarning("Whisper no disponible ({Msg}) — tiempos estimados por letras",
-                ex.Message.Length > 300 ? ex.Message[..300] : ex.Message);
+            var msg = ex.Message.Length > 600 ? ex.Message[^600..] : ex.Message;
+            if (opt.RequireWordTimes)
+                throw new InvalidOperationException($"Sin tiempos por palabra (--require-word-times): {msg}", ex);
+            logger.LogWarning("Alineación no disponible ({Msg}) — tiempos estimados por letras", msg);
         }
         return result;
     }

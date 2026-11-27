@@ -412,6 +412,23 @@ public class YouTubeVideoTests
     }
 
     [Fact]
+    public void WordStarts_UsesForcedAlignmentOfTheSpokenText_WithGlossaryRespellings()
+    {
+        // La voz leyó la narración con el glosario aplicado ("Agumon" → "Águmon",
+        // "Greymon" → "Greimon"); el alineado devuelve las palabras de ESE texto.
+        const string narration = "La digievolución de Agumon es Greymon, y eso lo cambia todo.";
+        (string, double)[] heard =
+        [
+            ("La", 0.05), ("digievolución", 0.2), ("de", 1.1), ("Águmon", 1.3), ("es", 1.95),
+            ("Greimon,", 2.15), ("y", 2.9), ("eso", 3.0), ("lo", 3.3), ("cambia", 3.45), ("todo.", 3.9),
+        ];
+        var starts = ShotTiming.WordStarts(narration, heard, 4.5);
+
+        Assert.Equal(1.3, ShotTiming.FindAnchor(narration, starts, "Agumon")!.Value.Time, 3);
+        Assert.Equal(2.15, ShotTiming.FindAnchor(narration, starts, "Greymon")!.Value.Time, 3);
+    }
+
+    [Fact]
     public void WordStarts_WithoutWhisper_EstimatesByLetters()
     {
         var starts = ShotTiming.WordStarts("uno dos tres cuatro", [], 8);
