@@ -12,7 +12,7 @@ namespace AnimeIndex.Scraper.Infrastructure.YouTube;
 ///
 /// Mezcla: varios tracks del mismo mood unidos con fundido cruzado, en loop
 /// hasta cubrir el video, bajos y con "ducking": bajan solos cuando habla la voz
-/// (sidechaincompress) y suben un poco en las pausas. La voz no se toca.
+/// y suben un poco en las pausas (la mezcla está en <see cref="AudioMix.Mix"/>).
 /// </summary>
 public static class VideoMusic
 {
@@ -66,20 +66,4 @@ public static class VideoMusic
         return args;
     }
 
-    /// <summary>
-    /// Filtro del audio final: la voz tal cual y la música (en loop) bajita,
-    /// con ducking contra la voz y fundidos de entrada y salida. Público para tests.
-    /// </summary>
-    public static string MixFilter(double volume, double duration)
-    {
-        var inv = CultureInfo.InvariantCulture;
-        var fadeOut = Math.Max(0, duration - 3).ToString("0.###", inv);
-        return
-            "[1:a]aformat=sample_rates=48000:channel_layouts=stereo,asplit=2[voice][key];" +
-            $"[2:a]aformat=sample_rates=48000:channel_layouts=stereo,volume={volume.ToString("0.###", inv)}," +
-            $"afade=t=in:d=2,afade=t=out:st={fadeOut}:d=3[music];" +
-            // Ducking suave (E): con release corto la música subía en cada micropausa.
-            "[music][key]sidechaincompress=threshold=0.02:ratio=3:attack=150:release=2000[ducked];" +
-            "[voice][ducked]amix=inputs=2:duration=first:normalize=0[aout]";
-    }
 }
