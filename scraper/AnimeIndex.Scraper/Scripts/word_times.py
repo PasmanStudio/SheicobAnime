@@ -30,6 +30,8 @@ import torch
 from transformers import Wav2Vec2ForCTC, Wav2Vec2Processor
 
 MODEL = "jonatasgrosman/wav2vec2-large-xlsr-53-spanish"
+# Revisión fija: el repo solo publica pytorch_model.bin (pickle); un archivo cambiado no entra sin aviso.
+REVISION = "96d7e9b4e4a78af515a3c6d3cee7c0826045d276"
 RATE = 16000
 # Debajo de esto (log-prob media por letra) el alineado es dudoso: la voz se comió
 # o repitió palabras. Se avisa; el render igual usa los tiempos.
@@ -145,14 +147,14 @@ def main():
     out = {}
     low = 0
     for path, text in zip(files, texts):
-        digest = hashlib.sha1(open(path, "rb").read() + text.encode("utf-8") + MODEL.encode()).hexdigest()[:12]
+        digest = hashlib.sha1(open(path, "rb").read() + text.encode("utf-8") + (MODEL + REVISION).encode()).hexdigest()[:12]
         cache = f"{path}.{digest}.align.json"
         if os.path.exists(cache):
             out[path] = json.load(open(cache, encoding="utf-8"))
             continue
         if model is None:
-            processor = Wav2Vec2Processor.from_pretrained(MODEL)
-            model = Wav2Vec2ForCTC.from_pretrained(MODEL).eval()
+            processor = Wav2Vec2Processor.from_pretrained(MODEL, revision=REVISION)
+            model = Wav2Vec2ForCTC.from_pretrained(MODEL, revision=REVISION).eval()
         words, confidence = align(model, processor, load_audio(path), text)
         flag = ""
         if confidence < LOW_CONFIDENCE:

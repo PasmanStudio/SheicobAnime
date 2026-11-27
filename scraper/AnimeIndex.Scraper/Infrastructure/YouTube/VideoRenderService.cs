@@ -436,7 +436,8 @@ public sealed partial class VideoRenderService(
             {
                 cutout = await AnimeCutout.LoadAsync(http, null, ct);
             }
-            catch (Exception ex) when (ex is HttpRequestException or IOException or Microsoft.ML.OnnxRuntime.OnnxRuntimeException)
+            catch (Exception ex) when (ex is HttpRequestException or IOException or Microsoft.ML.OnnxRuntime.OnnxRuntimeException
+                                           or TaskCanceledException && !ct.IsCancellationRequested)
             {
                 logger.LogWarning("Recorte de personajes no disponible ({Msg}): retratos enmarcados", ex.Message);
             }
